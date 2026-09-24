@@ -24,9 +24,9 @@ import mock_repo  # noqa: E402
 BASE = "http://127.0.0.1:8765"
 
 
-def _api(path, method="GET", body=None):
+def _api(path, method="GET", body=None, base=None):
     data = json.dumps(body).encode("utf-8") if body is not None else None
-    req = urllib.request.Request(BASE + path, data=data, method=method,
+    req = urllib.request.Request((base or BASE) + path, data=data, method=method,
                                  headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=15) as r:
         return json.loads(r.read().decode("utf-8"))
@@ -37,8 +37,11 @@ def main() -> int:
         description="生成测试用 mock 目标仓库（浏览器采纳类用例的落点）")
     ap.add_argument("--force", action="store_true", help="已存在也重建")
     ap.add_argument("--set-server", action="store_true",
-                    help="把 " + BASE + " 上的服务指向这个仓库（会改当前 repo 配置）")
+                    help="把运行中的服务指向这个仓库（会改当前 repo 配置）")
+    ap.add_argument("--base", default=BASE,
+                    help="服务地址，默认 " + BASE + "（端口不同就用它）")
     args = ap.parse_args()
+    base = args.base.rstrip("/")
 
     p = mock_repo.ensure(force=args.force)
     print(f"[ok] mock 仓库：{p}")
@@ -47,20 +50,21 @@ def main() -> int:
 
     if args.set_server:
         try:
-            before = (_api("/api/settings").get("repo") or {})
+            before = (_api("/api/settings", base=base).get("repo") or {})
         except Exception as e:
-            print(f"[skip] {BASE} 上没有可用的服务（{e}）——先起服务再带 --set-server 跑：")
+            print(f"[skip] {base} 上没有可用的服务（{e}）——先起服务再带 --set-server 跑：")
             print("       .venv/Scripts/python.exe -m web.server")
             return 0
         print(f"[改配置] 当前服务指向：{before.get('path') or '(未配置)'} "
               f"（分支 {before.get('branch') or '(未配置)'}）")
-        _api("/api/settings", "POST", {"repo": {"path": str(p), "branch": mock_repo.BRANCH}})
-        health = _api("/api/health")
+        _api("/api/settings", "POST", {"repo": {"path": str(p), "branch": mock_repo.BRANCH}},
+             base=base)
+        health = _api("/api/health", base=base)
         same = str(health.get("repo") or "").replace("\\", "/").rstrip("/").lower() \
             == str(p).replace("\\", "/").rstrip("/").lower()
         print(f"[ok] 服务现指向：{health.get('repo')}（分支 {health.get('branch')}）"
               f" {'✓ 一致' if same else '✗ 与期望不一致，请检查'}")
-        print(f"     跑完想切回去：POST {BASE}/api/settings "
+        print(f"     跑完想切回去：POST {base}/api/settings "
               f'{{"repo": {{"path": "{before.get("path")}", '
               f'"branch": "{before.get("branch")}"}}}}')
     else:

@@ -1,8 +1,9 @@
 """CLI entry point.
 
-  python run.py --config config.yaml --mock --limit 3     # generate proposals only
-  python run.py --config config.yaml --list-proposals     # what is waiting for review
-  python run.py --config config.yaml --show ONES-1001-…   # print one diff
+  python run.py --config config.yaml --demo --limit 1       # 不接 ONES 先看效果
+  python run.py --config config.yaml --limit 3             # 从 ONES 拉真实工单
+  python run.py --config config.yaml --list-proposals      # what is waiting for review
+  python run.py --config config.yaml --show ONES-1001-…    # print one diff
 
 The pipeline never modifies the target repository. Approve proposals in the Web UI
 (python -m web.server → http://127.0.0.1:8765), which is the only path that commits.
@@ -16,6 +17,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
+from scripts.mock_data import DEMO_DEFECT  # noqa: E402
 from scripts.pipeline import AIDefectFixerPipeline  # noqa: E402
 
 
@@ -50,7 +52,10 @@ BASE_CONFIG = {
 def main():
     p = argparse.ArgumentParser(description="ONES defect → proposal pipeline")
     p.add_argument("--config", default="config.yaml")
-    p.add_argument("--mock", action="store_true", help="用内置样本代替 ONES")
+    p.add_argument("--mock", action="store_true",
+                   help="不调 ONES。示例工单已移除，单独用它不会产出任何工单，配合 --demo 使用")
+    p.add_argument("--demo", action="store_true",
+                   help="注入一条显式演示工单（DEMO-1）跑完整流程，无需 ONES 配置")
     p.add_argument("--dry-run", action="store_true",
                    help="已废弃：任何模式下都不会改代码，只跳过页面截图")
     p.add_argument("--skip-verify", action="store_true", help="跳过 Playwright 截图")
@@ -95,12 +100,24 @@ def main():
     print(f"[init] gate: " + (", ".join(f"{c['name']}={c['cmd']}" for c in cmds)
                               if cmds else "无可用命令，降级为语法检查"))
 
+    injected = None
+    if args.demo:
+        injected = [DEMO_DEFECT]
+        print(f"[demo] 注入演示工单 {DEMO_DEFECT['id']}：{DEMO_DEFECT['title']}")
+        print("       演示数据固定带 DEMO- 前缀，与真实工单一眼可辨（不参与任何自动兜底）。")
+    else:
+        ones = config.get("ones") or {}
+        if not (ones.get("base_url") and ones.get("token")):
+            print("[提示] 未配置 ONES（ones.base_url / ones.token），直接跑会拉不到工单。"
+                  "想先看完整效果，加 --demo。")
+
     results = pipeline.run(
         defect_id=args.defect_id,
         mock=args.mock,
         dry_run=args.dry_run,
         limit=args.limit,
         skip_verify=args.skip_verify,
+        defects=injected,
     )
 
     ready = [r for r in results if r["proposal"]["status"] in ("pending", "gate_failed")]
