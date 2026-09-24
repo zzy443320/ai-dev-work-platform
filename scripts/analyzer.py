@@ -69,9 +69,9 @@ _NOISE_TOKENS = {
 _IMG_NAME_RE = re.compile(r"[\w-]+\.(?:png|jpe?g|gif|bmp|webp|svg)\b", re.I)
 
 # 纯翻译/文案包：只存 UI 字符串，不承载任何逻辑。缺陷的「修改点」绝不在
-# 这里（改 locale 只会改文案，改不了行为）。工单 214115 里 4 个读取名额被
+# 这里（改 locale 只会改文案，改不了行为）。工单 100001 里 4 个读取名额被
 # locale 文件占了 2 个，而真正的渲染组件一个没进。
-# ⚠ 目录段判定要按 `[-._/]` 分词：「cloudpivot-locale/admin/…」的 locale
+# ⚠ 目录段判定要按 `[-._/]` 分词：「demo-locale/admin/…」的 locale
 # 段带连字符前缀，`/locale/` 这种纯斜杠边界匹配不到。
 _LOCALE_RE = re.compile(
     r"(^|[/\-_.])(locales?|i18n|lang|messages|translations)([/\-_.]|$)", re.I)
@@ -146,7 +146,7 @@ def _dedupe(seq) -> List[str]:
 def _clean_path_tokens(tokens: List[str]) -> List[str]:
     """路径提示 token 清洗：只留「像真实相对路径」的候选。
 
-    描述里的账号（demo/Acme@123456）、URL 残段（cn/agent-workspace/schedule）、
+    描述里的账号（demo/Acme@123456）、URL 残段（cn/demo-workspace/schedule）、
     中文短语（观察日期/时间控件的可编辑性）都会被正则捞进来；脏 token 曾把
     segments[-1] 污染成 create，让真正的目标目录失去 tier-0 资格。
     规则：去首尾斜杠、去重保序、至少两个段、至少一个 ≥4 字符段。"""
@@ -178,33 +178,33 @@ def _is_noise_path(p: str) -> bool:
 def _route_to_dir_tokens(text: str) -> List[str]:
     """把前端路由串反解成疑似目录名，供 tier-0 目录判定使用。
 
-    工单里的「页面定位」常写成前端路由（`admin/#/ai-skill-runtime-log`）。
-    真实源码目录却是 kebab 化的组件路径（`ai-platform/components/ai-runtime-log/`），
+    工单里的「页面定位」常写成前端路由（`admin/#/demo-skill-log`）。
+    真实源码目录却是 kebab 化的组件路径（`demo/widgets/skill-log/`），
     直接 grep 路由串必然 0 命中。这里把路由按 kebab 拆词后再回拼相邻词对，
-    生成 `ai-runtime-log` / `skill-runtime` / `runtime-log` 等候选，
+    生成 `demo-skill` / `skill-log` 等候选，
     让候选路径的「目录段」有机会撞上真实目录名。
 
     ⚠ 只在 `#/`（前端 hash 路由）或裸 kebab 路由段的语境下触发，避免把
     普通英文词组误当路由。
 
-    ⚠⚠ 输出**必须包含完整路由段本身**（如 ai-skill-runtime-log），不能只有
-    相邻词对：真实目录 ai-runtime-log 与路由段只差一个词，尾缀匹配靠它。
-    注意：返回值不含斜杠——调用方绝不能再把它丢进要求含 '/' 的清洗函数
-    （曾因过 _clean_path_tokens 的斜杠检查导致 route_tokens 全军覆没，
-    admin/#/ai-skill-runtime-log 工单因此定位到 schedule 而非 ai-runtime-log）。"""
+    ⚠⚠ 输出**必须包含完整路由段本身**（如 demo-skill-log），不能只有
+    相邻词对：真实目录常是路由段的后缀（skill-log ⊆ demo-skill-log），
+    尾缀匹配靠它。注意：返回值不含斜杠——调用方绝不能再把它丢进要求含 '/'
+    的清洗函数（曾因过 _clean_path_tokens 的斜杠检查导致 route_tokens 全
+    军覆没，admin/#/demo-skill-log 工单因此定位到无关模块）。"""
     out: List[str] = []
-    # hash 路由：admin/#/ai-skill-runtime-log  或  /#/ai-skill-runtime-log
+    # hash 路由：admin/#/demo-skill-log  或  /#/demo-skill-log
     for m in re.finditer(r"#/([\w\-/]{3,80})", text):
         route = m.group(1).strip("/").split("?")[0]
         for seg in route.split("/"):
             words = [w for w in seg.split("-") if w]
             if len(words) < 2:
                 continue
-            # 完整段本身（ai-skill-runtime-log）——尾缀匹配的真目录钥匙
+            # 完整段本身（demo-skill-log）——尾缀匹配的真目录钥匙
             full = "-".join(words)
             if len(full) >= 8 and full not in out:
                 out.append(full)
-            # 相邻词两两组合（ai-skill / skill-runtime / runtime-log）
+            # 相邻词两两组合（demo-skill / skill-log）
             for i in range(len(words) - 1):
                 cand = f"{words[i]}-{words[i + 1]}"
                 if len(cand) >= 8 and cand not in out:
@@ -318,7 +318,7 @@ def detect_non_frontend(analysis: Dict, block_count: int = 0) -> bool:
     软约束，真实回答常写成「问题落在 /api/api/ai/agent/logs/query 对
     logType=SKILL 的条件匹配与字段存储上，不修改任何前端文件」——措辞自由，
     category 还可能是「其他」。只看前缀/枚举会让这类正确答案仍显示成红色
-    「未生成可应用补丁」（工单 214162 的实际情况）。
+    「未生成可应用补丁」（工单 100002 的实际情况）。
 
     有补丁时一律返回 False：能改前端就不算非前端缺陷。"""
     if block_count:
@@ -527,7 +527,7 @@ class DefectAnalyzer:
     def _model_hints(self, ai_result: Dict, known_tokens: List[str]) -> List[str]:
         """从模型「窗口不足」的回答里抽取路径提示。
 
-        模型拒绝出补丁时常直接点名目标（如 /agent-workspace/schedule 创建弹窗、
+        模型拒绝出补丁时常直接点名目标（如 /demo-workspace/schedule 创建弹窗、
         packages/.../task-schedule 之类的 mixin），这些就是二次定位的导航。"""
         text = " ".join(str(ai_result.get(k) or "")
                         for k in ("root_cause", "explanation", "prevention"))
@@ -538,7 +538,7 @@ class DefectAnalyzer:
         raw_files = [t for t in raw if "/" not in t
                      and re.search(r"\.(?:ts|tsx|js|jsx|vue)$", t, re.I)]
         raw = [t for t in raw if "/" in t]
-        # 模型常直接点名页面路由（admin/#/ai-skill-runtime-log），`#` 会把
+        # 模型常直接点名页面路由（admin/#/demo-skill-log），`#` 会把
         # 路径正则切断——必须走路由反解，否则二次定位拿不到目录提示
         routes = _route_to_dir_tokens(text)
         known = {t.lower() for t in known_tokens}
@@ -575,11 +575,11 @@ class DefectAnalyzer:
         # re.A（ASCII）必须加：Unicode 模式下 \w 会把「观察日期/时间控件的可编辑性」
         # 这类中文短语也当成路径 token，6 个名额被垃圾占满后目录判定全盘失准。
         raw_tokens = re.findall(r"\b[\w-]+(?:/[\w-]+)+\b", text, re.A)
-        # 前端路由（admin/#/ai-skill-runtime-log）也是路径提示：把它反解成
-        # 「疑似目录名」才能让 tier-0 命中 ai-platform/components/ai-runtime-log/。
+        # 前端路由（admin/#/demo-skill-log）也是路径提示：把它反解成
+        # 「疑似目录名」才能让 tier-0 命中 ai-platform/components/runtime-log/。
         route_tokens = _route_to_dir_tokens(text)
         # ⚠⚠ route_tokens 绝不能再过 _clean_path_tokens：它们不含斜杠，
-        # 会被「必须含 /」检查全部丢弃（2026-09-23 事故：admin/#/ai-skill-runtime-log
+        # 会被「必须含 /」检查全部丢弃（2026-09-23 事故：admin/#/demo-skill-log
         # 工单的目录提示全灭，定位漂移到 schedule）。路由候选单独直通。
         path_tokens = (_clean_path_tokens(
             [p for p in raw_tokens
@@ -633,7 +633,7 @@ class DefectAnalyzer:
         # 文件，×8 加权反而把真正的修改点挤出读取名额——只作普通关键词。
         self._ident_kws = set(idents) | {q for q in quoted if q.isascii()}
 
-        # path_tokens 拆段也能当 grep 词（agent-workspace、schedule）
+        # path_tokens 拆段也能当 grep 词（demo-workspace、schedule）
         segments: List[str] = []
         for tok in path_tokens:
             segments.extend(s for s in tok.split("/") if len(s) >= 4 and "-" not in s[:1])
@@ -653,8 +653,8 @@ class DefectAnalyzer:
                 + _dedupe(segments) + _dedupe(symbols))[:22]
         # ── 中文高精度串（引号里的 UI 文案）─────────────
         # `_scan_repo` 只 grep 前 20 个关键词，所以"进不了前 20"等于不存在。
-        # 事故：工单 214115 里 `触发时间` 仅命中 13 个文件、其中 4 个正是
-        # ai-runtime-log 的渲染组件（精度极高），但中文二字词 bigram 全排在
+        # 事故：工单 100001 里 `触发时间` 仅命中 13 个文件、其中 4 个正是
+        # runtime-log 的渲染组件（精度极高），但中文二字词 bigram 全排在
         # 它前面（`比实`/`际时`/`间早` = 纯噪音，命中 0），把第 16-21 槽吃光，
         # 真正有用的 UI 串从未参与 grep —— 定位因此整体失准。
         # 修正：中文大串（4-8 字，非 bigram）排在 bigram 之前。
@@ -685,7 +685,7 @@ class DefectAnalyzer:
                                  ratio: float = 0.04, floor: int = 25) -> Tuple[List[str], List[str]]:
         """按「命中文件数 / 仓库文件总数」剔除超高频关键词。
 
-        事故（2026-09-23，工单 214115）：`develop`（工单【测试分支】栏的值）
+        事故（2026-09-23，工单 100001）：`develop`（工单【测试分支】栏的值）
         命中 91 个文件、`skill` 命中 323 个、`admin` 命中 882 个、`runtime`
         命中 710 个——这些词把大量与缺陷无关的文件抬进候选池，而真正区分度
         极高的 `startTime` 反而因为「命中文件太多」被排序压下去，最终读取
@@ -782,7 +782,7 @@ class DefectAnalyzer:
     def _scan_repo(self, keywords: List[str], path_tokens: List[str] = None) -> List[str]:
         path_tokens = path_tokens or []
         # kebab 复合段（路由反解产物，无斜杠）也要拆出子词：runtime-log 的
-        # runtime 子词才能通过 _seg_hit 的词边界匹配命中 ai-runtime-log/ 目录
+        # runtime 子词才能通过 _seg_hit 的词边界匹配命中 runtime-log/ 目录
         segments = _dedupe(
             [s for tok in path_tokens for s in tok.split("/") if len(s) >= 4]
             + [w for tok in path_tokens for s in tok.split("/")
@@ -834,7 +834,7 @@ class DefectAnalyzer:
         seg_votes: Dict[str, int] = {}
         for tok in path_tokens:
             for s in tok.split("/"):
-                # kebab 段拆子词计票：ai-skill-runtime-log 的 runtime/skill
+                # kebab 段拆子词计票：demo-skill-log 的 runtime/skill
                 # 各得一票，投票才能聚到「描述反复指名」的模块目录上
                 for part in re.split(r"[-_]", s):
                     sl = part.lower()
@@ -887,7 +887,7 @@ class DefectAnalyzer:
             """非逻辑文件（翻译文案包 / 文档）一律排在逻辑代码之后。
 
             ⚠ 不能直接删掉候选：万一工单就是改文案，文件仍须可被读取。
-            但它绝不能占用有限的读取名额——工单 214115 里 4 个名额被
+            但它绝不能占用有限的读取名额——工单 100001 里 4 个名额被
             `locale/admin/system.*.ts` 占了 2 个，真正的渲染组件一个没进，
             模型只能给出「嫌疑文件中没有运行日志代码」的结论并拒出补丁。"""
             return 1 if (_LOCALE_RE.search(f) or _DOC_RE.search(f)) else 0
@@ -928,8 +928,8 @@ class DefectAnalyzer:
         动作名（create），模块目录常在次末位（schedule），两个都纳入宁可
         稍微稀释也不丢真目标。
 
-        ⚠ `_route_to_dir_tokens` 生成的 kebab 复合段（ai-runtime-log）**整体**
-        参与 tier-0 匹配，不做再拆分——真实目录名就是 `ai-runtime-log/`，
+        ⚠ `_route_to_dir_tokens` 生成的 kebab 复合段（runtime-log）**整体**
+        参与 tier-0 匹配，不做再拆分——真实目录名就是 `runtime-log/`，
         拆成 runtime/log 反而会让 `/log/` 这种超宽前缀命中一堆无关目录。"""
         if not seg_votes:
             return []
@@ -939,7 +939,7 @@ class DefectAnalyzer:
             chosen = [s for s, v in ordered if v == top_vote][:2]
         else:
             # 「末段+次末段」只从**含斜杠**的 token 取：路由反解的 kebab token
-            # （agent-workspace）没有位置语义，混进来会把真模块目录（memory）
+            # （demo-workspace）没有位置语义，混进来会把真模块目录（memory）
             # 挤出兜底——2026-09-23 记忆工单回归的元凶
             cands = [s.lower() for tok in path_tokens if "/" in tok
                      for s in tok.split("/")
@@ -949,7 +949,7 @@ class DefectAnalyzer:
         dirs: List[str] = []
         for s in chosen:
             # kebab 复合段（含 '-' 且 ≥8 字符）= 路由反解出来的真实目录名。
-            # 必须同时给「尾缀形态」：真实目录 ai-runtime-log/ 里，runtime-log
+            # 必须同时给「尾缀形态」：真实目录 runtime-log/ 里，runtime-log
             # 前面是 '-' 而非 '/'，纯 /{s}/ 边界永远匹配不到它。
             if "-" in s and len(s) >= 8:
                 dirs += [f"/{s}/", f"-{s}/"]
@@ -959,7 +959,7 @@ class DefectAnalyzer:
                     # task-schedule/ 这类「前缀-模块」复合目录同样常见
                     dirs.append(f"-{s}/")
         # kebab 复合 token 若由选中段组成（如 runtime-log ⊇ runtime），
-        # 整体也升为 tier-0 目录：真实目录常是路由段的超集（ai-runtime-log）
+        # 整体也升为 tier-0 目录：真实目录常是路由段的超集（runtime-log）
         for tok in path_tokens:
             if "/" in tok:
                 continue

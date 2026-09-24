@@ -24,7 +24,7 @@ from typing import Dict, List, Optional, Tuple
 from .analyzer import strip_html
 
 _ROUTE_RE = re.compile(r"(?<![\w:/])(/[A-Za-z0-9_\-./]{2,60})")
-# strip_html 把 URL 的协议+域名剥掉后只留无前导斜杠的 path（agent-workspace/schedule），
+# strip_html 把 URL 的协议+域名剥掉后只留无前导斜杠的 path（demo-workspace/schedule），
 # 工单正文里的路径提示也常是这个形态 —— 单段 /xxx 误报太多，裸路径要求至少两段。
 _BARE_PATH_RE = re.compile(r"(?<![\w@:/.])([A-Za-z0-9_\-]+(?:/[A-Za-z0-9_\-]+)+)")
 _SKIP_ROUTES = ("/api/", "/static/", "/node_modules/", "/src/", "/dist/")

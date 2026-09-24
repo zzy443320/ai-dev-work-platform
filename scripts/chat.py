@@ -582,7 +582,7 @@ def run_chat(ai, reader: RepoReader, messages: List[Dict], user_text: str, *,
     if reader.tools_enabled:
         base += f"- 仓库根目录：{reader.root}\n"
         base += ("- 你只能通过工具访问仓库。路径用相对仓库根的形式，例如 "
-                 "`packages/cloudpivot-ai/lui/components/xxx.vue`。\n")
+                 "`packages/demo-app/src/components/xxx.vue`。\n")
     else:
         base += "- 本轮**没有开启仓库访问**，你看不到任何仓库内容。\n"
     base += "\n" + _tool_block(specs, max_rounds)

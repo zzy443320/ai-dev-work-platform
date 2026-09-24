@@ -23,9 +23,9 @@ with sync_playwright() as p:
           const data = {
             count: 2, wrote_any_files: false,
             results: [
-              { id: 'L4Zo7p9z4ehvrm44', status: 'pending', category: '逻辑',
+              { id: 'DEMO-OLD-1', status: 'pending', category: '逻辑',
                 proposal_id: '', verify_status: '',
-                files: ['packages/cloudpivot-ai/lui/pages/schedule/schedule-editor.vue'],
+                files: ['packages/demo-app/src/pages/schedule/schedule-editor.vue'],
                 errors: [], warnings: [],
                 root_cause: 'canSubmit 只在 scheduleType === noRepeat 时校验 date/time，其余重复类型 time 为空也可提交……（测试根因文本，验证放大弹窗换行与滚动）'.repeat(6),
                 source: 'ones' },
@@ -74,7 +74,7 @@ with sync_playwright() as p:
         """
         () => {
           runLogTitle = '试运行结果';
-          document.querySelector('#run-log').innerHTML = '<div class="log-html"><div class="log-title">试运行结果：真实 ONES 工单</div><div class="run-row"><div class="probe-title">【迭代106】重复周期应该必填（模拟）</div></div></div>';
+          document.querySelector('#run-log').innerHTML = '<div class="log-html"><div class="log-title">试运行结果：真实 ONES 工单</div><div class="run-row"><div class="probe-title">【演示】重复周期应该必填（模拟）</div></div></div>';
           setRunExpand();
         }
         """

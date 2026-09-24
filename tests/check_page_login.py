@@ -31,7 +31,7 @@ actions = [
     ["fill", "input[name=username]", "whoever"],
     ["fill", "input[type=password]", "whatever"],
     ["click", "button[type=submit]", None],
-    ["goto", "/agent-workspace/schedule", None],
+    ["goto", "/demo-workspace/schedule", None],
 ]
 creds = v(auth)._login_creds(actions)
 check("识别出登录动作", creds == ("/login", "input[name=username]", "input[type=password]"),
@@ -70,7 +70,7 @@ check("loginName/pwdInput 配对", creds == ("/login", "input.loginName", "input
 
 print("== 6. 登录 URL 正则不误伤普通路由 ==")
 sp = v(auth)
-check("普通路由不算登录页", not sp._is_login_url("/agent-workspace/schedule"))
+check("普通路由不算登录页", not sp._is_login_url("/demo-workspace/schedule"))
 check("带后缀也识别", sp._is_login_url("/login.html") and sp._is_login_url("/auth/callback"))
 
 print("== 7. 相对路由拼接 ==")

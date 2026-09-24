@@ -17,6 +17,14 @@ config.*.local.yaml
 logs/
 *.log
 
+# ── 本地专用回归（不随仓库发布）──
+# 这两个用例断言的是「读取窗口要不要落在私有前端仓的某个具体文件上」——
+# 要读真仓里某个组件的源码、并断言窗口覆盖了它的某个 handler 实现。
+# 把它脱敏成中性路径就没有意义了，所以只在你本机跑，公开仓的 tests/ 全部自包含。
+/tests/check_locate_regression.py
+/tests/check_locate_regression2.py
+/tests/fixtures/proposals/
+
 # ── Python ──
 __pycache__/
 *.py[cod]

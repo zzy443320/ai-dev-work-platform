@@ -302,7 +302,7 @@ class OnesClient:
             return items[0]
         raise RuntimeError(
             f"在当前项目/团队的工单列表里没有找到 {want}。"
-            "注意：界面上的数字编号要完整（如 205417），工单 UUID 也可以"
+            "注意：界面上的数字编号要完整（如 100003），工单 UUID 也可以"
         )
 
     def add_comment(self, issue_uuid: str, content: str) -> Dict:

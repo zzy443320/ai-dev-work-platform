@@ -241,7 +241,7 @@ class AIDefectFixerPipeline:
                     "UUID 是否填对）；② 工单在别的项目里（Project UUID 应为"
                     "地址栏 /project/XXX 里那一段）",
                     "如果你填了工单编号却搜不到：确认填的是工单详情页 URL 或"
-                    "列表里的数字编号（如 205417）或工单 UUID",
+                    "列表里的数字编号（如 100003）或工单 UUID",
                 ]
                 notes.append("ONES 接口调用成功，但按当前条件没有匹配到任何工单")
 

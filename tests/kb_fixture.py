@@ -3,7 +3,7 @@
 
 背景：`check_kb_patterns.py` / `check_kb_render.py` / `check_kb_patterns_ui.py`
 原来直接读项目根的 `knowledge_base/`（真实工单 + 真实分析结论，已被 .gitignore 排除），
-还断言了真实工单号 `L4Zo7p9z4ehvrm44`、`STREAM-TEST-1` 这些字面量。后果有两个：
+还断言了真实工单号 `DEMO-OLD-1`、`STREAM-TEST-1` 这些字面量。后果有两个：
 别人克隆下来这三个用例必然红；而为了保住它们，生产知识库里那两条测试用假工单
 也一直不敢删（README「已知限制」里记着这笔）。
 

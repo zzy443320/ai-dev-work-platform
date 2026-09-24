@@ -318,7 +318,6 @@ JSON；工具结果回灌给它，最多 5 轮；查到够了就给正式回答�
 | 用例 | 需要 |
 |---|---|
 | `test_safety.py` / `test_relay_transport.py` / `check_team.py` / `check_chat.py` / `check_usage.py` / `check_kb_patterns.py` / `check_changelog.py` / `check_artifact_diff.py` | **什么都不用**（纯离线，自带临时仓库/夹具） |
-| `check_locate_regression*.py` | 真实目标仓库（`ui_settings.json` 指向一个 `packages/` 结构的前端仓）。**不满足就明确 SKIP 并退出 0**——这两个用例断言的是「读取窗口该落在哪个文件」，换仓库跑没有意义（`tests/repo_guard.py` 负责判定）；用例数据本身优先读本地 `proposals/`、缺失回退 `tests/fixtures/proposals/` 脱敏夹具 |
 | `check_kb_render.py` / `check_kb_patterns_ui.py` | 只要 `playwright install chromium`——它们自己起临时实例、用 `tests/kb_fixture.py` 的**脱敏夹具知识库**，不读你的真实知识库 |
 | `check_chat_ui.py` / `check_usage_ui.py` | 同上（自带临时实例与临时设置） |
 | `check_team_api.py` / `check_team_ui.py` / `check_live_stream.py` / `check_pager.py` / `check_expand_modal.py` / `check_panel_fold.py` / `check_stages_ui.py` / `check_layout_ui.py` / `check_live_ui.py` / `check_changelog_ui.py` / `e2e_extensions_check.py` / `check_kb_patterns_ui.py <URL>` | `web.server` 已在 8765 运行（或把地址当参数传进去） |
@@ -327,6 +326,11 @@ JSON；工具结果回灌给它，最多 5 轮；查到够了就给正式回答�
 `tests/mock_repo.py` 是 mock 仓库路径的**唯一来源**（环境变量 `MOCK_REPO` 优先，默认落在项目根的
 同级目录 `../test-mock-repo`，与 `web/server.py` 的默认值一致），所以克隆到任何位置都能用；
 `tests/make_mock_repo.py` 负责把它建出来。
+
+**这个仓库的 `tests/` 是自包含的**：每个用例要么纯离线、要么自带临时实例与脱敏夹具，不依赖任何私有仓库
+或生产数据。少数「断言读取窗口该落在私有前端仓的哪个具体文件」的回归用例（`check_locate_regression*.py`
+及其 `tests/fixtures/proposals/` 夹具）**不随仓库发布**——脱敏成中性路径后断言就不再成立了，它们只对
+作者本机的目标仓库有意义，已在 `.gitignore` 里排除。所以克隆下来看不到这两个文件是正常的，不是漏传。
 
 ⚠ **`test_browser_e2e.py` / `test_browser_guards.py` 会真的点「采纳 / 强制采纳」，也就是真的写目标仓库。**
 它们因此带一道硬闸门（`tests/server_guard.py`）：先比对服务配置的仓库路径，不是你期望的那个就打印

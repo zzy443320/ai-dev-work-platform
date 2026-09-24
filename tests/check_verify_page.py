@@ -24,13 +24,13 @@ from scripts.verifier import ScreenshotVerifier  # noqa: E402
 # 模拟真实 ONES 富文本工单：含 </strong> 残渣、完整 URL、路径提示
 HTML_DEFECT = {
     "id": "VERIFY-PAGE",
-    "title": "【迭代106】重复周期应该必填",
+    "title": "【演示】重复周期应该必填",
     "description": (
         '<p>问题描述：<strong>重复周期</strong>应该必填，终止时间勾选了也应该必填。</p>'
         '<p>复现步骤：</p><ol><li>打开 '
-        'https://lui.example.com/agent-workspace/schedule 页面</li>'
+        'https://demo.example.com/demo-workspace/schedule 页面</li>'
         '<li>点击新增日程，不填重复周期直接提交</li></ol>'
-        '<p>路径：agent-workspace/schedule</p>'
+        '<p>路径：demo-workspace/schedule</p>'
     ),
 }
 PLAIN_DEFECT = {
@@ -56,8 +56,8 @@ def check_route_extraction() -> bool:
     if r1 == "/strong":
         print("FAIL: /strong 假路由仍在（strip_html 未生效）")
         ok = False
-    elif r1 != "/agent-workspace/schedule":
-        print(f"WARN: HTML 工单期望 /agent-workspace/schedule，实际 {r1!r}")
+    elif r1 != "/demo-workspace/schedule":
+        print(f"WARN: HTML 工单期望 /demo-workspace/schedule，实际 {r1!r}")
     if r2:
         print(f"INFO: 纯文本工单路由 {r2!r}（描述里恰有可抽路径）")
     else:
@@ -67,7 +67,7 @@ def check_route_extraction() -> bool:
 
 def check_plan_fallback() -> bool:
     v = new_verifier(ai=AIModel({"mock": True}))
-    actions, note = v.plan_actions(HTML_DEFECT, "/agent-workspace/schedule")
+    actions, note = v.plan_actions(HTML_DEFECT, "/demo-workspace/schedule")
     print(f"[plan] mock AI 退化: actions={actions} note={note}")
     ok = actions and actions[0][0] == "goto"
     print("PASS: mock 下退化为 goto 并明确说明" if ok else "FAIL: plan_actions 退化异常")
@@ -111,7 +111,7 @@ def check_ai_plan_real() -> bool:
         print("[skip] AI 未配置真实 key，跳过真实编排冒烟")
         return True
     v = new_verifier(ai=AIModel(ai_cfg))
-    actions, note = v.plan_actions(HTML_DEFECT, "/agent-workspace/schedule")
+    actions, note = v.plan_actions(HTML_DEFECT, "/demo-workspace/schedule")
     print(f"[ai-plan] note={note}")
     print(f"[ai-plan] actions={actions}")
     if actions:

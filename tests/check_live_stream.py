@@ -84,7 +84,7 @@ else:
     defect = {
         "id": "STREAM-TEST-1",
         "title": "【流式验证】重复周期应该必填",
-        "description": "日程组件 agent-workspace/schedule 的重复周期字段没有校验必填，"
+        "description": "日程组件 demo-workspace/schedule 的重复周期字段没有校验必填，"
                        "终止时间勾选了也应该必填。",
     }
     events = []
@@ -138,7 +138,7 @@ else:
         json={"defects": [{
             "id": "COMPAT-TEST-1",
             "title": "【兼容验证】列表不刷新",
-            "description": "提交后列表不刷新，agent-workspace/schedule 页面。",
+            "description": "提交后列表不刷新，demo-workspace/schedule 页面。",
         }], "skip_verify": True, "limit": 1},
         timeout=300,
     )
