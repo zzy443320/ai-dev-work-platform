@@ -102,7 +102,7 @@ def _module_hint(paths: List[str]) -> str:
 
     取 5 段而不是 4 段：`.../src/pages/schedule/api.ts` 的第 5 段才是
     真正有辨识度的模块名（schedule），截到 `src/pages` 只会得到泛泛的
-    「lui-pages」，模式名里看不出是哪个模块反复出问题。
+    「pages」前缀，模式名里看不出是哪个模块反复出问题。
     """
     counter: Dict[str, int] = {}
     for p in paths:
