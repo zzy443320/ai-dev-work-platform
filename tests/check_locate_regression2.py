@@ -10,7 +10,8 @@
   真改动点在 lui/mobile/components/project-detail/memory/，
   路径提示 api/api/runtime/ai/memory/update 的 memory 段必须赢得 tier-0。
 
-用法：python tests/check_locate_regression2.py（需要目标仓库存在）
+用法：python tests/check_locate_regression2.py（需 ui_settings.json 指向一个 `packages/` 结构的前端仓库；
+      没有 ui_settings.json 或指向别的仓库时会明确 SKIP，不会报一堆假红）
 """
 import json
 import sys
@@ -22,6 +23,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from scripts.analyzer import (  # noqa: E402
     DefectAnalyzer, detect_non_frontend, strip_html,
 )
+from repo_guard import require_frontend_monorepo  # noqa: E402
 
 def _proposal_path(name: str) -> Path:
     """优先用本地 proposals/（含真实分析数据），缺失时回退到脱敏夹具。
@@ -59,8 +61,7 @@ def main() -> int:
         return 0
     settings = json.loads(settings_file.read_text(encoding="utf-8"))
     repo = settings.get("repo", {}).get("path", "")
-    if not repo or not Path(repo).is_dir():
-        print(f"  [SKIP] 目标仓库不存在：{repo}")
+    if not require_frontend_monorepo(repo, what="本次定位回归 2"):
         return 0
 
     a = DefectAnalyzer(repo, None, precedent_dir=str(PROJECT_ROOT / "proposals"))

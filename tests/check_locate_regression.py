@@ -15,7 +15,8 @@
    从未进入 grep 关键词表；
 5. 无历史先例信号：此前两次人工采纳的补丁都在 schedule-editor.vue。
 
-用法：python tests/check_locate_regression.py（需要目标仓库存在）
+用法：python tests/check_locate_regression.py（需 ui_settings.json 指向一个 `packages/` 结构的前端仓库；
+      没有 ui_settings.json 或指向别的仓库时会明确 SKIP，不会报一堆假红）
 """
 import json
 import re
@@ -26,6 +27,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from scripts.analyzer import DefectAnalyzer, load_precedent_files, strip_html  # noqa: E402
+from repo_guard import require_frontend_monorepo  # noqa: E402
 
 FAILING_PROPOSAL_NAME = "L4Zo7p9zF8rXm5CU-20260922-191330.json"
 
@@ -69,8 +71,7 @@ def main() -> int:
         return 0
     settings = json.loads(settings_file.read_text(encoding="utf-8"))
     repo = settings.get("repo", {}).get("path", "")
-    if not repo or not Path(repo).is_dir():
-        print(f"  [SKIP] 目标仓库不存在：{repo}")
+    if not require_frontend_monorepo(repo, what="本次定位回归"):
         return 0
 
     a = DefectAnalyzer(repo, None, precedent_dir=str(PROJECT_ROOT / "proposals"))
