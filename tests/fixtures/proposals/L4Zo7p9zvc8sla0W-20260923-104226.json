@@ -1,0 +1,14 @@
+{
+  "id": "fixture-case-a-20260923-104226",
+  "created": "2026-09-23 10:42:26",
+  "status": "invalid",
+  "defect": {
+    "id": "FIXTURE-A",
+    "title": "【AI运行日志】执行日志的开始时间与筛选时间相差 8 小时",
+    "description": "<p>【测试环境】test-develop</p><p>【测试分支】develop</p><p>【测试账号】demo/Acme@123456</p><p>【页面路径】admin/#/ai-skill-runtime-log</p><p>【缺陷描述】AI技能运行日志页面的开始时间字段比实际触发时间早 8 小时，疑似时区换算问题。traceId=e7bb17bc1747a7ab1234567890abcd12。</p><p>【复现步骤】1. 打开运行日志页面；2. 查看任意一条记录的开始时间；3. 与实际触发时间对比，恒定相差 8 小时。</p>"
+  },
+  "analysis": {
+    "keywords": ["ai-skill-runtime-log", "startTime", "runtime-log", "时间", "时区"],
+    "suspect_files": []
+  }
+}

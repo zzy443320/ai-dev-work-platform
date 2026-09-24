@@ -1,0 +1,35 @@
+# ── 本地凭据与私有配置（绝不入库）──
+ui_settings.json
+config.yaml
+config.*.local.yaml
+*.local.json
+.env
+
+# ── 运行时产物（含真实工单/缺陷数据，属于私有业务数据）──
+# 锚定到项目根目录，避免误伤 tests/fixtures/proposals/ 下的脱敏夹具
+/proposals/
+/artifacts/
+/screenshots/
+/team_runs/
+/usage/
+/chat_sessions/
+/knowledge_base/
+logs/
+*.log
+
+# ── Python ──
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# ── Node（前端静态资源无构建步骤，保险起见）──
+node_modules/
+
+# ── 工作区临时文件 ──
+_tmp_*
+*.tmp
+.workbuddy/
+.DS_Store
+Thumbs.db

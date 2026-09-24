@@ -1,0 +1,26 @@
+ones:
+  base_url: ""
+  token: ""
+  project_uuid: ""
+
+ai:
+  model: claude-3-5-sonnet-latest
+
+repo:
+  path: D:/workbuddy默认工作空间/2026-09-20-16-18-02/test-mock-repo
+  branch: master
+
+# deliberately empty -> exercises the degraded (layer 3) gate path
+gate:
+  degraded: true
+
+playwright:
+  base_url: http://localhost:3000
+  headless: true
+  screenshot_dir: ./screenshots
+
+proposals:
+  output_dir: ./proposals
+
+knowledge_base:
+  output_dir: ./knowledge_base

@@ -1,0 +1,10 @@
+requests>=2.31
+pyyaml>=6.0
+playwright>=1.40
+Pillow>=10.0
+fastapi>=0.110
+uvicorn>=0.27
+
+# 说明：模型调用走 requests 直连（Anthropic Messages / OpenAI Chat Completions /
+# 自定义网关三种协议均由配置选择），不再依赖任何厂商 SDK，因此中转站、自建网关、
+# 本地 Ollama/vLLM 都能通过改配置接入，无需装额外的包。

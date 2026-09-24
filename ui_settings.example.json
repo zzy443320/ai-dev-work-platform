@@ -1,0 +1,51 @@
+{
+  "_comment": "复制为 ui_settings.json 后按需修改；不创建该文件直接启动也可以——服务会自动生成全默认配置，然后全部在界面设置页里改。所有 token/密码均可留空：留空即走 mock 模式或对应功能降级。",
+  "repo": {
+    "path": "D:/path/to/your/frontend-repo",
+    "branch": "main"
+  },
+  "ai": {
+    "provider": "anthropic",
+    "base_url": "",
+    "model": "claude-3-5-sonnet-latest",
+    "api_key": "",
+    "mock": true,
+    "temperature": 1.0,
+    "max_tokens": 4000,
+    "top_p": "",
+    "timeout": 120,
+    "proxy": "",
+    "verify_ssl": true,
+    "endpoint": "",
+    "models_path": "",
+    "content_path": "",
+    "auth_style": "",
+    "auth_header": "",
+    "json_mode": true,
+    "max_tokens_field": "",
+    "system_role": "",
+    "extra_headers": {},
+    "extra_body": {},
+    "name": ""
+  },
+  "ones": {
+    "base_url": "",
+    "token": "",
+    "project_uuid": "",
+    "team_uuid": "",
+    "email": "",
+    "password": ""
+  },
+  "figma": {
+    "token": ""
+  },
+  "pagelogin": {
+    "enabled": false,
+    "email": "",
+    "password": ""
+  },
+  "extensions": {
+    "skills": [],
+    "mcp": []
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "id": "fixture-failing-20260922-191330",
+  "created": "2026-09-22 19:13:30",
+  "status": "invalid",
+  "defect": {
+    "id": "FIXTURE-C",
+    "title": "【定时任务】重复类型选择「不重复」后开始时间被回退为默认值",
+    "description": "<p>【测试环境】test-develop</p><p>【测试分支】develop</p><p>【测试账号】demo/Acme@123456</p><p>【页面路径】/agent-workspace/schedule</p><p>【缺陷描述】新建定时任务时，重复类型选择「不重复」后开始时间输入框失焦即被回退为 08:00 默认值，无法保存自定义时间。涉及观察日期/时间控件的可编辑性。接口 test-develop-mysql.acme.cn/api/api/runtime/ai/schedule/create。</p>"
+  },
+  "analysis": {
+    "keywords": ["schedule", "schedule-repeat", "startTime", "重复类型", "不重复", "08:00"]
+  }
+}

@@ -1,0 +1,70 @@
+# ONES connection
+ones:
+  base_url: https://ones.your-company.com
+  token: ${ONES_TOKEN}              # Personal Access Token
+  project_uuid: ${ONES_PROJECT_UUID}
+
+# AI 接入 —— 全部可配，支持中转站/自建网关/本地推理，不依赖厂商 SDK
+ai:
+  # 协议：anthropic（Messages）| openai（Chat Completions）| custom（自建/异构网关）
+  provider: anthropic
+  base_url: ${AI_BASE_URL}            # 留空用官方地址；中转站填自己的域名，如 https://relay.foo.com/v1
+  model: claude-3-5-sonnet-latest     # 任意该端点支持的模型名，可点界面「拉取列表」
+  api_key: ${ANTHROPIC_API_KEY}       # 留空即自动降级为 Mock 模式
+  mock: false                         # true = 强制不调外网
+
+  temperature: 1.0
+  max_tokens: 4000
+  top_p:                              # 留空则不传该字段
+  timeout: 120
+  proxy:                              # 例如 http://127.0.0.1:7890
+  verify_ssl: true                    # 内网自签证书才关
+
+  # 端点形状：base_url 与 endpoint 拼成完整请求地址
+  endpoint: /v1/messages              # openai 协议下一般是 /chat/completions
+  models_path: /v1/models             # 「拉取列表」按钮打的路径
+  content_path: content.0.text        # 从响应 JSON 取正文的点号路径，数字=数组下标
+                                      # openai 协议通常是 choices.0.message.content
+                                      # 网关若把结果放在 data.reply，就填 data.reply
+  max_tokens_field: max_tokens        # 部分新端点要求 max_completion_tokens
+  system_role: system                 # 有的网关把 system 改名为 developer
+  json_mode: false                    # 是否发 response_format:{type:json_object}
+
+  # 鉴权：bearer | x-api-key | header | query | none
+  auth_style: x-api-key
+  auth_header:                        # header/query 模式下的字段名，如 X-Auth-Token
+
+  extra_headers: {}                   # {"X-Tenant": "h3yun"}
+  extra_body: {}                      # {"enable_thinking": false} 网关私有参数
+
+# Target repo. branch is only checked, never auto-switched; leave "" to skip the check.
+repo:
+  path: ${REPO_PATH}                # absolute path, e.g. D:/code/your-repo
+  branch: develop
+
+# Verification gate — decides whether a proposal is safe to approve.
+# Layer 1 (best): explicit commands. Layer 2: auto-detected from package.json.
+# Layer 3 (worst): bracket/quote balance only, and the UI says so loudly.
+gate:
+  commands:
+    - name: typecheck
+      cmd: npm run type-check
+    - name: lint
+      cmd: npm run lint
+    - name: test
+      cmd: npm run test:unit -- --run
+  # runner: pnpm        # optional prefix, e.g. "pnpm dlx" / "npx --no-install"
+  degraded: true        # keep doing syntax-level checks even without commands
+
+# Playwright page verification (needs a running dev server; reports "unreachable" honestly)
+playwright:
+  base_url: http://localhost:3000
+  headless: true
+  screenshot_dir: ./screenshots
+
+# Where proposals wait for a human. Nothing touches repo.path until you approve one.
+proposals:
+  output_dir: ./proposals
+
+knowledge_base:
+  output_dir: ./knowledge_base
