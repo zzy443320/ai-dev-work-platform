@@ -293,3 +293,11 @@
 - 文件：web/server.py、run.py、scripts/mock_data.py、tests/mock_repo.py（新）、tests/make_mock_repo.py（新）、tests/kb_fixture.py（新）、tests/temp_server.py（新）、tests/fixtures/mock_repo/（新）、tests/check_kb_patterns.py、tests/check_kb_render.py、tests/check_kb_patterns_ui.py、tests/test_browser_e2e.py、tests/test_browser_guards.py、tests/check_pager.py、tests/check_expand_modal.py、tests/test_relay_transport.py、config.test.yaml、README.md、.gitattributes（新）
 - 影响：需重启后端（目录解析与端口都有改动），静态文件刷新页面即生效。知识库用例不再依赖生产数据，两条历史遗留假工单（`COMPAT-TEST-1` / `STREAM-TEST-1`）现在可按 README「已知限制」里的步骤放心清掉，模式聚类断言改为对夹具生效。回归：知识库模式聚类 18/18、知识库渲染 PASS、双层视图 PASS；另做了一次真实新克隆演练（冷启动、空知识库下的全部只读端点、mock 仓库自举、演示工单跑通、八个页签无报错）全部通过。
 
+## 2026-09-24 17:20 · 文档 · 快速开始步骤顺序修正：指向 mock 仓库的命令要等服务起来
+
+- 内容：README「快速开始」第 2 步把两条命令写反了——先跑 `tests/make_mock_repo.py --set-server` 再启动服务。照抄的人会看到 `[skip] 8765 上没有可用的服务`，却以为仓库已经指过去了。
+- 做法：`--set-server` 本质是 `POST /api/settings`，必须服务先跑着；把「启动服务」提到前面，并注明另开一个终端执行配置命令。脚本本身的行为是对的（连不上就明确打印 skip 提示并退出 0），只有文档顺序有误导。
+- 文件：README.md、CHANGELOG.md
+- 影响：纯文档，不改代码。刷新页面即可看到新的更新日志条目。
+
+
