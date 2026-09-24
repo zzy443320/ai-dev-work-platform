@@ -401,7 +401,7 @@ class DefectAnalyzer:
         # 模型按「宁缺勿猜」护栏拒出补丁时，会在 root_cause/explanation 里点名
         # 需要看的目录/文件。分两路补窗口：① 点名的**具体文件**直接强制开窗
         # （不依赖得分排序——真改动点可能排在读取名额之外，本案
-        # schedule-repeat.vue 排第 5）；② 目录提示走重扫投票。
+        # repeat-form.vue 排第 5）；② 目录提示走重扫投票。
         retry_note = ""
         if not blocks and not ai_result.get("error"):
             hints = self._model_hints(ai_result, path_tokens)
@@ -533,7 +533,7 @@ class DefectAnalyzer:
                         for k in ("root_cause", "explanation", "prevention"))
         raw = re.findall(r"\b[\w-]+(?:/[\w-]+)+\b", text, re.A)
         raw += re.findall(r"[\w./-]+\.(?:ts|tsx|js|jsx|vue)", text)
-        # 裸文件名（schedule-repeat.vue，无斜杠）不能过 _clean_path_tokens
+        # 裸文件名（repeat-form.vue，无斜杠）不能过 _clean_path_tokens
         # 的「必须含 /」检查——单独放行，交给 _resolve_file_hint 解析
         raw_files = [t for t in raw if "/" not in t
                      and re.search(r"\.(?:ts|tsx|js|jsx|vue)$", t, re.I)]
@@ -765,7 +765,7 @@ class DefectAnalyzer:
     def _resolve_file_hint(self, hint: str) -> str:
         """把模型点名的文件提示解析成仓库内真实相对路径。
 
-        模型常只给裸文件名（schedule-repeat.vue）或带 ./ 前缀的路径；
+        模型常只给裸文件名（repeat-form.vue）或带 ./ 前缀的路径；
         先按原样认，再按「路径以 /{hint} 结尾」在 ls-files 里匹配——
         解析失败等于二次定位白做（强制开窗窗口根本打不开）。"""
         hint = (hint or "").lstrip("./").replace("\\", "/")
@@ -914,7 +914,7 @@ class DefectAnalyzer:
             # 目录内语义命名的文件提到最前。⚠ 必须稳定重排（named 全部保留）：
             # 旧写法 named[:2] + 非 named 会把 named[2:] 整段丢掉——tier-0
             # 修好后 top 里几乎全是目标目录文件，named 膨胀，本案
-            # schedule-editor.vue/schedule-repeat.vue 就这样被挤出了窗口
+            # schedule-form.vue/repeat-form.vue 就这样被挤出了窗口
             top = ([f for f in top if f in named_set]
                    + [f for f in top if f not in named_set])
         return top[: self.max_files * 3]
@@ -1010,8 +1010,8 @@ class DefectAnalyzer:
         if len(text) <= max(self.file_cap_bytes * 3, 32000):
             return text, (f"{rel}: {note}" if note else "")
         # 大文件：优先给「关键词命中点包围窗口」，而不是单一的 _anchor_line。
-        # 单锚点曾让 schedule-repeat.vue 只给出 a-time-picker 的模板行，
-        # 真正要改的 handleTimeChange 实现（`time || '08:00'`）落在窗口之外——
+        # 单锚点曾让 repeat-form.vue 只给出 a-time-picker 的模板行，
+        # 真正要改的 onTimeChange 实现（`time || '08:00'`）落在窗口之外——
         # 模型据此判定「窗口不足」而按护栏拒出补丁。命中点包围窗口保证
         # 定义处与调用处同时在窗口内。
         hits = self._hit_lines(lines, keywords)
@@ -1047,8 +1047,8 @@ class DefectAnalyzer:
         全文，用来定窗会把窗口拉成随机一段，反而错过真正的修改点。
 
         还必须顺着模板事件处理器展开：本案工单只写了现象（失焦回退 08:00），
-        不可能写出 `handleTimeChange` 这个函数名——但它就挂在
-        `<a-time-picker @change="handleTimeChange">` 上。只按关键词定窗时
+        不可能写出 `onTimeChange` 这个函数名——但它就挂在
+        `<a-time-picker @change="onTimeChange">` 上。只按关键词定窗时
         窗口停在模板行，真正要改的 `time || '08:00'`（方法体）被留在窗口外，
         模型据此判定「窗口不足」而按护栏拒出补丁。"""
         ident_kws = getattr(self, "_ident_kws", set()) or set()
@@ -1066,7 +1066,7 @@ class DefectAnalyzer:
             if not any(k.lower() in low for k in strong):
                 continue
             out.append(i)
-            # @change="handleTimeChange" / @input="handleDateChange" / @blur="fn"
+            # @change="onTimeChange" / @input="onDateChange" / @blur="fn"
             for m in re.finditer(r"@[\w.-]+\s*=\s*[\"']([A-Za-z_$][\w$]*)", ln):
                 if m.group(1) not in handler_names:
                     handler_names.append(m.group(1))

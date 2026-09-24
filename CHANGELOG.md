@@ -302,8 +302,8 @@
 
 ## 2026-09-24 18:05 · 安全 · 发布树脱敏与裁剪：业务标识换占位，定位回归用例移出
 
-- 内容：把「公开仓库里不该出现的东西」清干净。上一轮已确认凭据、个人标识、本机路径零命中，这轮补上业务标识：真实工单号（`L4Zo7p9*` 系列、`214115`/`214162`/`205417`）→ `DEMO-*`/`10000x`；`CloudPivot`/`LUI` 包路径与内部路由（`packages/cloudpivot-ai/lui/...`、`agent-workspace`、`ai-skill-runtime-log`、`迭代106`）→ `demo`/`demo-workspace`/`demo-skill-log`/`演示`。共 13 个文件 56 处，全部落在注释、文档字符串与测试夹具里，不碰任何功能代码。
-- 做法：① `tests/check_locate_regression*.py` 与 `tests/fixtures/proposals/` 与真实前端单仓**结构性绑定**（要读真仓的 `schedule-repeat.vue`、断言里面 `handleTimeChange(` 的实现），产品路径没法替换——换掉之后这两条用例在本机 13/13、14/14 就不再是同一个断言了。所以它们**移出发布树**（`.gitignore` 拦截 + `git rm --cached`），文件仍留在本地磁盘照常可跑。② 顺手修掉 `tests/repo_guard.py` 的模块 docstring 未闭合（上一轮编辑吃掉了结尾的 `"""`），它会让导入这道闸门的用例直接 SyntaxError。③ README 补一句「发布出去的 `tests/` 自包含」，并说明上面两个文件为何不在其中。
+- 内容：把「公开仓库里不该出现的东西」清干净。上一轮已确认凭据、个人标识、本机路径零命中，这轮补上业务标识：真实工单号 → `DEMO-*` / 序号占位；公司产品的包路径、内部路由与迭代号 → 中性的 `demo` / `演示` 占位（涉及包目录与路由段，此处不复述原文）。共 13 个文件 56 处，全部落在注释、文档字符串与测试夹具里，不碰任何功能代码。
+- 做法：① `tests/check_locate_regression*.py` 与 `tests/fixtures/proposals/` 与真实前端单仓**结构性绑定**（要读真仓某个日程组件的具体文件、并断言其中某个处理函数的实现），产品路径没法替换——换掉之后这两条用例在本机 13/13、14/14 就不再是同一个断言了。所以它们**移出发布树**（`.gitignore` 拦截 + `git rm --cached`），文件仍留在本地磁盘照常可跑。② 顺手修掉 `tests/repo_guard.py` 的模块 docstring 未闭合（上一轮编辑吃掉了结尾的 `"""`），它会让导入这道闸门的用例直接 SyntaxError。③ README 补一句「发布出去的 `tests/` 自包含」，并说明上面两个文件为何不在其中。
 - 文件：scripts/analyzer.py、scripts/chat.py、scripts/kb_patterns.py、scripts/ones_fetcher.py、scripts/pipeline.py、scripts/verifier.py、tests/check_expand_modal.py、tests/check_live_stream.py、tests/check_page_login.py、tests/check_verify_page.py、tests/kb_fixture.py、tests/repo_guard.py、web/static/app.js、.gitignore、README.md、CHANGELOG.md
 - 影响：纯注释/夹具/文档，功能零变化。发布出去的 86 个文件里，凭据、个人标识、本机绝对路径、业务包路径与真实工单号均为零命中；在无 `ui_settings.json`/`proposals/`/`.venv` 的归档目录里离线用例全绿、服务能冷启动。回归：73 个 Python 文件全量 `py_compile` 通过；离线用例全绿（含本地保留的定位回归 13/13 与 14/14）。
 
