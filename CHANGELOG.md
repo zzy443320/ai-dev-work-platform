@@ -285,3 +285,11 @@
 - 做法：① 说明条按句分行扩到长任务作业与两处 panel-note，行内代码两侧加缝；② `.field-inline` 标签禁止折行；③ 任务表单留白规则重写成「相邻块统一 12px、紧跟标题和自带下边距的按钮行不叠加」，并把长任务作业纳入；④ 统计说明条分段间距加到 5px；⑤ CHANGELOG 书写约定新增：正文别写字面序号区间（会被自动拆行误拆成碎行），已修掉两条这类写法。
 - 文件：web/static/index.html web/static/style.css web/static/app.js CHANGELOG.md tests/check_layout_ui.py
 - 影响：纯静态展示层，刷新页面即生效。`check_layout_ui` 扩到 12 项（新增统计分段间隔/长任务分行/标签不折行/长任务表单间隔），12/12 通过；`check_changelog(.py/_ui.py)` 回归全绿。
+
+## 2026-09-24 17:05 · 改进 · 让「下载下来就能直接跑」：mock 仓库自举、知识库用例脱敏、CLI 演示工单
+
+- 内容：把「别人克隆这个仓库能不能用」这条线补齐。三处硬伤：① 四个界面用例依赖本机写死的 mock 仓库路径和一个固定提交号，换台机器必然找不到仓库、断言必然红；② 三个知识库用例直接对**真实知识库**断言真实工单号，新克隆没有那份数据，而且为了保住这些断言，生产知识库里两条测试用假工单一直不敢删；③ 没配 ONES 时流水线拉不到任何工单，但 README 的「快速开始」写着 `--mock` 能跑出东西，实际上只会得到 0 条。现在：mock 目标仓库由 `tests/mock_repo.py` 一键生成（`tests/make_mock_repo.py --set-server` 顺手把服务指过去）；知识库用例改用 `tests/kb_fixture.py` 的脱敏夹具并自带临时实例；新增 `run.py --demo`，不接 ONES 也能把「提案 → 审 diff → 采纳」完整走一遍。
+- 做法：① 收掉测试里的本机绝对路径（截图目录、relay 临时仓库一律从 `__file__` 推导），mock 仓库路径只由 `tests/mock_repo.py` 解析（`MOCK_REPO` 优先，默认与 `web/server.py` 的 `DEFAULT_REPO` 同规则），`test_browser_guards` 不再比对写死的提交号，改成「仍停在唯一那次 init 提交」的语义；② 新增 `tests/temp_server.py`：把设置文件与七个数据目录全指到临时目录、端口随机、退出即清理，界面用例照抄十几行即可完全隔离；③ `web/server.py` 把六个数据目录的环境变量开关补齐（原先只有产出物与会话目录有），端口支持 `PORT`；④ `scripts/mock_data.py` 新增 `DEMO_DEFECT`，`SAMPLE_DEFECTS` 保持空列表——演示数据**只由 `--demo` 显式注入**，拉取失败绝不回退假数据；⑤ `.gitattributes` 统一换行符（文本一律 LF 入库，bat 检出为 CRLF）。
+- 文件：web/server.py、run.py、scripts/mock_data.py、tests/mock_repo.py（新）、tests/make_mock_repo.py（新）、tests/kb_fixture.py（新）、tests/temp_server.py（新）、tests/fixtures/mock_repo/（新）、tests/check_kb_patterns.py、tests/check_kb_render.py、tests/check_kb_patterns_ui.py、tests/test_browser_e2e.py、tests/test_browser_guards.py、tests/check_pager.py、tests/check_expand_modal.py、tests/test_relay_transport.py、config.test.yaml、README.md、.gitattributes（新）
+- 影响：需重启后端（目录解析与端口都有改动），静态文件刷新页面即生效。知识库用例不再依赖生产数据，两条历史遗留假工单（`COMPAT-TEST-1` / `STREAM-TEST-1`）现在可按 README「已知限制」里的步骤放心清掉，模式聚类断言改为对夹具生效。回归：知识库模式聚类 18/18、知识库渲染 PASS、双层视图 PASS；另做了一次真实新克隆演练（冷启动、空知识库下的全部只读端点、mock 仓库自举、演示工单跑通、八个页签无报错）全部通过。
+

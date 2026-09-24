@@ -47,13 +47,27 @@ Figma ──▶ 拉取设计稿结构 ──▶ AI 生成代码 ──▶ 产出
 python -m venv .venv && .venv/Scripts/pip install -r requirements.txt
 playwright install chromium          # 一次性，约 150 MB；不装也能跑，页面验证会标记 skipped
 
-cp config.yaml.example config.yaml   # 填 repo 路径与 gate 命令
-.venv/Scripts/python.exe run.py --config config.yaml --mock --limit 4 --skip-verify
-.venv/Scripts/python.exe -m web.server   # → http://127.0.0.1:8765
+# 1) 先看「不接 ONES」的完整效果：造一个 mock 目标仓库当落点，跑一条演示工单
+.venv/Scripts/python.exe tests/mock_repo.py
+.venv/Scripts/python.exe run.py --config config.test.yaml --demo --limit 1
+
+# 2) 开界面审阅 diff → 采纳（采纳是唯一会写目标仓库的动作，且不 commit、不 push）
+.venv/Scripts/python.exe tests/make_mock_repo.py --set-server   # 把界面的目标仓库指到 mock 仓库
+.venv/Scripts/python.exe -m web.server                          # → http://127.0.0.1:8765
+
+# 3) 接自己的项目：复制配置模板，填 repo 路径 / ONES / 验收命令
+cp config.yaml.example config.yaml
+.venv/Scripts/python.exe run.py --config config.yaml --limit 3
 ```
 
-没有 `ANTHROPIC_API_KEY` 时走 mock 模式，界面与健康条会明确标出 `AI: mock`——此时根因文字来自
-内置模板，只有 SEARCH/REPLACE 是按真实文件生成的占位补丁，用来验证链路，不代表真实分析结论。
+- **没有 ONES 令牌也能先跑起来**：`--demo` 注入一条固定的演示工单（工单号 `DEMO-1`、标题带「演示」），
+  走的是与真实工单完全相同的流水线。演示数据**只由 `--demo` 显式注入**，拉取失败时**不会**自动
+  兜底成假数据——宁可不产出，也不让演示数据混进提案与知识库。
+- **没有 `ANTHROPIC_API_KEY` 时走 mock 模式**，界面与健康条会明确标出 `AI: mock`——此时根因文字来自
+  内置模板，只有 SEARCH/REPLACE 是按真实文件生成的占位补丁，用来验证链路，不代表真实分析结论。
+- 界面上的「运行 / 试运行」拉的是真实 ONES 工单，所以要先在「扩展 → 大模型 / ONES」里配好地址与令牌；
+  没配时会如实报「拉取失败、0 条工单」，不会假装成功。
+- 端口默认 8765，可用 `PORT=9000` 覆盖（例如想另起一个临时实例做验证，而不打断手头这个）。
 
 ## 模型接入：全部由配置决定，不写死任何厂商
 
@@ -275,6 +289,15 @@ JSON；工具结果回灌给它，最多 5 轮；查到够了就给正式回答�
 .venv/Scripts/python.exe tests/test_browser_guards.py    # gate_failed 强制采纳勾选、脏区横幅
 .venv/Scripts/python.exe tests/test_browser_ai_config.py # 在界面上配好一个非标准中转站并验证
 
+# mock 目标仓库：上面两个「会真的写仓库」的用例的落点（只在项目根同级建一个一次性仓库，幂等）
+.venv/Scripts/python.exe tests/mock_repo.py
+.venv/Scripts/python.exe tests/make_mock_repo.py --set-server   # 顺带把 8765 的服务指过去
+
+# 知识库：自带脱敏夹具（tests/kb_fixture.py），新克隆直接可跑，不读你的真实知识库
+.venv/Scripts/python.exe tests/check_kb_patterns.py             # 18 项：聚类、模式卡结构、幂等、兜底
+.venv/Scripts/python.exe tests/check_kb_render.py               # Markdown 渲染 + 夹具卡片弹窗（自带临时实例）
+.venv/Scripts/python.exe tests/check_kb_patterns_ui.py          # 模式/缺陷卡双层视图（自带临时实例）
+
 # 长任务作业：离线逻辑 / HTTP 层 / 界面三层各一份，改这块三个都要跑
 .venv/Scripts/python.exe tests/check_team.py                          # 48 项：编排、总线、返工、产出物、不写仓库
 .venv/Scripts/python.exe tests/check_team_api.py http://127.0.0.1:8765 # 34 项：SSE 收尾、介入投递与 ack、记录回看
@@ -289,10 +312,20 @@ JSON；工具结果回灌给它，最多 5 轮；查到够了就给正式回答�
 .venv/Scripts/python.exe tests/check_chat_ui.py      # 37 项：页签位置、空态、流式回答、会话切换/清空/删除、改动提案 → 产出物 → 弹窗、开关记忆、Enter 发送
 ```
 
-后三个需要 `web.server` 已在 8765 端口运行、`playwright install chromium` 已装、以及
-`config.test.yaml` 指向的 mock 仓库处于 `init` 干净状态。三个脚本自带清理，浏览器测试会临时
-把 AI 切成 Mock（见 `tests/settings_state.py`），不受环境里真实密钥配置影响。
-`check_team_ui.py` 与 `tests/settings_state.py` 一样把地址写死为 8765，临时实例跑不了它。
+### 跑之前要准备什么
+
+| 用例 | 需要 |
+|---|---|
+| `test_safety.py` / `test_relay_transport.py` / `check_team.py` / `check_chat.py` / `check_usage.py` / `check_kb_patterns.py` / `check_locate_regression*.py` / `check_changelog.py` / `check_artifact_diff.py` | **什么都不用**（纯离线，自带临时仓库/夹具） |
+| `check_kb_render.py` / `check_kb_patterns_ui.py` | 只要 `playwright install chromium`——它们自己起临时实例、用 `tests/kb_fixture.py` 的**脱敏夹具知识库**，不读你的真实知识库 |
+| `check_chat_ui.py` / `check_usage_ui.py` | 同上（自带临时实例与临时设置） |
+| `check_team_api.py` / `check_team_ui.py` / `check_live_stream.py` / `check_pager.py` / `check_expand_modal.py` / `check_panel_fold.py` / `check_stages_ui.py` / `check_layout_ui.py` / `check_live_ui.py` / `check_changelog_ui.py` / `e2e_extensions_check.py` / `check_kb_patterns_ui.py <URL>` | `web.server` 已在 8765 运行（或把地址当参数传进去） |
+| `test_browser_e2e.py` / `test_browser_guards.py` | 服务指向 **mock 目标仓库**：先 `python tests/make_mock_repo.py --set-server` |
+
+`tests/mock_repo.py` 是 mock 仓库路径的**唯一来源**（环境变量 `MOCK_REPO` 优先，默认落在项目根的
+同级目录 `../test-mock-repo`，与 `web/server.py` 的默认值一致），所以克隆到任何位置都能用；
+`tests/make_mock_repo.py` 负责把它建出来。`check_locate_regression*.py` 优先读本地 `proposals/`
+（含你的真实分析数据），缺失时自动回退到 `tests/fixtures/proposals/` 的脱敏夹具——所以新克隆也跑得通。
 
 ⚠ **`test_browser_e2e.py` / `test_browser_guards.py` 会真的点「采纳 / 强制采纳」，也就是真的写目标仓库。**
 它们因此带一道硬闸门（`tests/server_guard.py`）：先比对服务配置的仓库路径，不是你期望的那个就打印
@@ -306,10 +339,13 @@ lint——跑完这类用例，建议顺手看一眼 `/api/health` 的 `ai_mode`
 界面用例点原生 `<select>` 一律用 `tests/ui_select.py` 的 `pick_select()`，不要用 Playwright 的
 `select_option()`：原生下拉已被自绘组件隐藏，后者必然超时。
 
-**测试隔离靠环境变量**：`web/server.py` 的全部数据目录与配置文件都能被覆盖——`SETTINGS_FILE`、
-`CHAT_DIR`、`ARTIFACT_DIR`、`USAGE_DIR`、`REPO_PATH`。自检用例起的临时实例会把这五个全部指向
-临时目录，所以它们**读不到你的真实配置、也写不进你的真实目录**（`check_chat_ui.py` 就是这么做的，
-可以照抄它的 `start_server()`）。给 `web/server.py` 新增落盘目录时，请沿用这个约定加一个环境变量开关。
+**测试隔离靠环境变量**：`web/server.py` 的**全部**数据目录与配置文件都能被覆盖——`SETTINGS_FILE`、
+`KB_DIR`、`PROPOSAL_DIR`、`ARTIFACT_DIR`、`TEAM_DIR`、`CHAT_DIR`、`SCREENSHOT_DIR`（账本在
+`scripts/usage.py` 里读 `USAGE_DIR`）、目标仓库 `REPO_PATH`、端口 `PORT`。自检用例起的临时实例会把这些
+全部指向临时目录，所以它们**读不到你的真实配置、也写不进你的真实目录**。要照抄就直接用
+`tests/temp_server.py` 的 `serve(kb="fixture")`（`check_kb_render.py` 只有十几行胶水）——它一次性把这套
+环境变量都设好、随机端口、退出即清理；`check_chat_ui.py` 里也有一份等价的 `start_server()`。
+给 `web/server.py` 新增落盘目录时，请沿用这个约定加一个环境变量开关。
 
 ## 产物目录
 
@@ -320,11 +356,16 @@ chat_sessions/      问答会话（一个会话一份 JSON，含每轮引用的�
 team_runs/          长任务作业记录（计划、各角色轨迹、人工介入；不含逐字输出）——已 gitignore
 screenshots/        before/after 截图——已 gitignore
 knowledge_base/     知识库两层：<分类>/缺陷卡 + _patterns/模式卡 + INDEX.md + _stats.json——已 gitignore（知识库沉淀的是你自己项目的缺陷数据，属私有业务数据，请勿公开）
-ui_settings.json    界面配置，含密钥——已 gitignore，切勿提交；不创建也能启动（自动生成默认配置），可参考 ui_settings.example.json
+ui_settings.json    界面配置，含密钥——已 gitignore，切勿提交；首次改配置时才落盘，不创建也能启动（用内置默认值），可参考 ui_settings.example.json
 ```
+
+以上目录都由服务**在启动时自动创建**（缺目录不影响启动，也不用手工 mkdir）；想换位置就设对应的
+环境变量（`KB_DIR` / `PROPOSAL_DIR` / `ARTIFACT_DIR` / `TEAM_DIR` / `CHAT_DIR` / `SCREENSHOT_DIR` /
+`USAGE_DIR`，见「测试」一节的隔离说明）。
 
 ## 已知限制
 
+- `--mock` 现在只表示「不调 ONES」：内置示例工单已移除，单独用它**不会**产出任何工单（拉取失败也不回退假数据）。不接 ONES 想看完整效果，用 `--demo`（注入固定的 `DEMO-1`）。
 - mock 模式的 SEARCH/REPLACE 只对"未做空值校验"这一类缺陷生成真实可套用补丁，其余分类返回空补丁（提案记为 `invalid`），这是刻意的——宁可不改，也不要猜。
 - degraded 闸门的括号/引号检查不解析正则字面量，极端情况下可能误报；它只是最后一道兜底，不能替代真实构建。
 - 像素 diff 需要 `before` 基线，而基线只能在采纳时才有意义，因此首次采纳的对比常是 `no_baseline`；重跑同一条工单即可拿到基线。
@@ -332,7 +373,7 @@ ui_settings.json    界面配置，含密钥——已 gitignore，切勿提交�
 - 长任务作业的介入**不在模型调用中途生效**：模型一次请求一旦发出就无法打断，指令在下一个安全边界（每次模型调用前 / 每个工作项结束时）签收。界面已如实标注，不要把它当成实时抢占。
 - 长任务作业的逐字思考/输出只在 SSE 流里，不落盘；关掉页面后只能从 `team_runs/` 回放非逐字的部分。
 - `team_runs/` 里的记录会一直累积，目前没有自动清理，定期手动删除即可。
-- 知识库里混着两条**测试用假工单**（`COMPAT-TEST-1`、`STREAM-TEST-1`，标题带【兼容验证】/【流式验证】），是早期 `test_relay_transport.py` / `check_live_stream.py` 把提案写进真实 `proposals/` 与 `knowledge_base/` 留下的。它们**不能直接删**：`tests/check_kb_patterns.py` 直接对着真实知识库断言「同一处缺陷的不同工单（含验证用假工单）归入同一模式」，删了这条断言就红。要彻底清掉，得先让该用例自己造 fixture、不再依赖生产数据。
+- 知识库里若还混着早期留下的两条**测试用假工单**（`COMPAT-TEST-1`、`STREAM-TEST-1`，标题带【兼容验证】/【流式验证】），那是 `test_relay_transport.py` / `check_live_stream.py` 当年把提案写进真实 `proposals/` 与 `knowledge_base/` 的遗留。**现在可以放心删了**：知识库用例已改为自带脱敏夹具（`tests/kb_fixture.py`），不再对真实知识库断言。删除步骤：备份后删掉对应提案 JSON 与卡片，再跑 `python scripts/rebuild_kb_cards.py` 重刷派生视图（`INDEX.md` / `_stats.json` / `_patterns/` 都是派生的，重刷即一致；无人引用的模式卡会被自动剪掉）。为免今后再污染，这类用例请对着临时实例跑（`PROPOSAL_DIR` / `KB_DIR` 指到临时目录）。
 - 手工清理知识库残留时，`INDEX.md`、`_stats.json`、`_patterns/` 都是**派生视图**：删掉提案 JSON 与缺陷卡后必须跑一次 `python scripts/rebuild_kb_cards.py` 重刷，否则索引里还留着已删工单；无人引用的模式卡会在重刷时被自动剪掉。
 - `test_browser_ai_config.py` 会对本地假中转站发**真实 HTTP 请求**（就是它要验证的能力），所以它的连通性测试会如实进账本（`kind=ai_test`，界面显示「连通性测试」）。看到模型名是测试用的 `gw-claude-pro` 不用奇怪，那是用例留下的两条记录。账本是 append-only 的，不做事后篡改。
 - 用量统计里标了「估算」的数字来自字符折算，只能看量级；要让统计更准，就用会回 usage 的模型/网关（非流式调用通常都会回）。
