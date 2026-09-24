@@ -52,8 +52,9 @@ playwright install chromium          # 一次性，约 150 MB；不装也能跑�
 .venv/Scripts/python.exe run.py --config config.test.yaml --demo --limit 1
 
 # 2) 开界面审阅 diff → 采纳（采纳是唯一会写目标仓库的动作，且不 commit、不 push）
-.venv/Scripts/python.exe tests/make_mock_repo.py --set-server   # 把界面的目标仓库指到 mock 仓库
 .venv/Scripts/python.exe -m web.server                          # → http://127.0.0.1:8765
+#    另开一个终端，把界面的目标仓库指到上面那个 mock 仓库（会先把原值打印出来，方便切回）
+.venv/Scripts/python.exe tests/make_mock_repo.py --set-server
 
 # 3) 接自己的项目：复制配置模板，填 repo 路径 / ONES / 验收命令
 cp config.yaml.example config.yaml
