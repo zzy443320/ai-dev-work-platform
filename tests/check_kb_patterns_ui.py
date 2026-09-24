@@ -9,9 +9,12 @@
    renderMarkdown 原来不支持链接，会原样显示 `[id](path)`；
 4. 切到缺陷卡片视图 → 数量文案与卡片渲染正常，且刷新后视图保持（localStorage）。
 
-用法：
-    python tests/check_kb_patterns_ui.py [base_url]
-默认 http://127.0.0.1:8765（可用另一个端口的临时实例做验证，不动正在跑的服务）。
+默认自带一个临时实例（`tests/temp_server.py`），知识库用 `tests/kb_fixture.py`
+的脱敏夹具——所以**新克隆下来直接能跑，也不碰你的真实数据**。
+想对着正在跑的实例验证时，把地址当参数传进来：
+
+    python tests/check_kb_patterns_ui.py                      # 自带夹具临时实例
+    python tests/check_kb_patterns_ui.py http://127.0.0.1:8765 # 对着现有实例
 """
 import re
 import sys
@@ -19,18 +22,19 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from playwright.sync_api import sync_playwright  # noqa: E402
 
-BASE = sys.argv[1].rstrip("/") if len(sys.argv) > 1 else "http://127.0.0.1:8765"
+import temp_server  # noqa: E402
 
 
-def main() -> int:
+def run(base: str) -> list:
     failures = []
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         page = browser.new_page(viewport={"width": 1600, "height": 1000})
-        page.goto(f"{BASE}/", wait_until="networkidle")
+        page.goto(f"{base}/", wait_until="networkidle")
         page.evaluate("() => switchTab('defect')")   # 知识库面板在缺陷修复页；默认页签是统计面板
         page.evaluate("() => localStorage.setItem('kb-view', 'pattern')")
         page.evaluate("() => loadKb()")
@@ -42,10 +46,9 @@ def main() -> int:
             failures.append(f"模式视图数量文案异常：{count_text!r}")
         cards = page.query_selector_all("#cards .kb-card.pattern")
         if not cards:
-            failures.append("模式卡未渲染")
+            failures.append("模式卡未渲染（知识库为空？夹具没建起来？）")
             browser.close()
-            print("FAIL: " + "；".join(failures))
-            return 1
+            return failures
         first_text = cards[0].inner_text()
         if "复发" not in first_text:
             failures.append(f"模式卡缺少复发徽标：{first_text[:60]!r}")
@@ -111,6 +114,16 @@ def main() -> int:
             page.evaluate("() => setKbView('pattern')")
 
         browser.close()
+    return failures
+
+
+def main() -> int:
+    arg = next((a for a in sys.argv[1:] if not a.startswith("-")), None)
+    if arg:
+        failures = run(arg.rstrip("/"))
+    else:
+        with temp_server.serve(kb="fixture") as srv:
+            failures = run(srv.base)
 
     if failures:
         for f in failures:

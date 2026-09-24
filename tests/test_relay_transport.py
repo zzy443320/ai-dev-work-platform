@@ -20,7 +20,7 @@ from scripts.pipeline import AIDefectFixerPipeline  # noqa: E402
 _pl.SAMPLE_DEFECTS[:] = [TEST_DEFECT]
 
 FAIL = []
-TMP = Path("C:/Users/27409/Desktop/ones-defect-auto-fixer/.relay-test-repo")
+TMP = Path(__file__).resolve().parent.parent / ".relay-test-repo"
 
 
 def check(name, cond, extra=""):

@@ -57,22 +57,25 @@ from scripts.usage import KIND_LABELS as USAGE_KIND_LABELS  # noqa: E402
 
 WEB_DIR = Path(__file__).resolve().parent
 STATIC_DIR = WEB_DIR / "static"
-KB_DIR = PROJECT_ROOT / "knowledge_base"
-SCREENSHOT_DIR = PROJECT_ROOT / "screenshots"
-PROPOSAL_DIR = PROJECT_ROOT / "proposals"
-ARTIFACT_DIR = Path(os.environ.get("ARTIFACT_DIR") or (PROJECT_ROOT / "artifacts"))
+# 六个数据目录默认落在项目根，**全部**可由环境变量覆盖——自检用例起临时实例时
+# 把这些指到临时目录，就既读不到也写不进你的真实数据（约定见 README「测试」一节：
+# 给本文件新增落盘目录时，请一并加一个环境变量开关）。缺目录会在启动时自动建。
+def _data_dir(env: str, default: Path) -> Path:
+    return Path(os.environ.get(env) or default)
+
+
+KB_DIR = _data_dir("KB_DIR", PROJECT_ROOT / "knowledge_base")
+SCREENSHOT_DIR = _data_dir("SCREENSHOT_DIR", PROJECT_ROOT / "screenshots")
+PROPOSAL_DIR = _data_dir("PROPOSAL_DIR", PROJECT_ROOT / "proposals")
+ARTIFACT_DIR = _data_dir("ARTIFACT_DIR", PROJECT_ROOT / "artifacts")
 # 长任务作业（多子 Agent 协作）的运行记录：一次运行一份 JSON
-TEAM_DIR = PROJECT_ROOT / "team_runs"
-# 问答会话：一个会话一份 JSON（追加式更新）。CHAT_DIR 可由环境变量覆盖——自检用例
-# 起临时实例时指向临时目录，不污染真实会话。
-CHAT_DIR = Path(os.environ.get("CHAT_DIR") or (PROJECT_ROOT / "chat_sessions"))
+TEAM_DIR = _data_dir("TEAM_DIR", PROJECT_ROOT / "team_runs")
+# 问答会话：一个会话一份 JSON（追加式更新）
+CHAT_DIR = _data_dir("CHAT_DIR", PROJECT_ROOT / "chat_sessions")
+for _d in (KB_DIR, SCREENSHOT_DIR, PROPOSAL_DIR, ARTIFACT_DIR, TEAM_DIR, CHAT_DIR):
+    _d.mkdir(parents=True, exist_ok=True)
 # 更新日志：项目根的纯文本，界面右上角「更新」入口的唯一数据源
 CHANGELOG_FILE = PROJECT_ROOT / "CHANGELOG.md"
-SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
-PROPOSAL_DIR.mkdir(parents=True, exist_ok=True)
-ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
-TEAM_DIR.mkdir(parents=True, exist_ok=True)
-CHAT_DIR.mkdir(parents=True, exist_ok=True)
 # 设置文件同样可由环境变量覆盖：自检用例起临时实例时指向临时设置，
 # 从而**根本不会读到/写到你的真实配置**（此前的测试事故就是临时实例误改了真设置）。
 SETTINGS_FILE = Path(os.environ.get("SETTINGS_FILE") or (PROJECT_ROOT / "ui_settings.json"))
@@ -1944,4 +1947,7 @@ def _parse_frontmatter(text: str) -> dict:
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host="127.0.0.1", port=8765, log_level="warning")
+    # 端口默认 8765；PORT 可覆盖，便于同时开一个临时实例做自检而不打断手头这个。
+    _port = int(os.environ.get("PORT") or 8765)
+    print(f"[web] http://127.0.0.1:{_port}  (Ctrl+C 退出)")
+    uvicorn.run(app, host="127.0.0.1", port=_port, log_level="warning")

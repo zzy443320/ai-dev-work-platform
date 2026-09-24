@@ -30,6 +30,7 @@ node_modules/
 # ── 工作区临时文件 ──
 _tmp_*
 *.tmp
+.relay-test-repo/
 .workbuddy/
 .DS_Store
 Thumbs.db

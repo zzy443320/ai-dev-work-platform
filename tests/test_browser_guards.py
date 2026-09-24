@@ -1,6 +1,8 @@
 """Browser test for the two guard paths the plain e2e can't reach:
   * gate_failed proposal -> 采纳 disabled, 强制采纳 needs the risk checkbox
   * dirty repo -> the banner explains why approving will be refused
+
+前置：服务在 :8765，且指向 **mock 仓库**（`python tests/make_mock_repo.py --set-server`）。
 """
 import subprocess
 import sys
@@ -9,15 +11,26 @@ from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
+import mock_repo
 from fixture_defect import TEST_DEFECT
 from server_guard import require_repo
 
-REPO = r"D:/workbuddy默认工作空间/2026-09-20-16-18-02/test-mock-repo"
+REPO = str(mock_repo.path())
 BASE = "http://127.0.0.1:8765"
 SHOTS = Path(__file__).resolve().parent.parent / "screenshots"
 FAIL = []
 GATE_FAIL = ('node -e "process.exit(0)"  # typecheck\n'
              'node -e "console.error(\'TS2345 bad\');process.exit(3)"  # lint')
+
+
+def at_initial_commit() -> bool:
+    """mock 仓库仍停在那一次 `init` 提交上。
+
+    故意不比对具体 SHA：仓库是本地生成的，换了机器/目录 SHA 就会变
+    （旧版写死 f6fc53a，新克隆必然红）。语义是「一次提交都没多出来」。
+    """
+    return (mock_repo.git("rev-list", "--count", "HEAD") == "1"
+            and mock_repo.git("log", "-1", "--format=%s") == "init")
 
 
 def check(name, cond, extra=""):
@@ -56,8 +69,7 @@ def main():
                                "limit": 1, "skip_verify": True}, "POST")["results"][0]
         pid = res["proposal_id"]
         check("提案被判 gate_failed", res["status"] == "gate_failed", res["status"])
-        check("普通采纳不会成功（后端兜底）",
-              git("log", "--oneline") == "f6fc53a init")
+        check("普通采纳不会成功（后端兜底）", at_initial_commit())
 
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
@@ -141,6 +153,8 @@ if __name__ == "__main__":
     # 就给工具留下 mock=true / 闸门命令的残留（2026-09-24 踩过）。
     if not require_repo(BASE, REPO, what="test_browser_guards（会真的强制采纳）"):
         sys.exit(2)
+    # 闸门通过后才动手：确保 mock 仓库就绪且干净（幂等，只碰 mock 仓库）
+    mock_repo.reset()
     from settings_state import force_mock, restore
 
     _prev_ai = force_mock()   # 不让测试受环境里真实 AI 配置影响

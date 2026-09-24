@@ -1,6 +1,7 @@
 """Browser end-to-end: load UI, open a proposal, approve it, undo it.
 
-Requires the server on :8765 and a clean mock repo at f6fc53a.
+前置：服务在 :8765，且指向 **mock 仓库**（`python tests/make_mock_repo.py --set-server`）。
+mock 仓库的路径由 tests/mock_repo.py 统一解析，不再写死本机路径。
 """
 import subprocess
 import sys
@@ -9,11 +10,12 @@ from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
+import mock_repo
 from fixture_defect import TEST_DEFECT
 from server_guard import require_repo
 from ui_select import pick_select
 
-REPO = r"D:/workbuddy默认工作空间/2026-09-20-16-18-02/test-mock-repo"
+REPO = str(mock_repo.path())
 BASE = "http://127.0.0.1:8765"
 SHOTS = Path(__file__).resolve().parent.parent / "screenshots"
 FAIL = []
@@ -63,7 +65,7 @@ def main():
         page.wait_for_selector("#proposals .pcard", timeout=20000)
         check("提案卡片渲染", page.locator("#proposals .pcard").count() > 0,
               f"{page.locator('#proposals .pcard').count()} 张")
-        check("健康条含分支与闸门层级", "master" in page.inner_text("#health"),
+        check("健康条含分支与闸门层级", mock_repo.BRANCH in page.inner_text("#health"),
               page.inner_text("#health")[:130])
         check("计数徽标有内容", page.inner_text("#proposal-count").strip() != "",
               page.inner_text("#proposal-count"))
@@ -170,6 +172,8 @@ if __name__ == "__main__":
     # 就给工具留下 mock=true 的残留（2026-09-24 踩过）。
     if not require_repo(BASE, REPO, what="test_browser_e2e（会真的采纳提案）"):
         sys.exit(2)
+    # 闸门通过后才动手：确保 mock 仓库就绪且干净（幂等，只碰 mock 仓库）
+    mock_repo.reset()
     from settings_state import force_mock, restore
 
     _prev_ai = force_mock()   # 不让测试受环境里真实 AI 配置影响

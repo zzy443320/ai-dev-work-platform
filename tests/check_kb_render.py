@@ -5,15 +5,22 @@
 2. Markdown 表格不被支持，挤成一行文本。
 另做端到端：真实打开一张知识卡片，断言弹窗里表格/代码块结构正确。
 
-用法：python tests/check_kb_render.py（需 web 服务已在 8765 运行）
+数据来源是 `tests/kb_fixture.py` 造的**脱敏夹具**，并且自己起一个临时实例
+（`tests/temp_server.py`，知识库落在临时目录里）：既不需要你先跑出一份知识库，
+也不读生产知识库、不写死任何真实工单号——别人克隆下来直接能跑。
+
+用法：python tests/check_kb_render.py
 """
 import sys
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from playwright.sync_api import sync_playwright  # noqa: E402
+
+import temp_server  # noqa: E402
 
 SAMPLE = """# 卡片标题
 
@@ -52,10 +59,10 @@ REPLACED
 
 def main() -> int:
     failures = []
-    with sync_playwright() as p:
+    with temp_server.serve(kb="fixture") as srv, sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         page = browser.new_page()
-        page.goto("http://127.0.0.1:8765/", wait_until="networkidle")
+        page.goto(f"{srv.base}/", wait_until="networkidle")
 
         html = page.evaluate("md => renderMarkdown(md)", SAMPLE)
 
@@ -76,11 +83,8 @@ def main() -> int:
         if "<ol>" not in html:
             failures.append("有序列表未渲染成 <ol>")
 
-        # 端到端：打开真实知识卡片（最新提案重刷过的那张）
-        page.evaluate(
-            "args => viewCard(args[0], args[1])",
-            ["逻辑", "L4Zo7p9z4ehvrm44"],
-        )
+        # 端到端：打开一张真实落盘的夹具卡片（含表格 + SEARCH/REPLACE + diff）
+        page.evaluate("args => viewCard(args[0], args[1])", ["逻辑", "DEMO-1001"])
         page.wait_for_timeout(800)
         modal_hidden = page.eval_on_selector(
             "#modal", "el => el.classList.contains('hidden')")
@@ -89,23 +93,22 @@ def main() -> int:
         else:
             body = page.eval_on_selector("#modal-body", "el => el.innerHTML")
             if "<table>" not in body:
-                failures.append("真实卡片「影响文件」表格未渲染")
+                failures.append("卡片「影响文件」表格未渲染")
             pres = page.eval_on_selector_all(
                 "#modal-body pre", "els => els.map(e => e.textContent)")
             if not any("<<<<<<< SEARCH" in t for t in pres):
-                failures.append("真实卡片 SEARCH/REPLACE 代码块缺失或被腰斩")
-            if not any("diff" in t or "+new" in t or "+" in t for t in pres):
-                failures.append("真实卡片 diff 代码块缺失")
+                failures.append("SEARCH/REPLACE 代码块缺失或被腰斩")
+            if not any("+" in t for t in pres):
+                failures.append("diff 代码块缺失")
 
         # 「现象」区分点回归：ONES 富文本常没有裸换行（段落结构只在标签里），
         # 旧 strip_html 把块级标签换成空格 → 整节挤成一坨。修复后同一节必须
-        # 渲染成多个段落（工单 L4Zo7p9zIJ2gSfIU 是当时的坏例子）。
-        for cat, card_id, min_blocks in (
-                ("其他", "L4Zo7p9zIJ2gSfIU", 6),
-                ("逻辑", "L4Zo7p9z4ehvrm44", 3)):
-            card_file = PROJECT_ROOT / "knowledge_base" / cat / f"{card_id}.md"
+        # 渲染成多个段落。
+        for cat, card_id, min_blocks in (("逻辑", "DEMO-1001", 4),
+                                         ("逻辑", "DEMO-1002", 4)):
+            card_file = srv.kb_dir / cat / f"{card_id}.md"
             if not card_file.exists():
-                failures.append(f"知识卡片缺失: {cat}/{card_id}")
+                failures.append(f"夹具卡片缺失: {cat}/{card_id}（kb_fixture 改动过？）")
                 continue
             text = card_file.read_text(encoding="utf-8")
             if text.startswith("---"):
@@ -124,7 +127,7 @@ def main() -> int:
         for f in failures:
             print(f"FAIL: {f}")
         return 1
-    print("PASS: renderMarkdown 单元 + 真实卡片弹窗渲染全部通过")
+    print("PASS: renderMarkdown 单元 + 夹具卡片弹窗渲染全部通过")
     return 0
 
 

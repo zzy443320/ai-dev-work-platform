@@ -5,14 +5,19 @@
 共性根因 / 标准改法」。修复方案是在缺陷卡之上派生一层**模式卡**
 （scripts/kb_patterns.py），把同类缺陷聚成一个「篮子」，复发次数随之累加。
 
-用真实知识库副本验证：
+数据来源是 `tests/kb_fixture.py` 造的**脱敏夹具**（与生产同一条落盘路径
+`KnowledgeBase.record`），不再对真实知识库断言——原来它读项目根的
+`knowledge_base/` 并写死真实工单号，别人克隆下来必然红，还逼得生产知识库里
+两条测试用假工单一直不敢删。夹具覆盖：
+
 1. 静默失败族必须把 3 个不同模块的案例聚在一起（模块不同也不许拆散，
    否则模式全变成只出现一次的碎片）；
 2. 族内 ≥2 例共享同一模块时，单独成模式（保留「同模块反复出缺陷」信号）；
-3. 模式卡的「共性根因 / 处理方式 / 典型案例 / 复发提示」四节齐全，
+3. 同一处缺陷的不同工单必须落进同一模式；
+4. 模式卡的「共性根因 / 处理方式 / 典型案例 / 复发提示」四节齐全，
    且共性根因区分「已验证（applied）」与「待验证」；
-4. 重建幂等：连跑两次文件集合与内容一致，旧模式文件会被清掉；
-5. 未归类兜底：词表没覆盖的症状不能被硬塞进某个族。
+5. 重建幂等：连跑两次文件集合与内容一致，旧模式文件会被清掉；
+6. 未归类兜底：词表没覆盖的症状不能被硬塞进某个族。
 
 用法：python tests/check_kb_patterns.py（纯离线，不需要服务/目标仓库）
 """
@@ -24,13 +29,13 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import kb_fixture  # noqa: E402
 from scripts.kb import KnowledgeBase  # noqa: E402
 from scripts.kb_patterns import (  # noqa: E402
     collect_cards, detect_symptom, rebuild_patterns,
 )
-
-SRC_KB = PROJECT_ROOT / "knowledge_base"
 
 checks = []
 
@@ -47,16 +52,15 @@ def _patterns_of(kb: KnowledgeBase):
     return {p["id"]: p for p in res["patterns"]["list"]}
 
 
-def _find(metas, defect_id):
-    return [m for m in metas.values() if defect_id in m["defects"]]
-
-
 def main() -> int:
     tmp = Path(tempfile.mkdtemp(prefix="kb_patterns_"))
     try:
-        dst = tmp / "knowledge_base"
-        shutil.copytree(SRC_KB, dst)
+        dst = kb_fixture.build(tmp / "knowledge_base")
         kb = KnowledgeBase(str(dst))
+
+        cards = collect_cards(dst)
+        check("夹具卡片全部可解析（6 张）", len(cards) == len(kb_fixture.CASES),
+              f"{len(cards)} 张")
 
         metas = _patterns_of(kb)
         check("重建产出模式卡且无错误", len(metas) > 0, f"{len(metas)} 个模式")
@@ -67,8 +71,8 @@ def main() -> int:
               f"{len(silent)} 个")
         if silent:
             ids = set(silent[0]["defects"])
-            want = {"L4Zo7p9zmcaP8ZoF", "L4Zo7p9zF8rXm5CU", "rtsMFkQnKuUXld55"}
-            check("静默失败族覆盖 3 个案例（导入静默/时间回退/超长提交）",
+            want = {"DEMO-1001", "DEMO-1002", "DEMO-1003"}
+            check("静默失败族覆盖 3 个不同模块的案例（导入/时间兜底/审批提交）",
                   want <= ids, "、".join(sorted(want & ids)))
             check("静默失败族标出复发次数 ≥2 且带已采纳案例",
                   silent[0]["recurrence"] >= 2 and silent[0]["applied"] >= 1,
@@ -79,9 +83,9 @@ def main() -> int:
         check("校验缺失族按模块切出 schedule 子模式",
               any("schedule" in (m["module"] or "") for m in val),
               " | ".join(m["module"] or "-" for m in val))
-        same = [p for p in metas.values() if "L4Zo7p9z4ehvrm44" in p["defects"]]
-        check("同一处缺陷的不同工单（含验证用假工单）归入同一模式",
-              same and "STREAM-TEST-1" in same[0]["defects"],
+        same = [p for p in metas.values() if "DEMO-2001" in p["defects"]]
+        check("同一处缺陷的不同工单归入同一模式",
+              same and "DEMO-2001-RETRY" in same[0]["defects"],
               "、".join(same[0]["defects"]) if same else "未命中")
 
         # ── 3. 模式卡结构 ──
@@ -108,7 +112,8 @@ def main() -> int:
         # 未经验证的根因不许伪装成结论
         unverified = [m for m in metas.values() if m["applied"] == 0]
         check("存在无采纳案例的模式，且其卡片标为未验证",
-              all("尚无已采纳案例" in (dst / "_patterns" / f"{m['id']}.md")
+              bool(unverified) and all(
+                  "尚无已采纳案例" in (dst / "_patterns" / f"{m['id']}.md")
                   .read_text(encoding="utf-8") for m in unverified),
               f"{len(unverified)} 个")
 
@@ -135,9 +140,9 @@ def main() -> int:
         )["patterns"].__len__() == len(metas2))
 
         # 模式卡不能污染缺陷卡列表（_ 开头目录必须被跳过）
-        cards = [c for c in kb._cards() if c.get("category", "").startswith("_")]
-        check("模式目录不进入缺陷卡列表", not cards,
-              f"杂项 {len(cards)}")
+        cards2 = [c for c in kb._cards() if c.get("category", "").startswith("_")]
+        check("模式目录不进入缺陷卡列表", not cards2,
+              f"杂项 {len(cards2)}")
 
         # ── 5. 兜底与边界 ──
         s = detect_symptom("随便一个标题", "看不出症状的描述", "")

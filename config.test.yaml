@@ -7,7 +7,10 @@ ai:
   model: claude-3-5-sonnet-latest
 
 repo:
-  path: D:/workbuddy默认工作空间/2026-09-20-16-18-02/test-mock-repo
+  # 测试用的一次性 mock 仓库，与项目根同级；由 `python tests/make_mock_repo.py`
+  # 生成（也可在别处生成后用环境变量 MOCK_REPO 覆盖）。相对路径按项目根解析，
+  # 所以用 `python run.py --config config.test.yaml` 从项目根运行即可。
+  path: ../test-mock-repo
   branch: master
 
 # deliberately empty -> exercises the degraded (layer 3) gate path

@@ -5,7 +5,8 @@ import sys
 from pathlib import Path
 from playwright.sync_api import sync_playwright
 
-OUT = Path(r"C:\Users\27409\Desktop\ones-defect-auto-fixer\.workbuddy")
+OUT = Path(__file__).resolve().parent.parent / ".workbuddy"
+OUT.mkdir(parents=True, exist_ok=True)
 results = []
 
 with sync_playwright() as p:

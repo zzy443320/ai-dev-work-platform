@@ -1,0 +1,13 @@
+# 换行符统一：文本文件在仓库里一律存 LF（跨平台克隆不会出现整文件 diff）；
+# Windows 批处理例外，检出为 CRLF —— LF 的 .bat 在某些 cmd 版本下会解析异常。
+* text=auto
+*.bat text eol=crlf
+*.py text eol=lf
+*.md text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.json text eol=lf
+*.js text eol=lf
+*.css text eol=lf
+*.html text eol=lf
+*.tsx text eol=lf
