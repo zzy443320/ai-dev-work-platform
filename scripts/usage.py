@@ -39,6 +39,9 @@ GRANULARITIES = ("day", "week", "month")
 
 # 每行一次调用的账本；目录可由环境变量 USAGE_DIR 覆盖（测试用临时目录）
 DIR = Path(os.environ.get("USAGE_DIR") or (PROJECT_ROOT / "usage"))
+# 与其它数据目录一致：导入时就把目录建好。空账本不影响任何统计口径，
+# 但「服务一启动，产物目录就是齐的」——用户不用猜哪个目录还没生成。
+DIR.mkdir(parents=True, exist_ok=True)
 LEDGER_NAME = "usage.jsonl"
 
 _CTX: ContextVar[Dict] = ContextVar("usage_ctx", default={})
