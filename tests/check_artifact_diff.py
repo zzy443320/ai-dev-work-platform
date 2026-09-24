@@ -5,7 +5,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-sys.path.insert(0, ".")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # 仓库根：别依赖 cwd（旧写法 "." 要求必须在仓库根执行）
 from scripts.artifact import diff_against_repo, diff_lines  # noqa: E402
 
 FAIL = []

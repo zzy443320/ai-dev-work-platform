@@ -6,8 +6,8 @@ import sys
 import tempfile
 from pathlib import Path
 
-sys.path.insert(0, ".")
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # 仓库根：别依赖 cwd
+sys.path.insert(0, str(Path(__file__).resolve().parent))      # tests/：本目录内的夹具
 import scripts.pipeline as _pl  # noqa: E402
 from fixture_defect import TEST_DEFECT  # noqa: E402
 from scripts.pipeline import AIDefectFixerPipeline  # noqa: E402
