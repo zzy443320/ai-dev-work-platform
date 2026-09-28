@@ -32,12 +32,20 @@ __pycache__/
 venv/
 .pytest_cache/
 
-# ── Node（前端静态资源无构建步骤，保险起见）──
+# ── Node（前端现在是 Vite + Vue 3 工程，见 frontend/）──
 node_modules/
+frontend/node_modules/
+frontend/dist/
+# Vue 构建产物：由 `cd frontend && npm run build` 生成，不入库
+/web/static/vue/
+/web/static/v2.html
+/web/static/.vite/
 
 # ── 工作区临时文件 ──
 _tmp_*
 *.tmp
+# 界面用例的运行时改写副本（check_vue_all.py 逐例生成，含本机端口替换，不入库）
+_rewired_*
 .relay-test-repo/
 .workbuddy/
 .DS_Store

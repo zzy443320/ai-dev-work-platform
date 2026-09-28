@@ -4,6 +4,9 @@ playwright>=1.40
 Pillow>=10.0
 fastapi>=0.110
 uvicorn>=0.27
+# 问答附件上传走 multipart/form-data，FastAPI 解析该格式必须依赖它。
+# 缺失时上传接口会返回 400「The python-multipart library must be installed」。
+python-multipart>=0.0.9
 
 # 说明：模型调用走 requests 直连（Anthropic Messages / OpenAI Chat Completions /
 # 自定义网关三种协议均由配置选择），不再依赖任何厂商 SDK，因此中转站、自建网关、

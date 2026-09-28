@@ -21,6 +21,7 @@
 """
 import json
 import os
+import base64
 import socket
 import subprocess
 import sys
@@ -103,9 +104,18 @@ def wait_replies(page, n: int) -> None:
         arg=n, timeout=40000)
 
 
+def make_png(path: Path) -> Path:
+    """写一张最小可用的 PNG（1x1 透明像素）——用来验证图片附件的全链路。"""
+    path.write_bytes(base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8Dw"
+        "HwAFAAH/q842iQAAAABJRU5ErkJggg=="))
+    return path
+
+
 def run(base: str) -> None:
     chat_dir = Path(os.environ["CHAT_DIR_TMP"])
     art_dir = Path(os.environ["ARTIFACT_DIR_TMP"])
+    att_dir = Path(os.environ["ATTACH_DIR_TMP"])
     errors = []
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
@@ -254,6 +264,119 @@ def run(base: str) -> None:
         check("发送后输入框已清空",
               page.eval_on_selector("#chat-text", "el => el.value === ''"))
 
+        # ── 9. 附件：上传 / 粘贴 / 拖拽 ──
+        page.click("#btn-chat-new")
+        page.wait_for_timeout(300)
+        att_files = len(list(att_dir.glob("*"))) if att_dir.exists() else 0
+        check("启用前临时附件目录为空", att_files == 0, str(att_files))
+
+        png = make_png((tmp := Path(os.environ["ATTACH_DIR_TMP"]).parent) / "shot.png")
+        page.set_input_files("#chat-file", str(png))
+        page.wait_for_selector("#chat-attach .chat-att-chip:not(.uploading)", timeout=15000)
+        chip = page.inner_text("#chat-attach .chat-att-chip")
+        check("选文件后出现待发附件条（带文件名与大小）",
+              "shot.png" in chip and ("B" in chip or "KB" in chip), chip.replace("\n", " "))
+        check("图片附件显示缩略图预览",
+              page.eval_on_selector_all("#chat-attach .chat-att-thumb", "els => els.length") == 1)
+        check("附件已真正落盘（不在项目根）",
+              len(list(att_dir.glob("att-*.png"))) == 1,
+              str(sorted(p.name for p in att_dir.glob("*"))))
+        check("上传提示文案随附件出现而收起",
+              page.eval_on_selector("#chat-attach-hint", "el => el.classList.contains('hidden')"))
+
+        # 粘贴：截图最常用的入口，必须由前端接管而不是被浏览器丢掉
+        page.evaluate("""() => {
+          const dt = new DataTransfer();
+          const bytes = Uint8Array.from(atob(
+            'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg=='
+          ), c => c.charCodeAt(0));
+          dt.items.add(new File([bytes], 'pasted.png', { type: 'image/png' }));
+          document.querySelector('#chat-text').dispatchEvent(
+            new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+        }""")
+        page.wait_for_function(
+            "() => document.querySelectorAll('#chat-attach .chat-att-chip:not(.uploading)').length >= 2",
+            timeout=15000)
+        chips = page.eval_on_selector_all("#chat-attach .chat-att-chip",
+                                         "els => els.map(e => e.innerText)")
+        check("粘贴截图被接管并加入待发列表", len(chips) == 2, str(chips))
+        check("粘贴图片落盘为第二个附件",
+              len(list(att_dir.glob("att-*.png"))) == 2,
+              str(sorted(p.name for p in att_dir.glob("att-*.png"))))
+
+        page.click("#chat-attach .chat-att-chip .chat-att-del")
+        page.wait_for_timeout(300)
+        check("点 ✕ 能移除待发附件",
+              page.eval_on_selector_all("#chat-attach .chat-att-chip", "els => els.length") == 1)
+
+        # 纯文本文件：日志/代码走同一条上传路径，但不当图片处理
+        logf = Path(os.environ["ATTACH_DIR_TMP"]).parent / "console.log"
+        logf.write_text("TypeError: cannot read properties of undefined", encoding="utf-8")
+        page.set_input_files("#chat-file", str(logf))
+        page.wait_for_function(
+            "() => document.querySelectorAll('#chat-attach .chat-att-chip:not(.uploading)').length >= 2",
+            timeout=15000)
+        check("文本文件也能作为附件（不当图片处理）",
+              "console.log" in page.inner_text("#chat-attach"))
+        check("文本附件不显示缩略图（只有图片才有）",
+              page.eval_on_selector_all("#chat-attach .chat-att-thumb", "els => els.length") == 1)
+
+        # 发送：附件随提问提交，用户气泡里能看到附件
+        page.fill("#chat-text", "这个报错和这张图有关吗？")
+        page.click("#btn-chat-send")
+        wait_replies(page, 1)
+        check("发送后待发附件列表被清空",
+              page.eval_on_selector_all("#chat-attach .chat-att-chip", "els => els.length") == 0)
+        att_html = page.inner_text("#chat-stream .chat-msg.me")
+        check("用户气泡里列出已发送的附件",
+              "pasted.png" in att_html and "console.log" in att_html,
+              att_html[:80].replace("\n", " "))
+        check("已发送的图片气泡带缩略图",
+              page.eval_on_selector_all("#chat-stream .chat-msg.me .chat-msg-thumb",
+                                        "els => els.length") >= 1)
+
+        sess_now = api(base, "/api/chat/sessions")["sessions"]
+        sid_now = sess_now[0]["id"]
+        detail = api(base, f"/api/chat/sessions/{sid_now}")
+        umeta = detail["session"]["messages"][0].get("meta") or {}
+        check("附件元数据随消息落盘（刷新后仍可回看）",
+              len(umeta.get("attachments") or []) == 2,
+              json.dumps(umeta.get("attachments"), ensure_ascii=False)[:120])
+
+        page.reload(wait_until="networkidle")
+        page.evaluate("() => switchTab('chat')")
+        page.wait_for_timeout(700)
+        page.click("#chat-sessions .chat-chip")
+        page.wait_for_timeout(600)
+        check("刷新并打开会话后附件依然可见",
+              "pasted.png" in page.inner_text("#chat-stream .chat-msg.me")
+              and page.eval_on_selector_all(
+                  "#chat-stream .chat-msg.me .chat-msg-thumb", "els => els.length") >= 1)
+
+        # 附件可通过静态通道直接预览（不是只落盘看不到）
+        img_url = page.eval_on_selector(
+            "#chat-stream .chat-msg.me .chat-msg-thumb", "el => el.getAttribute('src')")
+        status = page.evaluate("""async (u) => {
+          const r = await fetch(u); return r.status;
+        }""", img_url)
+        check("附件预览通道可访问（200）", status == 200, f"{img_url} → {status}")
+
+        # 拖拽：与点击上传同一条路径，这里只验证落点高亮与投递
+        page.evaluate("""() => {
+          const dt = new DataTransfer();
+          dt.items.add(new File(['hello log'], 'dropped.txt', { type: 'text/plain' }));
+          const drop = document.querySelector('#chat-drop');
+          drop.dispatchEvent(new DragEvent('dragover', { dataTransfer: dt, bubbles: true, cancelable: true }));
+          drop.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }));
+        }""")
+        page.wait_for_function(
+            "() => document.querySelectorAll('#chat-attach .chat-att-chip:not(.uploading)').length >= 1",
+            timeout=15000)
+        check("拖拽文件到输入区也能加入待发附件",
+              "dropped.txt" in page.inner_text("#chat-attach"))
+        page.click("#chat-attach .chat-att-chip .chat-att-del")
+        page.wait_for_timeout(200)
+
         OUT_DIR.mkdir(parents=True, exist_ok=True)
         page.screenshot(path=str(OUT_DIR / "chat-panel.png"), full_page=False)
 
@@ -274,7 +397,8 @@ def main() -> int:
     chat_dir = tmp / "chat_sessions"
     art_dir = tmp / "artifacts"
     usage_dir = tmp / "usage"
-    for d in (chat_dir, art_dir, usage_dir):
+    att_dir = tmp / "attachments"
+    for d in (chat_dir, art_dir, usage_dir, att_dir):
         d.mkdir(parents=True, exist_ok=True)
 
     env_extra = {
@@ -282,10 +406,12 @@ def main() -> int:
         "CHAT_DIR": str(chat_dir),
         "ARTIFACT_DIR": str(art_dir),
         "USAGE_DIR": str(usage_dir),
+        "ATTACH_DIR": str(att_dir),
         "REPO_PATH": str(repo),
     }
     os.environ["CHAT_DIR_TMP"] = str(chat_dir)
     os.environ["ARTIFACT_DIR_TMP"] = str(art_dir)
+    os.environ["ATTACH_DIR_TMP"] = str(att_dir)
 
     port = free_port()
     proc, base = start_server(env_extra, port, settings)

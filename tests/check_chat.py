@@ -34,7 +34,9 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from scripts import artifact as artifact_mod  # noqa: E402
 from scripts import chat as chat_mod  # noqa: E402
+from scripts import chat_attachments as att_mod  # noqa: E402
 from scripts import usage as usage_mod  # noqa: E402
+from scripts import ai_providers  # noqa: E402
 from scripts.ai_model import AIModel  # noqa: E402
 from scripts.chat import ChatStore, RepoReader, mock_chat_reply  # noqa: E402
 
@@ -47,6 +49,17 @@ def check(name, cond, detail=""):
     return cond
 
 
+def _rejects(fn) -> bool:
+    """调用必须抛出 AttachmentError（用来断言「不该被接受的附件确实被拒了」）。"""
+    try:
+        fn()
+    except att_mod.AttachmentError:
+        return True
+    except Exception:
+        return False
+    return False
+
+
 # --------------------------------------------------------------- 假 AI
 class FakeAI:
     """按脚本逐轮返回。每轮把 prompt 存下来，便于断言提示词里有什么。"""
@@ -56,12 +69,15 @@ class FakeAI:
         self.mode = mode
         self.prompts = []
         self.systems = []
+        self.images = []
         self.error_at = error_at
         self.calls = 0
 
-    def complete_text(self, prompt, system="", max_tokens=None, on_delta=None):
+    def complete_text(self, prompt, system="", max_tokens=None, on_delta=None,
+                      images=None):
         self.prompts.append(prompt)
         self.systems.append(system)
+        self.images.append(images)
         idx = self.calls
         self.calls += 1
         if self.error_at is not None and idx == self.error_at:
@@ -268,6 +284,103 @@ def main() -> int:
         res5 = chat_mod.run_chat(ai5, rd, [], "问个问题", allow_patch=False)
         check("allow_patch=False 时不注入提案规则",
               "<PROPOSAL>" not in ai5.systems[0], ai5.systems[0][-80:])
+
+        # ── 6b. 附件（图片多模态 / 文本注入）──
+        print("\n[6b] 附件：图片透传与文本注入")
+        att = att_mod.ChatAttachmentStore(str(tmp / "attach"))
+        img = att.save("报错截图.png", b"\x89PNG\r\n\x1a\n" + b"z" * 20, "image/png")
+        log = att.save("console.log", "TypeError: x is undefined".encode(),
+                       "application/octet-stream")
+        check("图片被识别为 image", img["kind"] == "image", img["kind"])
+        check("无 MIME 的 .log 按扩展名识别为文本（不能误判成二进制）",
+              log["kind"] == "text", f"{log['kind']} / {log['content_type']}")
+        check("落盘文件名由服务端生成（不含用户给的路径）",
+              (tmp / "attach" / img["file"]).is_file() and ".." not in img["file"],
+              img["file"])
+        check("路径穿越的 id 取不到附件",
+              att.get("../../../etc/passwd") is None)
+        pub = att.public(img)
+        check("回显元数据带可预览 url",
+              pub["url"].startswith("/attachments/") and pub["size"] > 0,
+              json.dumps(pub, ensure_ascii=False))
+        check("认不出的文件类型被拒绝（不落盘）",
+              _rejects(lambda: att.save("a.zip", b"PK\x03\x04", "application/zip")))
+        check("二进制伪装成文本被拒绝",
+              _rejects(lambda: att.save("a.log", b"\x00\x01\x02", "text/plain")))
+
+        # 展示名必须与实际落盘后缀一致，否则界面显示 a.sh 而链接打开的是 a.txt
+        evil = att.save("../../evil.sh", b"#!/bin/sh\n", "text/plain")
+        check("用户给的路径被剥掉（只留基名）",
+              evil["name"] == "evil.txt" and ".." not in evil["name"], evil["name"])
+        check("展示名后缀与实际落盘后缀一致",
+              evil["name"].endswith("." + evil["ext"])
+              and Path(evil["file"]).suffix.lstrip(".") == evil["ext"],
+              f"{evil['name']} / {evil['ext']} / {evil['file']}")
+        check("落盘路径始终在附件目录内",
+              Path(evil["path"]).parent == (tmp / "attach").resolve()
+              or Path(evil["path"]).parent == (tmp / "attach"),
+              evil["path"])
+
+        imgs = att_mod.images_for(att, [img, log])
+        check("只有图片进入多模态片段（文本不进）",
+              len(imgs) == 1 and imgs[0]["data_uri"].startswith("data:image/png;base64,"),
+              str(imgs)[:80])
+        tblock = att_mod.text_block(att, [img, log])
+        check("文本附件内容被拼进提示词并标注来源",
+              "console.log" in tblock and "TypeError" in tblock, tblock[:70])
+        check("图片不重复出现在文本块里", "报错截图" not in tblock)
+
+        ai6 = FakeAI(["看到图了。"])
+        chat_mod.run_chat(ai6, rd, [], "这张截图是什么问题？",
+                          images=imgs, attachment_note=att_mod.attach_note([img, log]),
+                          attachment_text=tblock)
+        check("图片随第一轮提问发给模型", bool(ai6.images[0]),
+              str(ai6.images[0])[:60])
+        check("系统提示词告知本轮带图并要求「看不到就说看不到」",
+              "本轮带图" in ai6.systems[0] and "看不到图片" in ai6.systems[0])
+        check("附件清单与内容都进了提示词",
+              "console.log" in ai6.prompts[0] and "用户附件" in ai6.prompts[0],
+              ai6.prompts[0][:120].replace("\n", " "))
+
+        ai7 = FakeAI(['{"action":"call","tool":"repo_list","arguments":{"path":"src"}}',
+                      "查完了。"])
+        chat_mod.run_chat(ai7, rd, [], "带图查一下", images=imgs, max_rounds=3)
+        check("图片只在第一轮发送（后续工具轮不重复烧 token）",
+              bool(ai7.images[0]) and not ai7.images[1],
+              f"first={bool(ai7.images[0])} second={bool(ai7.images[1])}")
+
+        ai8 = FakeAI(["没问题。"])
+        chat_mod.run_chat(ai8, rd, [], "纯文字提问")
+        check("没有附件时提示词不带附件说明",
+              "本轮带图" not in ai8.systems[0] and "用户附件" not in ai8.prompts[0])
+
+        # 多模态请求体形状：两种 provider 的图片块结构完全不同，必须各自正确
+        oai = ai_providers.AIConfig.from_dict({"provider": "openai", "api_key": "k",
+                                              "base_url": "https://gw/v1", "model": "m"})
+        oai_body = oai.build("hi", "sys", imgs)[3]
+        oai_content = oai_body["messages"][-1]["content"]
+        check("OpenAI 形态：image_url + text 块",
+              oai_content[0]["type"] == "image_url"
+              and oai_content[0]["image_url"]["url"].startswith("data:image/png;base64,")
+              and oai_content[1]["type"] == "text", json.dumps(oai_content)[:100])
+        ant = ai_providers.AIConfig.from_dict({"provider": "anthropic", "api_key": "k",
+                                              "model": "m"})
+        ant_body = ant.build("hi", "sys", imgs)[3]
+        ant_content = ant_body["messages"][0]["content"]
+        check("Anthropic 形态：base64 image 源块",
+              ant_content[0]["type"] == "image"
+              and ant_content[0]["source"]["type"] == "base64"
+              and ant_content[0]["source"]["media_type"] == "image/png",
+              json.dumps(ant_content)[:100])
+        check("没有图片时消息体与旧版完全一致（不影响既有链路）",
+              ai_providers.AIConfig.from_dict(
+                  {"provider": "openai", "api_key": "k", "base_url": "https://gw/v1",
+                   "model": "m"}).build("hi", "sys")[3] == oai.build("hi", "sys")[3])
+        check("非法图片地址被丢弃（不发网关不认的块）",
+              ai_providers._image_blocks([{"data_uri": "ftp://x"},
+                                          {"data_uri": "data:image/png;base64,BB"}])
+              == [{"type": "image_url",
+                   "image_url": {"url": "data:image/png;base64,BB"}}])
 
         # ── 9. mock ──
         print("\n[7] mock 输出")

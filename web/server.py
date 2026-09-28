@@ -39,6 +39,8 @@ from scripts.ai_model import AIModel  # noqa: E402
 from scripts.ai_providers import AIConfig, AIError  # noqa: E402
 from scripts.artifact import ArtifactApplier, ArtifactStore, diff_against_repo  # noqa: E402
 from scripts.chat import ChatStore, RepoReader, mock_chat_reply, run_chat  # noqa: E402
+from scripts.chat_attachments import (  # noqa: E402
+    AttachmentError, ChatAttachmentStore, attach_note, images_for, text_block)
 from scripts.figma_fetcher import FigmaClient, FigmaError, parse_figma_url  # noqa: E402
 from scripts.gate import resolve_commands  # noqa: E402
 from scripts import mcp_client  # noqa: E402
@@ -57,6 +59,11 @@ from scripts.usage import KIND_LABELS as USAGE_KIND_LABELS  # noqa: E402
 
 WEB_DIR = Path(__file__).resolve().parent
 STATIC_DIR = WEB_DIR / "static"
+# 前端构建产物：由 frontend/ 下 `npm run build` 生成，入口 static/v2.html（沿用
+# 原文件名，指向 Vue bundle）。**旧版原生界面（index.html + app.js）已在
+# Vite + Vue 3 迁移收口时删除**，`/` 直接就是这份产物；改动界面请改 frontend/src。
+# 回归旧版请走 git 历史，不要在本仓库里留第二份界面实现。
+VUE_ENTRY = STATIC_DIR / "v2.html"
 # 六个数据目录默认落在项目根，**全部**可由环境变量覆盖——自检用例起临时实例时
 # 把这些指到临时目录，就既读不到也写不进你的真实数据（约定见 README「测试」一节：
 # 给本文件新增落盘目录时，请一并加一个环境变量开关）。缺目录会在启动时自动建。
@@ -72,7 +79,10 @@ ARTIFACT_DIR = _data_dir("ARTIFACT_DIR", PROJECT_ROOT / "artifacts")
 TEAM_DIR = _data_dir("TEAM_DIR", PROJECT_ROOT / "team_runs")
 # 问答会话：一个会话一份 JSON（追加式更新）
 CHAT_DIR = _data_dir("CHAT_DIR", PROJECT_ROOT / "chat_sessions")
-for _d in (KB_DIR, SCREENSHOT_DIR, PROPOSAL_DIR, ARTIFACT_DIR, TEAM_DIR, CHAT_DIR):
+# 问答附件（用户粘贴/上传的图片与文本）：一个附件一个文件 + 一份 .meta.json
+ATTACH_DIR = _data_dir("ATTACH_DIR", PROJECT_ROOT / "attachments")
+for _d in (KB_DIR, SCREENSHOT_DIR, PROPOSAL_DIR, ARTIFACT_DIR, TEAM_DIR, CHAT_DIR,
+           ATTACH_DIR):
     _d.mkdir(parents=True, exist_ok=True)
 # 更新日志：项目根的纯文本，界面右上角「更新」入口的唯一数据源
 CHANGELOG_FILE = PROJECT_ROOT / "CHANGELOG.md"
@@ -390,6 +400,10 @@ def _cstore() -> ChatStore:
     return ChatStore(str(CHAT_DIR))
 
 
+def _astore_att() -> ChatAttachmentStore:
+    return ChatAttachmentStore(str(ATTACH_DIR))
+
+
 def _applier() -> ArtifactApplier:
     s = _load_settings()
     return ArtifactApplier(s["repo"]["path"], _pipeline_config(s)["gate"])
@@ -500,6 +514,8 @@ app.add_middleware(
 )
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 app.mount("/screenshots", StaticFiles(directory=str(SCREENSHOT_DIR)), name="screenshots")
+# 问答附件的预览通道（只读）：文件名由服务端生成，用户给的名字只作展示
+app.mount("/attachments", StaticFiles(directory=str(ATTACH_DIR)), name="attachments")
 
 _RUN_STATE = {"running": False}
 # 问答占用标记：与缺陷流水线**各管各的**（可以一边跑流水线一边问问题），
@@ -510,7 +526,17 @@ _CHAT_STATE = {"running": False}
 # ------------------------------------------------------------------- basics
 @app.get("/")
 async def index():
-    return FileResponse(str(STATIC_DIR / "index.html"))
+    """唯一界面入口（Vue 3 构建产物）。
+
+    构建产物不存在时给可操作的提示而不是 500 —— 新克隆的仓库还没跑过
+    `npm run build` 时就是这种情况。
+    """
+    if not VUE_ENTRY.is_file():
+        raise HTTPException(
+            503,
+            "前端尚未构建。请在 frontend/ 目录执行：npm install && npm run build",
+        )
+    return FileResponse(str(VUE_ENTRY))
 
 
 @app.get("/api/health")
@@ -1473,6 +1499,39 @@ async def chat_delete_session(sid: str):
     return {"ok": True}
 
 
+@app.post("/api/chat/attachments")
+async def chat_upload_attachments(req: Request):
+    """接收问答附件（粘贴的截图 / 上传的日志文件等），落盘后返回元数据。
+
+    用 multipart 而不是 base64 JSON：截图动辄几 MB，JSON 里再 base64 一次会
+    膨胀 33%，而且浏览器原生 FormData 就能直接构造，前端不必自己拼。
+    落盘文件名由服务端生成（`att-<时间>-<随机>.<白名单后缀>`），用户给的文件名
+    只作为展示名——它永远不会参与路径拼接，这是本项目所有落盘目录的一贯做法。
+    """
+    try:
+        form = await req.form()
+    except Exception as e:
+        raise HTTPException(400, f"读取上传内容失败: {e}")
+    upload = form.get("file")
+    if upload is None:
+        raise HTTPException(400, "没有收到文件（字段名应为 file）")
+    if isinstance(upload, str):  # 表单里混了普通文本字段
+        raise HTTPException(400, "file 字段必须是文件内容")
+    try:
+        data = await upload.read()
+    except Exception as e:
+        raise HTTPException(400, f"读取文件内容失败: {e}")
+    name = str(getattr(upload, "filename", "") or "")
+    ctype = str(getattr(upload, "content_type", "") or "")
+    try:
+        info = _astore_att().save(name, data, ctype)
+    except AttachmentError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(500, f"保存附件失败: {e}")
+    return {"attachment": _astore_att().public(info)}
+
+
 @app.post("/api/chat/stream")
 async def chat_stream(req: Request):
     """一问一答（SSE 流式）。只读仓库；需要改代码时落成「产出物」等人工采纳。"""
@@ -1480,8 +1539,19 @@ async def chat_stream(req: Request):
         return JSONResponse({"error": "上一条还在回答，请等它结束"}, status_code=409)
     body = await _body_json(req)
     text = str(body.get("message") or "").strip()
-    if not text:
-        raise HTTPException(400, "请输入内容")
+    # 附件：用户在输入框里粘贴的图片 / 上传的文件。认不出的 id 静默丢弃，
+    # 不因为一个过期附件把整次提问拦下（前端会把丢弃情况如实提示）。
+    att_store = _astore_att()
+    raw_ids = body.get("attachment_ids")
+    if not isinstance(raw_ids, list):
+        raw_ids = []
+    infos = att_store.many([str(i) for i in raw_ids])
+    if not text and not infos:
+        # 「只贴一张图、什么都不说」是真实且常见的用法（截图本身就是问题），
+        # 所以这里放行；但两个都空时必须拦住，否则模型只能凭空回答。
+        raise HTTPException(400, "请输入内容，或粘贴一张截图 / 上传一个文件")
+    att_public = [att_store.public(i) for i in infos]
+    dropped = len([i for i in raw_ids if i]) - len(infos)
     use_repo = _as_bool(body.get("use_repo"), True)
     allow_patch = _as_bool(body.get("allow_patch"), True)
 
@@ -1501,11 +1571,26 @@ async def chat_stream(req: Request):
     skills_text = _skills_text(s, "chat")
     tool_specs, tool_executor = _mcp_toolkit(s)
     title = (sess.get("title") or text)[:CHAT_TITLE_MAX]
+    # 图片在**请求线程**里先转成 base64：多像素图编码不便宜，放进 worker 会白占
+    # 一次模型调用的时间窗（且 base64 结果与磁盘状态无关，提前算不会过期）。
+    images = images_for(att_store, infos)
+    note = attach_note(infos)
+    att_text = text_block(att_store, infos)
     _CHAT_STATE["running"] = True
 
     def worker(emit):
-        store.append(sid, "user", text)
+        store.append(sid, "user", text,
+                     {"attachments": att_public} if att_public else None)
         emit({"type": "stage", "stage": "已收到，开始处理"})
+        if att_public:
+            img_n = len([a for a in att_public if a.get("kind") == "image"])
+            txt_n = len(att_public) - img_n
+            emit({"type": "stage", "stage": (
+                f"已附上 {img_n} 张图片" + (f"、{txt_n} 个文本附件" if txt_n else "")
+                + ("（图片已随提问发给模型）" if img_n else ""))})
+        if dropped:
+            emit({"type": "stage",
+                  "stage": f"有 {dropped} 个附件已失效被跳过（可能已被清理）"})
         if not use_repo:
             emit({"type": "stage", "stage": "本轮未开启仓库检索，只依据你给的信息回答"})
         elif not root.exists():
@@ -1523,7 +1608,10 @@ async def chat_stream(req: Request):
                                         allow_patch=allow_patch,
                                         extra_specs=tool_specs,
                                         extra_executor=tool_executor,
-                                        on_event=emit)
+                                        on_event=emit,
+                                        images=images,
+                                        attachment_note=note,
+                                        attachment_text=att_text)
                 result = _job()
         except Exception as e:
             result = {"reply": "", "tools": [], "patch": None,
@@ -1553,6 +1641,8 @@ async def chat_stream(req: Request):
                 "ai_mode": result.get("ai_mode", ""),
                 "error": result.get("error", ""),
                 "rounds": result.get("rounds", 0)}
+        if att_public:
+            meta["attachments"] = att_public
         saved = store.append(sid, "assistant",
                              reply or f"（没有产出内容：{result.get('error') or '模型未返回正文'}）",
                              meta)
@@ -1566,6 +1656,8 @@ async def chat_stream(req: Request):
             "artifact": artifact_summary,
             "ai_mode": meta["ai_mode"],
             "rounds": meta["rounds"],
+            "attachments": att_public,
+            "dropped_attachments": dropped,
         }})
 
     return _queue_stream(asyncio.get_running_loop(), worker, state=_CHAT_STATE)

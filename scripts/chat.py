@@ -138,7 +138,14 @@ class ChatStore:
                 "count": len(msgs),
                 "preview": _clip((last or {}).get("content", ""), 120).replace("\n", " "),
             })
-        out.sort(key=lambda s: str(s.get("updated") or s.get("created") or ""), reverse=True)
+        # 排序键不能只看 updated：_now() 的精度是秒，同一秒内建的两个会话
+        # updated 完全相同，而 list.sort 是稳定的 —— 结果退化成 glob() 的目录序，
+        # 新会话可能排在旧会话后面（前端侧栏顺序会莫名其妙地「不更新」）。
+        # 这里补两级 tiebreaker：先比 created（同样是秒精度，但能区分
+        # 「先建后改」和「后建未改」），再比 session id 保证全序稳定。
+        out.sort(key=lambda s: (str(s.get("updated") or s.get("created") or ""),
+                                str(s.get("created") or ""),
+                                str(s.get("id") or "")), reverse=True)
         return out[:MAX_SESSIONS]
 
     def append(self, sid: str, role: str, content: str, meta: Optional[Dict] = None) -> Dict:
@@ -551,9 +558,14 @@ def run_chat(ai, reader: RepoReader, messages: List[Dict], user_text: str, *,
              extra_executor: Optional[Callable[[str, Dict], str]] = None,
              max_rounds: int = MAX_ROUNDS,
              on_event: Optional[Callable[[Dict], None]] = None,
-             kind: str = "chat", title: str = "") -> Dict:
+             kind: str = "chat", title: str = "",
+             images: Optional[List[Dict]] = None,
+             attachment_note: str = "", attachment_text: str = "") -> Dict:
     """多轮问答。`ai` 是 AIModel 实例，`reader` 提供仓库只读工具。
 
+    `images` 是本次提问附带的图片（多模态片段，见 chat_attachments）；
+    `attachment_note` / `attachment_text` 分别说明「有哪些附件」与「文本附件的内容」。
+    图片只在**第一轮**发送——工具轮次里模型看的是文字结果，重复发图纯属浪费 token。
     返回 {reply, tools, patch, error, ai_mode, rounds}
     只读：本函数不写任何仓库文件。
     """
@@ -564,6 +576,7 @@ def run_chat(ai, reader: RepoReader, messages: List[Dict], user_text: str, *,
             except Exception:
                 pass
 
+    images = list(images or [])
     specs = list(reader.spec())
     if extra_specs:
         specs += list(extra_specs)
@@ -576,8 +589,19 @@ def run_chat(ai, reader: RepoReader, messages: List[Dict], user_text: str, *,
     if skills_text.strip():
         system += ("\n\n## 团队技能与规范（回答与改代码都必须遵守）\n"
                    + skills_text.strip()[:4000])
+    if images:
+        # 模型可能拿不到图片（网关不支持多模态）——先把这种情况说清楚，
+        # 免得它对着空气描述截图内容，那就是编造。
+        system += ("\n\n## 本轮带图\n用户随提问附了 %d 张图片，你会在用户消息里直接看到图像。"
+                   "请基于图里的真实内容回答（报错文案、组件形态、设计稿细节等）；"
+                   "若你实际上没有收到任何图像内容，请直接说明「看不到图片」，"
+                   "不要凭文件名或上下文猜测图里有什么。" % len(images))
 
     base = build_prompt(messages, user_text)
+    if attachment_note.strip():
+        base += "\n\n" + attachment_note.strip()
+    if attachment_text.strip():
+        base += "\n\n## 用户附件\n" + attachment_text.strip()
     base += "\n\n## 仓库信息\n"
     if reader.tools_enabled:
         base += f"- 仓库根目录：{reader.root}\n"
@@ -626,7 +650,8 @@ def run_chat(ai, reader: RepoReader, messages: List[Dict], user_text: str, *,
             if _n[0] >= 60 or "\n" in piece:
                 flush()
 
-        res = ai.complete_text(convo, system, max_tokens=BUDGET, on_delta=on_delta)
+        res = ai.complete_text(convo, system, max_tokens=BUDGET, on_delta=on_delta,
+                               images=images if rnd == 1 else None)
         flush()
         if res.get("error"):
             return {"reply": "", "tools": tools_used, "patch": None,

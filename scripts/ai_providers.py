@@ -77,6 +77,40 @@ def _join(base: str, path: str) -> str:
     return f"{base}/{path.lstrip('/')}"
 
 
+def _image_blocks(images) -> List[Dict]:
+    """把附件图片归一成 OpenAI 形态的 `image_url` 内容块。
+
+    Anthropic 的 `image` 块形状不同，由 `AIConfig.build` 在那一支里再转换——
+    这样「什么算一张图」的判断只有一处。只接受 data URI 或 http(s) 地址；
+    其余一律丢弃（宁可少一张图，也不要发一个网关不认的块把整个调用打挂）。
+    """
+    out: List[Dict] = []
+    for img in images or []:
+        if not isinstance(img, dict):
+            continue
+        url = str(img.get("data_uri") or img.get("url") or "").strip()
+        if not (url.startswith("data:image/") or url.startswith("http://")
+                or url.startswith("https://")):
+            continue
+        out.append({"type": "image_url", "image_url": {"url": url}})
+    return out
+
+
+def _to_anthropic_blocks(blocks: List[Dict]) -> List[Dict]:
+    """OpenAI `image_url` 块 → Anthropic `image` 块（base64 与 URL 两种源）。"""
+    out: List[Dict] = []
+    for b in blocks or []:
+        url = str((b.get("image_url") or {}).get("url") or "")
+        if url.startswith("data:"):
+            head, _, data = url.partition(",")
+            mime = head[5:].split(";")[0] or "image/png"
+            out.append({"type": "image", "source": {
+                "type": "base64", "media_type": mime, "data": data}})
+        elif url:
+            out.append({"type": "image", "source": {"type": "url", "url": url}})
+    return out
+
+
 def _usage_from(payload) -> Optional[Dict]:
     """把各家回包的 usage 归一成 {input, output, reasoning, estimated}。
 
@@ -246,14 +280,27 @@ class AIConfig:
         return problems
 
     # ------------------------------------------------------------- requests
-    def build(self, prompt: str, system: str) -> Tuple[str, Dict, Dict, Dict]:
-        """Return (url, headers, params, body) for a chat call."""
+    def build(self, prompt: str, system: str,
+              images: Optional[List[Dict]] = None) -> Tuple[str, Dict, Dict, Dict]:
+        """Return (url, headers, params, body) for a chat call.
+
+        `images`（可选）是多模态附件：每项形如
+        `{"mime": "image/png", "data_uri": "data:image/png;base64,…", "name": "…"}`。
+        两种 wire format 的图片块形状完全不同（OpenAI `image_url` / Anthropic
+        `image`），所以在这里按 provider 分支构造，调用方不必关心。
+        没有图片时 body 与旧版**逐字节一致**，不影响任何既有链路。
+        """
+        oai_imgs = _image_blocks(images or [])
         if self.provider == "anthropic":
+            imgs = _to_anthropic_blocks(oai_imgs)
+            content: object = prompt
+            if imgs:
+                content = [*imgs, {"type": "text", "text": prompt}]
             body: Dict = {
                 "model": self.model,
                 "max_tokens": self.max_tokens,
                 "temperature": self.temperature,
-                "messages": [{"role": "user", "content": prompt}],
+                "messages": [{"role": "user", "content": content}],
             }
             if system:
                 body["system"] = system
@@ -263,7 +310,10 @@ class AIConfig:
             messages = []
             if system:
                 messages.append({"role": self.system_role, "content": system})
-            messages.append({"role": "user", "content": prompt})
+            content = prompt
+            if oai_imgs:
+                content = [*oai_imgs, {"type": "text", "text": prompt}]
+            messages.append({"role": "user", "content": content})
             body = {"model": self.model, "messages": messages,
                     "temperature": self.temperature}
             body[self.max_tokens_field] = self.max_tokens
@@ -374,13 +424,14 @@ class AIConfig:
         return json.dumps(cur, ensure_ascii=False)
 
 
-def complete(cfg: AIConfig, prompt: str, system: str = "") -> str:
+def complete(cfg: AIConfig, prompt: str, system: str = "",
+             images=None) -> str:
     """One chat turn → raw text. Raises AIError with a debuggable payload."""
     problems = cfg.validate()
     if problems:
         raise AIError("；".join(problems), kind="config")
 
-    url, headers, params, body = cfg.build(prompt, system)
+    url, headers, params, body = cfg.build(prompt, system, images)
     t0 = time.time()
     try:
         resp = cfg.session().post(url, headers=headers, params=params, json=body,
@@ -425,7 +476,7 @@ def complete(cfg: AIConfig, prompt: str, system: str = "") -> str:
 
 
 def complete_stream(cfg: AIConfig, prompt: str, system: str = "",
-                    on_delta=None) -> str:
+                    on_delta=None, images=None) -> str:
     """Streaming variant of `complete` — same request + "stream": true.
 
     `on_delta(kind, text)` fires incrementally with kind in
@@ -439,7 +490,7 @@ def complete_stream(cfg: AIConfig, prompt: str, system: str = "",
     if problems:
         raise AIError("；".join(problems), kind="config")
 
-    url, headers, params, body = cfg.build(prompt, system)
+    url, headers, params, body = cfg.build(prompt, system, images)
     body["stream"] = True
     t0 = time.time()
 

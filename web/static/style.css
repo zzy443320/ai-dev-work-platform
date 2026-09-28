@@ -1519,6 +1519,8 @@ details.adv .adv-body .field:first-child { padding-top: 10px; }
 .usage-table .rk { color: var(--muted); width: 26px; }
 .usage-table .tname { color: var(--text); min-width: 180px; word-break: break-word; }
 .usage-table .muted { font-size: 10.5px; }
+/* 列宽不给死尺寸：浏览器用内容定宽后，width:100% 会把余量全分给「任务」列，
+   长标题本身有 word-break + title 提示，不会被挤爆。 */
 .usage-rel {
   margin-top: 5px; height: 3px; border-radius: 2px;
   background: var(--border); overflow: hidden;
@@ -1676,6 +1678,77 @@ details.adv .adv-body .field:first-child { padding-top: 10px; }
 .chat-input textarea:focus { outline: none; border-color: var(--primary); }
 .chat-input-side { display: flex; flex-direction: column; gap: 8px; }
 .chat-input-side .btn-primary, .chat-input-side .btn-ghost { justify-content: center; }
+
+/* ===== 问答附件（粘贴截图 / 上传文件） =====
+   外层 #chat-drop 是拖拽落点：拖进来时整块高亮，让人知道「松手就行」。 */
+.chat-drop {
+  flex: 1; display: flex; flex-direction: column; gap: 8px;
+  border: 1px dashed transparent; border-radius: 12px;
+  padding: 2px; transition: border-color 0.15s, background 0.15s;
+}
+.chat-drop.dragging { border-color: var(--primary); background: var(--primary-soft); }
+.chat-drop textarea { width: 100%; box-sizing: border-box; }
+
+.chat-attach { display: flex; flex-wrap: wrap; gap: 8px; }
+.chat-attach-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.chat-attach-hint { font-size: 11.5px; }
+
+.chat-att-chip {
+  display: inline-flex; align-items: center; gap: 7px; max-width: 320px;
+  padding: 4px 6px 4px 5px; border-radius: 9px;
+  border: 1px solid var(--border); background: var(--input-bg);
+  font-size: 11.5px; color: var(--text-dim);
+}
+.chat-att-chip.uploading { border-style: dashed; }
+.chat-att-thumb {
+  width: 30px; height: 30px; border-radius: 5px; object-fit: cover;
+  border: 1px solid var(--border); display: block; flex: 0 0 auto;
+}
+.chat-att-icon {
+  display: flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px; border-radius: 5px; flex: 0 0 auto;
+  background: var(--code-bg); color: var(--muted);
+  font-size: 9px; font-weight: 700; letter-spacing: 0.02em;
+  text-transform: uppercase; overflow: hidden;
+}
+.chat-att-name {
+  max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--text);
+}
+.chat-att-size { flex: 0 0 auto; font-size: 10.5px; }
+.chat-att-del {
+  flex: 0 0 auto; border: none; background: transparent; cursor: pointer;
+  color: var(--muted); font-size: 12px; line-height: 1; padding: 2px 3px;
+  border-radius: 4px;
+}
+.chat-att-del:hover { color: var(--danger); background: var(--danger-soft); }
+.chat-att-spin {
+  width: 12px; height: 12px; flex: 0 0 auto; border-radius: 50%;
+  border: 2px solid var(--border-strong); border-top-color: var(--primary);
+  animation: chat-spin 0.8s linear infinite;
+}
+@keyframes chat-spin { to { transform: rotate(360deg); } }
+
+/* 已发送消息里的附件：图片显示缩略图，点开看原图 */
+.chat-msg-atts { display: flex; flex-wrap: wrap; gap: 8px; max-width: 100%; }
+.chat-msg-att {
+  display: flex; flex-direction: column; gap: 3px; align-items: flex-start;
+  text-decoration: none; color: var(--text-dim); font-size: 10.5px;
+  padding: 4px; border-radius: 9px; border: 1px solid var(--border);
+  background: var(--input-bg); max-width: 220px;
+}
+.chat-msg-att:hover { border-color: var(--border-strong); }
+.chat-msg-thumb {
+  max-width: 200px; max-height: 140px; border-radius: 6px; display: block;
+  border: 1px solid var(--border); object-fit: contain;
+}
+.chat-msg-fileicon {
+  padding: 10px 14px; border-radius: 6px; background: var(--code-bg);
+  color: var(--muted); font-size: 11px; font-weight: 700;
+}
+.chat-msg-attname {
+  max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 
 
 /* ===== 任务表单：相邻块留白 =====

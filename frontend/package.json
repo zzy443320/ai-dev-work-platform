@@ -1,0 +1,20 @@
+{
+  "name": "ones-copilot-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "ONES 前端研发助手的 Vue 3 前端。构建产物输出到 web/static/，由 FastAPI 直接托管。",
+  "scripts": {
+    "dev": "vite",
+    "clean": "node scripts/clean.mjs",
+    "build": "npm run clean && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "vue": "^3.5.13"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.2.1",
+    "vite": "^6.0.7"
+  }
+}

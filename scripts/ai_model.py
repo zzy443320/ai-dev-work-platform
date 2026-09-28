@@ -80,13 +80,16 @@ class AIModel:
         return self._extract_json(text)
 
     def complete_text(self, prompt: str, system: str = "",
-                      max_tokens: Optional[int] = None, on_delta=None) -> dict:
+                      max_tokens: Optional[int] = None, on_delta=None,
+                      images=None) -> dict:
         """文本模式：直接返回模型原文，**不做 JSON 契约提取**。
 
         对话/问答用。理由：回答是自由 Markdown，
         （a）套 JSON 会被 `_extract_json` 的 raw 截断到 3000 字符，长回答直接丢尾；
         （b）正文里的代码块/示例 JSON 很容易被误判成候选而解析失败。
         账本、余额与「推理截断自动重试」与 complete() 共用同一条路径，口径一致。
+        `images` 是问答附件里的图片（多模态）：形如
+        `{"mime": "image/png", "data_uri": "data:image/png;base64,…"}`。
         返回 {"text": ..., "error": ...}。
         """
         if self.cfg.is_mock:
@@ -96,14 +99,14 @@ class AIModel:
                 except Exception:
                     pass
             return {"text": "(Mock 模式：无真实输出)", "error": ""}
-        text, err = self._call_raw(prompt, system, on_delta, max_tokens)
+        text, err = self._call_raw(prompt, system, on_delta, max_tokens, images)
         if err:
             return {"text": "", "error": err,
                     "error_detail": getattr(self, "_last_error_detail", {})}
         return {"text": text, "error": ""}
 
     def _call_raw(self, prompt: str, system: str, on_delta,
-                  max_tokens: Optional[int]) -> Tuple[str, str]:
+                  max_tokens: Optional[int], images=None) -> Tuple[str, str]:
         """一次真实请求（必要时自动重试一次）→ (text, err)。
 
         所有真实请求的唯一出口：账本记录与推理截断重试都只在这里发生，避免
@@ -111,7 +114,7 @@ class AIModel:
         """
         base_budget = int(max_tokens) if max_tokens else int(self.cfg.max_tokens)
         self.cfg.max_tokens = base_budget
-        text, err = self._attempt(prompt, system, on_delta, attempt=1)
+        text, err = self._attempt(prompt, system, on_delta, attempt=1, images=images)
         if err and _is_reasoning_truncation(err):
             # 推理模型（deepseek-flash 等）的 hidden reasoning 与回答共享 max_tokens：
             # 大上下文（定位窗口动辄几十 KB）会把配额整个烧在思考上，响应里连
@@ -120,13 +123,14 @@ class AIModel:
             # 额度不够（与定位质量无关，容易误判成定位 bug）。
             try:
                 self.cfg.max_tokens = min(base_budget * 2, 64000)
-                text, err = self._attempt(prompt, system, on_delta, attempt=2)
+                text, err = self._attempt(prompt, system, on_delta, attempt=2,
+                                          images=images)
             finally:
                 self.cfg.max_tokens = base_budget  # 还原，避免污染后续调用预算
         return text, err
 
     def _attempt(self, prompt: str, system: str, on_delta,
-                 *, step: str = "", attempt: int = 1) -> Tuple[str, str]:
+                 *, step: str = "", attempt: int = 1, images=None) -> Tuple[str, str]:
         """单次请求：返回 (text, error)。error 非空时 text 无意义。
 
         每次请求都入用量账本（含失败——失败调用同样烧掉了 prompt token）。
@@ -136,9 +140,11 @@ class AIModel:
         try:
             if on_delta is not None:
                 text = _http_complete_stream(self.cfg, prompt,
-                                             system or _DEFAULT_SYSTEM, on_delta)
+                                             system or _DEFAULT_SYSTEM, on_delta,
+                                             images=images)
             else:
-                text = _http_complete(self.cfg, prompt, system or _DEFAULT_SYSTEM)
+                text = _http_complete(self.cfg, prompt, system or _DEFAULT_SYSTEM,
+                                      images=images)
         except AIError as e:
             self._last_error_detail = e.to_dict()
             self._record(prompt, system, "", time.time() - t0, False, e.message,

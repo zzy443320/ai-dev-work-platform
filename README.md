@@ -61,9 +61,41 @@ cp config.yaml.example config.yaml
 .venv/Scripts/python.exe tests/test_safety.py   # 后端安全场景（纯离线）
 .venv/Scripts/python.exe tests/check_team.py    # 长任务作业离线逻辑
 .venv/Scripts/python.exe tests/check_chat.py    # 问答离线逻辑
+.venv/Scripts/python.exe tests/check_vue_all.py # 界面总入口（Vue 系列 + 既有界面用例）
 ```
 
 `tests/` 自包含：纯离线用例什么都不用准备；界面类用例自带临时实例与脱敏夹具，不依赖私有数据。
+
+## 前端（Vite + Vue 3）
+
+界面已从「无构建步骤的原生 JS」**整体迁到 Vite + Vue 3**。旧的 `index.html` / `app.js` /
+迁移期的 `/v2` 别名都已删除，`GET /` 直接返回 Vue 产物 —— **只有一份实现**。
+
+```bash
+cd frontend
+npm install
+npm run build        # = clean + vite build；产物落到 web/static/{v2.html,vue/}
+npm run dev          # 开发模式（接口自动转发到 127.0.0.1:8765）
+```
+
+- 入口文件名仍是 `v2.html`（历史名，避免动后端与既有用例的选择器）；`GET /` 由后端直接返回它。
+- **构建必须走 `npm run build`**（先 `clean` 再 build）。产物是带 hash 的文件名，
+  直接 `vite build` 会在 `web/static/vue/` 里堆下旧 hash，`check_vue_migration.py` 会因此报错。
+- 构建产物**不入库**（见 .gitignore）；只 clone 后端会拿到 503 提示「前端尚未构建」，
+  跑一次 `npm run build` 即可。
+- Vue 版直接复用 `web/static/style.css`（手写、共享、`clean` 脚本刻意不碰它）。
+- 自检：`tests/check_vue_all.py` 是总入口 —— 拉起临时实例后跑完 Vue 系列用例 +
+  仍对唯一实现成立的既有界面用例，确认零回归。
+
+### 迁移已完成的约定（供后续维护参考）
+
+1. 视图组件在 `frontend/src/views/<X>Pane.vue`，挂到 `App.vue` 的 `#pane-<x>`。
+2. **class / id 一律沿用旧版**（`#usage-cards`、`.panel-head` 等）—— style.css 与既有 Playwright 用例才能直接命中。
+3. 跨页签复用的能力在 composable：折叠状态 `useFold`（localStorage 键 `panel-fold-state`）、
+   提示条 `useToast` —— 与旧版**同键同格式**。
+4. 格式化函数统一放 `frontend/src/utils/format.js`。
+5. 图表继续手绘 SVG（内网离线可用），不引图表库。
+6. 会写目标仓库的界面用例，第一行先过 `tests/repo_guard.py` 闸门，跳过路径零副作用。
 
 ## 已知限制
 
