@@ -314,4 +314,11 @@
 - 文件：web/server.py、frontend/src/App.vue、frontend/src/views/DefectPane.vue、frontend/src/views/TeamPane.vue、frontend/src/composables/useProposalModal.js、frontend/src/components/ProposalModal.vue、frontend/vite.config.js、frontend/scripts/clean.mjs、scripts/chat.py、tests/check_vue_settings_ui.py、tests/check_vue_extensions_ui.py、tests/check_vue_defect_ui.py、tests/check_vue_migration.py、tests/check_vue_stats_ui.py、tests/check_vue_chat_ui.py、tests/check_vue_team_ui.py、tests/check_vue_tasks_ui.py、tests/check_vue_shell_ui.py、tests/check_vue_all.py、README.md、CHANGELOG.md；删除 web/static/index.html、web/static/app.js、frontend/src/api/debugBridge.js
 - 影响：需重启后端（路由有改动），并跑一次 `npm run build` 生成产物（`GET /` 在产物缺失时返回 503）。回归：`tests/check_vue_all.py` 14 个用例非零退出 0 个——Vue 系列八条全绿（含新增的步骤条断言），`check_panel_fold.py` / `check_layout_ui.py` / `check_chat.py`(88) / `check_usage.py`(59) / `check_usage_ui.py` 全绿；前端构建 68 个模块通过。
 
+## 2026-09-28 18:40 · 修复 · 问答输入框塌缩与位置，静态资源缓存策略
+
+- 内容：① 问答页签输入框在部分浏览器里塌缩成窄条白块（样式未生效）；② 输入区挪进聊天容器（`.chat-box`）内部底部，与消息区视觉一体；③ 治根：`/static` 增加缓存策略，改样式后刷新即生效，不再吃浏览器启发式缓存。
+- 做法：① 塌缩根因是浏览器缓存了没有 `.chat-drop` 规则的旧 style.css（拖拽上传是后加的包裹层），本地 Playwright 实测样式本就正确——故治缓存而非改样式：`/static/vue/`（带 hash 的构建产物）返回 `max-age=31536000, immutable`，其余（style.css、v2.html）返回 `no-cache` 每次协商缓存；② 模板上把 `.chat-input` 移入 `.chat-box`（`.chat-live` 状态行之后），CSS 间距从面板级 margin 改为容器内 `margin: 10px 12px 12px`。
+- 文件：web/server.py、frontend/src/views/ChatPane.vue、web/static/style.css、scripts/changelog.py（docstring 示例路径更新）
+- 影响：需重启后端（中间件有改动）+ 刷新页面；已构建 68 模块（新 bundle `app.2ahB7EtX.js`）。回归：实测 `/static/style.css` → no-cache、`/static/vue/*.js` → immutable；`chat-input` 在 `.chat-box` 内（`contains` 为真）；`tests/check_vue_all.py` 14 个用例非零退出 0 个。
+
 

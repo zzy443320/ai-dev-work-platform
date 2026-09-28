@@ -1669,7 +1669,7 @@ details.adv .adv-body .field:first-child { padding-top: 10px; }
 }
 .chat-status { color: var(--primary); }
 
-.chat-input { display: flex; gap: 10px; margin-top: 12px; margin-bottom: 10px; align-items: stretch; }
+.chat-input { display: flex; gap: 10px; align-items: stretch; margin: 10px 12px 12px; } /* 嵌在 .chat-box 内：上接 chat-live 状态行，四周留出容器内边距 */
 .chat-input textarea {
   flex: 1; resize: vertical; min-height: 74px; max-height: 240px;
   padding: 10px 12px; border-radius: 10px; font: inherit; font-size: 13px;

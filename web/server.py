@@ -512,6 +512,27 @@ app = FastAPI(title="ONES 前端研发助手 UI (Frontend Dev Copilot)")
 app.add_middleware(
     CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]
 )
+
+
+@app.middleware("http")
+async def static_cache_policy(request: Request, call_next):
+    """静态资源缓存策略：治「改了样式浏览器却不变」。
+
+    - /static/vue/ 下是 vite 带 hash 的构建产物，文件名即版本 → 长缓存 immutable；
+    - /static/ 其余是手写文件（style.css / v2.html / .vite/manifest.json），没有 hash，
+      必须每次协商缓存 revalidate（ETag 未变则 304，开销极小）——否则浏览器启发式
+      缓存会拿旧 style.css 用上好几天，新加的规则（如 .chat-drop）全数失效。
+    """
+    response = await call_next(request)
+    path = request.url.path
+    if path.startswith("/static/"):
+        if path.startswith("/static/vue/"):
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        else:
+            response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 app.mount("/screenshots", StaticFiles(directory=str(SCREENSHOT_DIR)), name="screenshots")
 # 问答附件的预览通道（只读）：文件名由服务端生成，用户给的名字只作展示

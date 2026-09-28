@@ -184,39 +184,40 @@ onMounted(async () => {
         <span class="chat-status" id="chat-status">{{ status }}</span>
         <span class="muted" id="chat-tools">{{ toolsText }}</span>
       </div>
-    </div>
 
-    <div class="chat-input" id="chat-input">
-      <div class="chat-drop" id="chat-drop" ref="dropEl" :class="{ dragging }"
-           @dragenter.prevent="onDragEnter" @dragover.prevent="onDragOver"
-           @dragleave.prevent="onDragLeave" @drop.prevent="onDrop">
-        <div class="chat-attach" id="chat-attach">
-          <ChatAttachBar :atts="pendingAtts" :uploading="uploading" @remove="removeAtt" />
+      <!-- 输入区嵌在聊天容器内（.chat-box）底部，视觉上与消息区一体 -->
+      <div class="chat-input" id="chat-input">
+        <div class="chat-drop" id="chat-drop" ref="dropEl" :class="{ dragging }"
+             @dragenter.prevent="onDragEnter" @dragover.prevent="onDragOver"
+             @dragleave.prevent="onDragLeave" @drop.prevent="onDrop">
+          <div class="chat-attach" id="chat-attach">
+            <ChatAttachBar :atts="pendingAtts" :uploading="uploading" @remove="removeAtt" />
+          </div>
+          <textarea id="chat-text" ref="textEl" rows="3"
+                    placeholder="Enter 发送，Shift+Enter 换行。支持直接粘贴截图（Ctrl/⌘+V），也可以点「上传文件」或把文件拖到这里。"
+                    @keydown="onKeydown" @paste="onPaste" />
+          <div class="chat-attach-bar">
+            <input type="file" id="chat-file" ref="fileEl" multiple class="hidden"
+                   accept="image/*,.txt,.log,.md,.csv,.json,.xml,.yml,.yaml,.ts,.tsx,.js,.jsx,.vue,.css,.scss,.py,.java,.go,.sh,.sql,.ini,.conf,.patch,.diff"
+                   @change="onFileChange">
+            <button class="btn-ghost btn-sm" id="btn-chat-upload" title="选择图片或文本文件（日志、代码、配置等）"
+                    @click="pickFile">
+              <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="17 8 12 3 7 8" /><line x1="12" y1="3" x2="12" y2="15" /></svg>
+              上传文件
+            </button>
+            <span class="chat-attach-hint muted" id="chat-attach-hint"
+                  :class="{ hidden: !!pendingAtts.length }">可粘贴截图 / 上传日志与代码文件</span>
+          </div>
         </div>
-        <textarea id="chat-text" ref="textEl" rows="3"
-                  placeholder="Enter 发送，Shift+Enter 换行。支持直接粘贴截图（Ctrl/⌘+V），也可以点「上传文件」或把文件拖到这里。"
-                  @keydown="onKeydown" @paste="onPaste" />
-        <div class="chat-attach-bar">
-          <input type="file" id="chat-file" ref="fileEl" multiple class="hidden"
-                 accept="image/*,.txt,.log,.md,.csv,.json,.xml,.yml,.yaml,.ts,.tsx,.js,.jsx,.vue,.css,.scss,.py,.java,.go,.sh,.sql,.ini,.conf,.patch,.diff"
-                 @change="onFileChange">
-          <button class="btn-ghost btn-sm" id="btn-chat-upload" title="选择图片或文本文件（日志、代码、配置等）"
-                  @click="pickFile">
-            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="17 8 12 3 7 8" /><line x1="12" y1="3" x2="12" y2="15" /></svg>
-            上传文件
+        <div class="chat-input-side">
+          <button class="btn-primary" id="btn-chat-send" :disabled="sendDisabled" @click="send">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 11 13" /><path d="M22 2l-7 20-4-9-9-4 20-7Z" /></svg>
+            发送
           </button>
-          <span class="chat-attach-hint muted" id="chat-attach-hint"
-                :class="{ hidden: !!pendingAtts.length }">可粘贴截图 / 上传日志与代码文件</span>
+          <button class="btn-ghost" id="btn-chat-stop" :class="{ hidden: !busy }"
+                  title="断开当前输出（服务端会跑完这一次调用，结果仍会存进会话）"
+                  @click="stop()">停止</button>
         </div>
-      </div>
-      <div class="chat-input-side">
-        <button class="btn-primary" id="btn-chat-send" :disabled="sendDisabled" @click="send">
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 11 13" /><path d="M22 2l-7 20-4-9-9-4 20-7Z" /></svg>
-          发送
-        </button>
-        <button class="btn-ghost" id="btn-chat-stop" :class="{ hidden: !busy }"
-                title="断开当前输出（服务端会跑完这一次调用，结果仍会存进会话）"
-                @click="stop()">停止</button>
       </div>
     </div>
 
