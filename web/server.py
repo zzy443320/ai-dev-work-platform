@@ -557,7 +557,11 @@ async def index():
             503,
             "前端尚未构建。请在 frontend/ 目录执行：npm install && npm run build",
         )
-    return FileResponse(str(VUE_ENTRY))
+    # 入口 HTML 引用的是带 hash 的 /static/vue/ 产物：构建后 hash 变了，
+    # 但浏览器对没有 Cache-Control 的响应会启发式缓存，导致拿到旧 HTML、
+    # 引用已被 clean 掉的旧 chunk（表现为「改了样式看不到/界面缺一块」）。
+    # 与 /static/style.css 同策略：入口永远 no-cache，产物本体才 immutable。
+    return FileResponse(str(VUE_ENTRY), headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/api/health")

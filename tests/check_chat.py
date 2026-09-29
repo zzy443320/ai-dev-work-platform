@@ -206,6 +206,22 @@ def main() -> int:
               chat_mod._as_tool_call('{"summary": "x"}') is None)
         check("超长文本不算工具调用",
               chat_mod._as_tool_call('{"action":"call", "x":"' + "a" * 5000 + '"}') is None)
+        # DeepSeek 系模型会把内部 DSML 工具模板泄漏进正文（真实案例 2026-09-29）：
+        # JSON 工具调用 + <｜｜DSML｜｜ ...> 泄漏块。要能识别调用且把泄漏洗掉。
+        dsml_case = ('{"action": "call", "tool": "repo_grep", '
+                     '"arguments": {"pattern": "定时任务"}}\n\n'
+                     '<｜｜DSML｜｜ calls>\n<｜｜DSML｜｜ invoke name="repo_grep">\n'
+                     '<｜｜DSML｜｜ parameter name="arguments" string="false">'
+                     '{"pattern": "定时任务", "max_hits": 60}</｜｜DSML｜｜ parameter>\n'
+                     '</｜｜DSML｜｜ invoke>\n</｜｜DSML｜｜ calls>')
+        tc3 = chat_mod._as_tool_call(dsml_case)
+        check("DSML 泄漏不挡工具调用识别", tc3 and tc3["tool"] == "repo_grep")
+        cleaned = chat_mod._strip_dsml(dsml_case)
+        check("DSML 泄漏块被整块清洗",
+              "DSML" not in cleaned and "invoke" not in cleaned
+              and cleaned.startswith('{"action"'))
+        check("无 DSML 的文本原样返回",
+              chat_mod._strip_dsml("普通回答，没有泄漏。") == "普通回答，没有泄漏。")
 
         # ── 6/7. 提案抽取 ──
         print("\n[5] 提案抽取与归一")

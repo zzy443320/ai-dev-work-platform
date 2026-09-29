@@ -479,20 +479,39 @@ def build_prompt(messages: List[Dict], user_text: str, budget_chars: int = MAX_H
 
 
 # ------------------------------------------------------------- 解析工具
+# DeepSeek 系模型有内置的私有工具调用模板（DSML），偶尔会把训练模板直接泄漏进正文，
+# 例如：<｜｜DSML｜｜ calls> ... </｜｜DSML｜｜ invoke>。那不是给我们的协议，
+# 整块删掉——不删的话用户会在回答里看到一堆内部标记，且整段解析成工具调用会失败。
+_DSML_TAG_RE = re.compile(r"</?[/｜|]*DSML[^>]*>")
+_DSML_BLOCK_RE = re.compile(r"<[/｜|]*DSML[^>]*>.*?<[/｜|]*DSML[^>]*>", re.S)
+
+
+def _strip_dsml(text: str) -> str:
+    if "DSML" not in text:
+        return text
+    text = _DSML_BLOCK_RE.sub("", text)
+    text = _DSML_TAG_RE.sub("", text)
+    # 流被截断时闭合标签可能缺失，兜底清掉残留行
+    if "｜｜DSML｜｜" in text:
+        text = "\n".join(l for l in text.splitlines() if "｜｜DSML｜｜" not in l)
+    return text.strip()
+
+
 def _as_tool_call(text: str) -> Optional[Dict]:
     """识别「整段回复就是一个 action=call 的 JSON」这种工具调用形态。
 
-    模型偶尔会套一层 ``` 围栏，一并剥掉。只认这种情况，避免把正文里的 JSON 例子
-    （比如回答里贴的一段配置）误当成工具调用。
+    模型偶尔会套一层 ``` 围栏，一并剥掉；也会把 DSML 内部模板泄漏附在 JSON
+    后面，先剥掉再解析。只认回复以 action=call JSON 开头的情况，避免把正文里
+    的 JSON 例子（比如回答里贴的一段配置）误当成工具调用。
     """
-    t = (text or "").strip()
+    t = _strip_dsml((text or "").strip())
     if t.startswith("```"):
         t = re.sub(r"^```[a-zA-Z]*\s*", "", t)
         t = re.sub(r"\s*```$", "", t).strip()
     if not t.startswith("{") or len(t) > 3000:
         return None
     try:
-        obj = json.loads(t)
+        obj, _end = json.JSONDecoder().raw_decode(t)
     except Exception:
         return None
     if not isinstance(obj, dict):
@@ -657,7 +676,7 @@ def run_chat(ai, reader: RepoReader, messages: List[Dict], user_text: str, *,
             return {"reply": "", "tools": tools_used, "patch": None,
                     "error": str(res["error"]), "ai_mode": getattr(ai, "mode", ""),
                     "rounds": rounds}
-        text = res.get("text") or ""
+        text = _strip_dsml(res.get("text") or "")
 
         call = _as_tool_call(text)
         if call and rnd < max_rounds:

@@ -264,6 +264,8 @@ class AIModel:
 
     # ------------------------------------------------------------------ json
     def _extract_json(self, text: str) -> dict:
+        text = _strip_model_noise(text or "")
+
         def _coerce(obj) -> dict:
             if not isinstance(obj, dict):
                 raise ValueError("not an object")
@@ -301,6 +303,28 @@ class AIModel:
 
 
 _DEFAULT_SYSTEM = "你是资深前端工程师，擅长分析缺陷并给出最小改动补丁。只输出 JSON。"
+
+
+# deepseek 系模型偶尔把训练模板（DSML）或思考标签泄漏进正文（与 chat.py
+# 同源问题）：轻则污染 root_cause，重则破坏 JSON 提取与 SEARCH/REPLACE
+# 块解析——解析前统一清洗。
+_DSML_TAG_RE = re.compile(r"</?[/｜|]*DSML[^>]*>")
+_DSML_BLOCK_RE = re.compile(r"<[/｜|]*DSML[^>]*>.*?<[/｜|]*DSML[^>]*>", re.S)
+_THINK_BLOCK_RE = re.compile(r"<think>.*?</think>", re.S | re.I)
+
+
+def _strip_model_noise(text: str) -> str:
+    if "DSML" in text:
+        text = _DSML_BLOCK_RE.sub("", text)
+        text = _DSML_TAG_RE.sub("", text)
+        # 流被截断时闭合标签可能缺失，兜底清掉残留行
+        if "｜｜DSML｜｜" in text:
+            text = "\n".join(l for l in text.splitlines()
+                             if "｜｜DSML｜｜" not in l)
+    if "<think" in text:
+        text = _THINK_BLOCK_RE.sub("", text)
+        text = re.sub(r"</?think[^>]*>", "", text, flags=re.I)
+    return text
 
 
 def _salvage_fields(text: str) -> Dict:

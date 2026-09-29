@@ -281,8 +281,12 @@ def strip_html(text: str) -> str:
     """
     text = text or ""
     text = _SCRIPT_RE.sub(" ", text)
-    text = _URL_RE.sub(lambda m: m.group(0).split("/", 3)[-1] if m.group(0).count("/") > 2
-                       else " ", text)  # 去掉协议+域名，保留 /path 部分
+    # 保留完整 URL（协议+域名+路径）。曾只保留 /path 部分——但剥掉域名的裸路径
+    # （application/vd11LQY/application-list/vd_customer）会被 _extract_keywords
+    # 当成代码路径提示，给同名目录的一堆无关文件投 tier-0/段分，把真正的修改点
+    # 挤出读取窗口（工单 214646）。域名噪音由关键词抽取层的 URL 剥除统一处理，
+    # 知识卡片侧拿到完整链接反而更可用。
+    text = _URL_RE.sub(lambda m: " " + m.group(0) + " ", text)
     # 块级边界 → 换行，行内标签 → 空格（先块级后行内，避免 <p> 被当空格吃掉）
     text = _BR_RE.sub("\n", text)
     text = _HR_RE.sub("\n", text)
@@ -340,7 +344,11 @@ class DefectAnalyzer:
         self,
         repo_path: str,
         ai_model,
-        max_files: int = 4,
+        # 窗口 4→6：4 个名额在大型 monorepo（cloudpivot 等 8000+ 文件）里
+        # 几乎必然漏掉真正的改动点——即使稀有标识符加权后它已排进候选池前 6
+        # （工单 214646：import-input.vue 排第 6，前 4 被同分信号文件占满）。
+        # 大文件走关键词锚点窗口化，token 增量可控。
+        max_files: int = 6,
         file_cap_bytes: int = 12000,
         context_lines: int = 80,
         precedent_dir: str = "",
@@ -403,6 +411,7 @@ class DefectAnalyzer:
         # （不依赖得分排序——真改动点可能排在读取名额之外，本案
         # repeat-form.vue 排第 5）；② 目录提示走重扫投票。
         retry_note = ""
+        windows = dict(snippets)
         if not blocks and not ai_result.get("error"):
             hints = self._model_hints(ai_result, path_tokens)
             exts = {"vue", "ts", "tsx", "js", "jsx"}
@@ -411,10 +420,18 @@ class DefectAnalyzer:
             dir_hints = [h for h in hints if h not in file_hints]
             snippets2, meta2 = dict(snippets), list(meta)
             forced: List[str] = []
-            for fp in file_hints[:2]:
+            # 预算按「成功开窗数」计，不是按提示条数截断：模型常把已读过的
+            # 文件再点一遍、或点名一个不存在的文件（幻觉名）——若在解析前
+            # 就 [:2] 截断，真提示会被前面两条废提示挤掉（工单 214872：
+            # file_hints=['edit-method_table.vue'(已读), 'edit-method_sap.vue'
+            # (不存在), 'method-extra-fields.vue'(真改动点)]，第三条永远轮不到）。
+            opened_file_hints = 0
+            for fp in file_hints:
+                if opened_file_hints >= 2 or len(snippets2) >= self.max_files + 4:
+                    break
                 resolved = self._resolve_file_hint(fp)
-                if not resolved or resolved in snippets2 \
-                        or len(snippets2) >= self.max_files + 2:
+                if not resolved or resolved in snippets2:
+                    # 解析失败/已读过不占预算，继续看下一条提示
                     continue
                 t, note = self._read_one(resolved, keywords)
                 if t is not None:
@@ -422,13 +439,37 @@ class DefectAnalyzer:
                     if note:
                         meta2.append(note)
                     forced.append(resolved)
+                opened_file_hints += 1
+            # ② 目录提示的直接子组件强制开窗：模型点名目录时，真正的流程/
+            # 校验主组件常因关键词得分不如目录里的报告/预览组件而进不了窗口
+            # （预算此前只有 max_files+2，重试窗口几乎全被全仓扫描占满）。
+            # 必须排在目录重扫**之前**，主组件才抢得到预算。
+            resolved_dirs: List[str] = []
+            for dh in dir_hints:
+                if len(resolved_dirs) >= 2:
+                    break
+                d = self._resolve_dir_hint(dh)
+                if not d or d in resolved_dirs:
+                    continue
+                resolved_dirs.append(d)
+                for rel in self._dir_entry_children(d, keywords):
+                    if len(snippets2) >= self.max_files + 4:
+                        break
+                    if rel in snippets2:
+                        continue
+                    t, note = self._read_one(rel, keywords)
+                    if t is not None:
+                        snippets2[rel] = t
+                        if note:
+                            meta2.append(note)
+                        forced.append(rel)
             if dir_hints:
                 merged = (dir_hints + list(path_tokens))[:8]
                 kws2, _ = self._extract_keywords(text + "\n" + " ".join(dir_hints))
                 suspect2 = self._scan_repo(kws2, merged)
                 extra, extra_meta = self._read_contexts(suspect2, kws2)
                 for k, v in extra.items():
-                    if k not in snippets2 and len(snippets2) < self.max_files + 2:
+                    if k not in snippets2 and len(snippets2) < self.max_files + 4:
                         snippets2[k] = v
                 meta2 += [m for m in extra_meta if m not in meta2]
             fresh = [f for f in snippets2 if f not in snippets]
@@ -438,6 +479,7 @@ class DefectAnalyzer:
                 snippets2 = {**{k: snippets2[k] for k in fresh},
                              **{k: v for k, v in snippets2.items()
                                 if k not in fresh}}
+                windows = snippets2
                 note = (f"第一轮窗口不足，已按模型提示补充定位"
                         f"（点名文件 {', '.join(forced) or '-'}"
                         f"{'；目录 ' + ', '.join(dir_hints) if dir_hints else ''}），"
@@ -470,6 +512,23 @@ class DefectAnalyzer:
                             ai_result[k] = v2
             # fresh 为空：模型提示的窗口与第一轮重合，重试无意义，保持原结果
 
+        # ── 第三轮兜底：定向「只出补丁」（最多一次）──────────────────
+        # 前两轮确认了根因却仍拿不到合法补丁块时，最常见的原因是推理模型
+        # 把输出花在分析文字上、或分析+补丁混写导致 JSON 崩坏。此时不再重复
+        # 分析：把已有结论 + 文件窗口塞进一个「只准填 patch_blocks」的最小
+        # prompt，把开放式生成变成填空题（工单 214872 类失败的最终兜底）。
+        patch_retry = ""
+        if (not blocks and not ai_result.get("error") and windows
+                and not detect_non_frontend(ai_result, 0)):
+            blocks, raw3, patch_retry, errs3 = self._patch_only_fallback(
+                ai_result, windows, on_delta)
+            if blocks:
+                raw_patch = raw3
+                parse_errors = errs3
+                ai_result["patch_blocks"] = raw3
+            else:
+                parse_errors = parse_errors + [patch_retry]
+
         # 定位为空是"护栏触发"，必须与"补丁生成失败"区分开，
         # 否则用户看到的现象都是"无法生成补丁"，无法判断该修什么。
         non_frontend = detect_non_frontend(ai_result, len(blocks))
@@ -497,6 +556,7 @@ class DefectAnalyzer:
             "read_files": list(snippets),
             "locate_empty": not snippets,
             "locate_retry": retry_note,
+            "patch_retry": patch_retry,
             "truncation": meta,
             "root_cause": ai_result.get("root_cause", ""),
             "category": ai_result.get("category", "其他"),
@@ -538,6 +598,13 @@ class DefectAnalyzer:
         raw_files = [t for t in raw if "/" not in t
                      and re.search(r"\.(?:ts|tsx|js|jsx|vue)$", t, re.I)]
         raw = [t for t in raw if "/" in t]
+        # 正文里的「标识符/标识符」（SingleObject/List）是模型在复述返回值
+        # 类型枚举，不是仓库路径——放行会被 _resolve_dir_hint 的尾缀匹配
+        # 误解析到无关目录（docs/ai-coding/list/），白烧一个目录预算。
+        # 仓库名几乎都是 kebab-case/小写段，全 CamelCase 段的"路径"必是伪路径。
+        raw = [t for t in raw
+               if not all(re.fullmatch(r"[A-Z][A-Za-z0-9]*", seg)
+                          for seg in t.split("/") if seg)]
         # 模型常直接点名页面路由（admin/#/demo-skill-log），`#` 会把
         # 路径正则切断——必须走路由反解，否则二次定位拿不到目录提示
         routes = _route_to_dir_tokens(text)
@@ -558,6 +625,16 @@ class DefectAnalyzer:
         stack_files = extract_stack_paths(text)
         # 截图/附件图注（d1-time-list.png）会污染语料，先摘掉
         text = _IMG_NAME_RE.sub(" ", text)
+        # 被测应用的完整 URL（https://host/app/route）是环境信息，不是代码路径。
+        # 其路径段（工单 214646 的 …/application-list/…）会给同名代码目录的
+        # 一堆无关文件投 tier-0 / 加段分，把真正的修改点（import-input.vue，
+        # 关键词分 8）整体挤出读取窗口。只删 http(s) 完整链接——裸路由
+        # （admin/#/demo-skill-log）不是 URL，保留走 _route_to_dir_tokens。
+        # ⚠ 必须先做路由反解再剥 URL：hash 路由常以完整 URL 形态出现
+        # （…/admin/#/ai-skill-runtime-log），先剥会把路由一起剥掉
+        # （check_locate_regression2 的路由用例就是这么红的）。
+        route_tokens = _route_to_dir_tokens(text)
+        text = re.sub(r"https?://[^\s<>\"')\]]+", " ", text)
         # 工单模板里的「账号/密码」「邮箱」形态串（user/Acme@123456、
         # someone@example.com）：@ 连接的两段及拆词全部按噪音处理。
         # 这是结构性规则，不依赖任何具体账号名——任何团队的工单模板都适用。
@@ -575,9 +652,7 @@ class DefectAnalyzer:
         # re.A（ASCII）必须加：Unicode 模式下 \w 会把「观察日期/时间控件的可编辑性」
         # 这类中文短语也当成路径 token，6 个名额被垃圾占满后目录判定全盘失准。
         raw_tokens = re.findall(r"\b[\w-]+(?:/[\w-]+)+\b", text, re.A)
-        # 前端路由（admin/#/demo-skill-log）也是路径提示：把它反解成
-        # 「疑似目录名」才能让 tier-0 命中 ai-platform/components/runtime-log/。
-        route_tokens = _route_to_dir_tokens(text)
+        # 路由反解已在上方 URL 剥除前完成（route_tokens 直通，不过 _clean_path_tokens）
         # ⚠⚠ route_tokens 绝不能再过 _clean_path_tokens：它们不含斜杠，
         # 会被「必须含 /」检查全部丢弃（2026-09-23 事故：admin/#/demo-skill-log
         # 工单的目录提示全灭，定位漂移到 schedule）。路由候选单独直通。
@@ -779,6 +854,82 @@ class DefectAnalyzer:
                 return f
         return ""
 
+    def _resolve_dir_hint(self, hint: str) -> str:
+        """把模型点名的目录提示解析成仓库内真实目录（以 / 结尾）。
+
+        模型常把父目录写错（…/pc/modal/model-table-import，实际是
+        …/pc/components/model-table-import），整条路径 is_dir() 会失败。
+        按「最长尾缀匹配」退化：从完整路径到末段逐级尝试在 ls-files 里找
+        /{suffix}/ 形态的目录段，第一个（最具体的）命中即返回。"""
+        hint = (hint or "").lstrip("./").replace("\\", "/").strip("/")
+        if not hint:
+            return ""
+        if (self.repo_path / hint).is_dir():
+            return hint + "/"
+        segs = [s for s in hint.lower().split("/") if s]
+        suffixes = ["/".join(segs[i:]) for i in range(len(segs))
+                    if len(segs[i]) >= 4]
+        files = self._ls_files()
+        for suf in suffixes:
+            tail = "/" + suf + "/"
+            for f in files:
+                idx = f.lower().find(tail)
+                if idx >= 0:
+                    return f[:idx + len(tail)]
+        return ""
+
+    def _dir_entry_children(self, dir_rel: str, keywords: List[str],
+                            limit: int = 3) -> List[str]:
+        """目录提示的「直接子组件」强制开窗候选（按关键词命中分排序）。
+
+        模型点名目录时，真正承载流程/校验逻辑的往往是该目录的主组件
+        （import.vue / import-input.vue / index.vue），而关键词全仓排序常
+        让目录里恰好含高频词的报告/预览组件占掉读取名额，主组件反而进不了
+        窗口——工单 214646（导入 ADD_UPDATE 不拦截）就是此案：改动点
+        import-input.vue 两次定位都被挤出，模型只能按护栏拒出补丁。"""
+        if not dir_rel:
+            return []
+        exts = (".vue", ".ts", ".tsx", ".js", ".jsx")
+        children = [f for f in self._ls_files()
+                    if f.startswith(dir_rel)
+                    and "/" not in f[len(dir_rel):]
+                    and f.lower().endswith(exts)
+                    and not _THIRD_PARTY_RE.search(f)
+                    and not _LOCALE_RE.search(f)
+                    and not _DOC_RE.search(f)]
+        if not children:
+            return []
+        # 目录内关键词命中分：一次 git grep 一个词，pathspec 限定该目录
+        base = dir_rel.rstrip("/")
+        scores: Dict[str, float] = {f: 0.0 for f in children}
+        ident_kws = getattr(self, "_ident_kws", set()) or set()
+        for kw in [k for k in keywords[:20] if len(k) >= 2][:12]:
+            try:
+                result = subprocess.run(
+                    ["git", "grep", "-lI", "-i", "--untracked", "-e", kw,
+                     "--", base],
+                    cwd=str(self.repo_path), capture_output=True, text=True,
+                    encoding="utf-8", errors="replace", timeout=10)
+            except (subprocess.TimeoutExpired, FileNotFoundError):
+                continue
+            if result.returncode != 0 or not result.stdout:
+                continue
+            weight = 8.0 if kw in ident_kws else 1.0
+            for ln in result.stdout.splitlines():
+                ln = ln.strip()
+                if ln in scores:
+                    scores[ln] += weight
+        base_name = base.rsplit("/", 1)[-1]
+
+        def _rank(f: str) -> tuple:
+            name = f[len(dir_rel):].lower()
+            entry = (name in ("index.vue", "index.ts", "main.vue", "main.ts")
+                     or name == f"{base_name}.vue")
+            return (-scores.get(f, 0.0), 0 if entry else 1, name)
+
+        children.sort(key=_rank)
+        return children[:limit]
+
     def _scan_repo(self, keywords: List[str], path_tokens: List[str] = None) -> List[str]:
         path_tokens = path_tokens or []
         # kebab 复合段（路由反解产物，无斜杠）也要拆出子词：runtime-log 的
@@ -811,8 +962,15 @@ class DefectAnalyzer:
             # getFinalContent 的真正修改点。
             files_hit = {line.split(":", 1)[0] for line in result.stdout.splitlines()
                          if line.split(":", 1)[0]}
-            # 标识符/字面量是高精度信号：命中一次就强于多个泛词命中
-            weight = 8.0 if kw in ident_kws else 1.0
+            # 标识符/字面量是高精度信号：命中一次就强于多个泛词命中。
+            # 且精度随命中面收窄而放大：只命中个位数文件的标识符（工单 214646
+            # 的 ADD_UPDATE 全仓仅 7 个文件，其中就含真正改动点 import-input.vue）
+            # 几乎是改动点坐标，×3 加权；命中上百文件的标识符退回基础权重——
+            # 否则 8 分会被路径段加分的泛文件（+12）挤出读取窗口。
+            if kw in ident_kws:
+                weight = 8.0 * min(3.0, max(1.0, 24.0 / max(1, len(files_hit))))
+            else:
+                weight = 1.0
             for rel in files_hit:
                 hits[rel] = hits.get(rel, 0.0) + weight
         # 排除第三方/构建产物——它们体积巨大且永远不是修复目标
@@ -1170,3 +1328,71 @@ class DefectAnalyzer:
             "patch_blocks 留空，category 填「接口」，root_cause 以「非前端缺陷：」开头，"
             "列出证据链（对照请求/响应、正常类型与异常类型的差异）。"
         )
+
+    def _build_patch_only_prompt(self, ai_result: Dict,
+                                 files: Dict[str, str]) -> str:
+        """第三轮兜底 prompt：只准填 patch_blocks，禁止再写分析。
+
+        前两轮的分析结论直接喂回去当改法依据，模型的工作从「开放式生成」
+        退化成「按结论填空」——分析与补丁混写导致 JSON 崩坏这类失败，
+        在这个形态下没有发生的空间。"""
+        files_section = "\n\n".join(
+            f"### {path}\n```\n{content}\n```"
+            for path, content in files.items()
+            if content
+        ) or "(未定位到嫌疑文件)"
+        cause = str(ai_result.get("root_cause") or "").strip() or "（见缺陷描述）"
+        explain = str(ai_result.get("explanation") or "").strip()
+
+        return (
+            "你是资深前端工程师。根因分析与改法论证已经完成并确认，"
+            "**现在只差把改法写成补丁**。不要重复分析、不要输出根因说明、"
+            "不要复述格式要求。\n\n"
+            "## 已确认的结论\n"
+            f"- 根因: {cause}\n"
+            f"- 改法: {explain}\n\n"
+            "## 可修改的文件内容（SEARCH 段必须逐字取自这里）\n"
+            f"{files_section}\n\n"
+            "## 输出要求\n"
+            "严格输出一个 JSON 对象，不要任何解释性前后缀，只允许以下两个字段：\n"
+            "{\n"
+            '  "patch_blocks": "SEARCH/REPLACE 补丁文本；确实无法安全给出时填空字符串",\n'
+            '  "cannot_patch": "仅当 patch_blocks 为空时填写原因，否则省略此字段"\n'
+            "}\n\n"
+            "### patch_blocks 格式（必须严格遵守）\n"
+            "每个改动一个块，多个块用空行分隔：\n"
+            "<<<<<<< SEARCH 相对/文件/路径\n"
+            "（逐字复制上面提供的内容，2-6 行，含少量上下文）\n"
+            "=======\n"
+            "（修改后的代码）\n"
+            ">>>>>>> REPLACE\n\n"
+            "硬性规则，违反即视为无效补丁：\n"
+            "1. SEARCH 段必须**逐字复制**提供的内容，不得改写、省略或加省略号；\n"
+            "2. 禁止整文件覆写；文件路径必须与 ### 后的路径完全一致；\n"
+            "3. 只做与已确认根因直接相关的改动；\n"
+            "4. 若文件内容确实不足以安全给出补丁，patch_blocks 填空字符串，"
+            "并在 cannot_patch 里说明缺什么——宁可不改，也不要猜。"
+        )
+
+    def _patch_only_fallback(self, ai_result: Dict, windows: Dict[str, str],
+                             on_delta=None):
+        """第三轮兜底：把已有结论 + 文件窗口重发一次「只出补丁」的调用。
+
+        返回 (blocks, raw_patch, note, parse_errors)。成功时 blocks 非空、
+        note 说明来源；失败时 note 带上模型自述的 cannot_patch 原因（若有）。"""
+        prompt3 = self._build_patch_only_prompt(ai_result, windows)
+        with usage.step("patch_only"):
+            ai3 = self.ai.complete(prompt3, max_tokens=12000,
+                                   on_delta=on_delta)
+        raw3 = ai3.get("patch_blocks", "") or ai3.get("fix_suggestion", "")
+        blocks3, errs3 = parse_blocks(raw3)
+        if blocks3 and not ai3.get("error"):
+            note = "第三轮定向补丁生成成功（只出补丁、不带分析）"
+            return blocks3, raw3, note, errs3
+        reason = str(ai3.get("cannot_patch") or "").strip()
+        if not blocks3 and not errs3:
+            errs3 = ["模型返回的 patch_blocks 为空（没有拿到补丁文本）"]
+        note = ("第三轮定向补丁生成仍失败"
+                + (f"：{reason}" if reason else ""))
+        return [], "", note, errs3
+
