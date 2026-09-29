@@ -43,16 +43,30 @@ def main():
             # 大模型配置自 2026-09-21 起改成独立弹窗（#aimodal 默认 hidden）。
             # 不点开它，后面所有需要"可见"的操作（uncheck / click / is_visible）都会失败。
             page.click("#ai-summary-group button")
-            page.wait_for_selector("#aimodal:not(.hidden)")
+            # 弹窗壳已换成 el-dialog：#aimodal 只是常驻壳（盒子恒为 0 高），
+            # 「打开了」要看对话框本体（见 tests/ui_select.py 与 KbModal.vue 的说明）。
+            page.wait_for_selector("#aimodal .el-dialog")
 
             print("\n[1] 表单结构")
-            check("协议下拉有 3 个选项",
-                  page.locator("#cfg-ai-provider option").count() == 3)
-            check("鉴方式下拉有 5 个选项",
-                  page.locator("#cfg-ai-auth option").count() == 5)
-            check("快速模板已加载",
-                  page.locator("#cfg-ai-preset option").count() >= 5,
-                  f"{page.locator('#cfg-ai-preset option').count()} 项")
+
+            def option_count(sel):
+                # el-select 不渲染原生 <option>；选项列表挂在 input 的
+                # aria-controls 指向的 listbox 上（persistent，未展开也在 DOM）。
+                return page.evaluate(
+                    """(sel) => {
+                        const el = document.querySelector(sel);
+                        if (!el) return -1;
+                        const host = el.closest('.el-select') || el;
+                        const inp = host.querySelector('input[aria-controls]') || el;
+                        const id = inp && inp.getAttribute('aria-controls');
+                        const list = id ? document.getElementById(id) : null;
+                        return list ? list.querySelectorAll('.el-select-dropdown__item').length : -1;
+                    }""", sel)
+
+            check("协议下拉有 3 个选项", option_count("#cfg-ai-provider") == 3)
+            check("鉴方式下拉有 5 个选项", option_count("#cfg-ai-auth") == 5)
+            check("快速模板已加载", option_count("#cfg-ai-preset") >= 5,
+                  f"{option_count('#cfg-ai-preset')} 项")
             check("默认隐藏自定义鉴权字段名",
                   not page.locator("#ai-auth-header-field").is_visible())
 

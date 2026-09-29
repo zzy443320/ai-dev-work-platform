@@ -78,7 +78,7 @@ const emit = defineEmits(['open-artifact'])
         <code v-for="(f, i) in artifactFiles" :key="i">{{ f }}</code>
       </div>
       <div class="chat-art-note">{{ artifactFiles.length }} 个文件 · 还没有写入仓库，采纳才会动工作区</div>
-      <button class="btn-primary btn-sm" @click="emit('open-artifact', meta.artifact)">查看 / 采纳</button>
+      <el-button type="primary" size="small" @click="emit('open-artifact', meta.artifact)">查看 / 采纳</el-button>
     </div>
 
     <div class="chat-err" v-if="meta.error && !isUser">{{ meta.error }}</div>

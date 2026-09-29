@@ -46,6 +46,8 @@ sys.path.insert(0, str(ROOT))
 
 from playwright.sync_api import sync_playwright      # noqa: E402
 
+from ui_select import pick_select                    # noqa: E402
+
 OK, BAD = [], []
 
 
@@ -356,13 +358,15 @@ def run(base: str, dirs, *, errors: list) -> None:
         check("每页 8 条", cards == 8, str(cards))
         info = page.eval_on_selector(".prop-pager .pg-info", "el => el.textContent")
         check("第 1 页信息含 1-8 与 30", "1-8" in info and "30" in info, info)
-        active = page.eval_on_selector(".pg-num.active", "el => el.textContent")
+        # el-pager 的页码项 textContent 带模板空白（" 1 "），比较前 strip
+        active = page.eval_on_selector(
+            ".prop-pager .el-pager li.is-active", "el => el.textContent").strip()
         check("高亮页码 = 1", active == "1", active)
         ids_p1 = page.eval_on_selector_all("#proposals .pcard .pcard-id",
                                            "els => els.map(e => e.textContent)")
         check("同状态注入数据严格按时间倒序",
               ids_p1 == [f"DEF-{i}" for i in range(30, 22, -1)], str(ids_p1[:3]))
-        page.click(".prop-pager .pg-btns button:last-child")
+        page.click(".prop-pager .el-pagination .btn-next")
         page.wait_for_timeout(250)
         info2 = page.eval_on_selector(".prop-pager .pg-info", "el => el.textContent")
         ids_p2 = page.eval_on_selector_all("#proposals .pcard .pcard-id",
@@ -370,35 +374,28 @@ def run(base: str, dirs, *, errors: list) -> None:
         check("翻到第 2 页（9-16，无重复）",
               len(ids_p2) == 8 and "9-16" in info2 and not (set(ids_p1) & set(ids_p2)), info2)
         # 末页：连点「下一页」到最后一页
-        page.click(".prop-pager .pg-btns button:last-child")
+        page.click(".prop-pager .el-pagination .btn-next")
         page.wait_for_timeout(200)
-        page.click(".prop-pager .pg-btns button:last-child")
+        page.click(".prop-pager .el-pagination .btn-next")
         page.wait_for_timeout(250)
         ids_p4 = page.eval_on_selector_all("#proposals .pcard .pcard-id", "els => els.length")
         info3 = page.eval_on_selector(".prop-pager .pg-info", "el => el.textContent")
-        nxt_dis = page.eval_on_selector(".prop-pager .pg-btns button:last-child", "el => el.disabled")
-        prv_en = page.eval_on_selector(".prop-pager .pg-btns button:first-child", "el => !el.disabled")
+        nxt_dis = page.eval_on_selector(".prop-pager .el-pagination .btn-next", "el => el.disabled")
+        prv_en = page.eval_on_selector(".prop-pager .el-pagination .btn-prev", "el => !el.disabled")
         check("第 4 页 6 条 / 25-30 / 下一页禁用",
               ids_p4 == 6 and "25-30" in info3 and nxt_dis and prv_en, info3)
-        # 筛选重置到第 1 页：先退到第 3 页，再切筛选
-        page.click(".prop-pager .pg-btns button:first-child")
+        # 筛选重置到第 1 页：先退到第 3 页，再切筛选（#proposal-filter 已是 el-select）
+        page.click(".prop-pager .el-pagination .btn-prev")
         page.wait_for_timeout(200)
-        page.evaluate("""() => {
-          const sel = document.querySelector('#proposal-filter');
-          sel.value = 'applied';
-          sel.dispatchEvent(new Event('change', { bubbles: true }));
-        }""")
+        pick_select(page, "#proposal-filter", "applied")
         page.wait_for_timeout(250)
         check("切筛选回第 1 页且给空提示",
               page.query_selector("#proposals .empty") is not None,
               "空态存在")
-        page.evaluate("""() => {
-          const sel = document.querySelector('#proposal-filter');
-          sel.value = '';
-          sel.dispatchEvent(new Event('change', { bubbles: true }));
-        }""")
+        pick_select(page, "#proposal-filter", "")
         page.wait_for_timeout(250)
-        active2 = page.eval_on_selector(".pg-num.active", "el => el.textContent")
+        active2 = page.eval_on_selector(
+            ".prop-pager .el-pager li.is-active", "el => el.textContent").strip()
         info4 = page.eval_on_selector(".prop-pager .pg-info", "el => el.textContent")
         check("切回全部后停在第 1 页", active2 == "1" and "1-8" in info4, info4)
 

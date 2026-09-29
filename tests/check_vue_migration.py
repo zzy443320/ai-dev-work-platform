@@ -102,7 +102,11 @@ def main() -> int:
     check("产出物面板仍是 #artifact-panel（在 ArtifactsPanel.vue 里）",
           artifacts_panel.is_file() and 'id="artifact-panel"' in artifacts_panel.read_text(encoding="utf-8")
           and "<ArtifactsPanel" in app_vue)
-    check("提示条仍是 #toast", 'id="toast"' in app_vue)
+    # 提示已从自绘 #toast 换成 Element Plus 的 ElMessage（见 composables/useToast.js）。
+    # 断言随之从「页面上有 #toast 节点」改成「提示走 ElMessage、旧节点已退场」。
+    toast_js = (src / "composables" / "useToast.js").read_text(encoding="utf-8")
+    check("提示改用 Element Plus 的 ElMessage（自绘 #toast 已退场）",
+          "ElMessage" in toast_js and 'id="toast"' not in app_vue)
 
     # ── 4. API 客户端覆盖度 ──
     print("\n[4] API 客户端与 SSE")

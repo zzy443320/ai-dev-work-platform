@@ -21,18 +21,46 @@ const st = computed(() => statusBadge(props.p.status))
 const gb = computed(() => gateBadge(props.p.gate_level, props.p.gate_ok))
 const title = computed(() => proposalTitle(props.p))
 const timeText = computed(() => relTime(props.p.updated || props.p.created))
+
+// 状态 / 闸门小胶囊迁移到 <el-tag>：用 el-tag 的 type 接管原来 .st-* / .gate-* 的语义色，
+// 文案仍由 labels.js 产出（换框架不换口径）。状态字典与 labels.js 保持一致。
+const STATUS_TAG_TYPE = {
+  pending: 'warning',
+  gate_failed: 'danger',
+  invalid: 'info',
+  applied: 'success',
+  apply_failed: 'danger',
+  rejected: 'info',
+}
+const statusType = computed(() => {
+  const s = props.p.status === 'proposed' ? 'pending' : (props.p.status || 'pending')
+  return STATUS_TAG_TYPE[s] || 'info'
+})
+const gateType = computed(() => {
+  if (props.p.gate_ok === false) return 'danger'
+  const map = { explicit: 'success', package_json: 'primary', degraded: 'warning', none: 'info' }
+  return map[props.p.gate_level] || 'info'
+})
 </script>
 
 <template>
-  <div class="pcard" :class="`pc-${p.status || 'pending'}`" @click="emit('open', p.id)">
+  <!-- 卡片外层迁移到 el-card（shadow="never" 贴近原 .pcard 观感），保留 .pcard 钩子与
+       状态类；body 内边距归零，避免与 .pcard 自带 padding 叠加成双重内缩。 -->
+  <el-card
+    shadow="never"
+    class="pcard"
+    :class="`pc-${p.status || 'pending'}`"
+    :body-style="{ padding: '0' }"
+    @click="emit('open', p.id)"
+  >
     <div class="pcard-top">
-      <span :class="st.cls">{{ st.text }}</span>
-      <span :class="gb.cls">{{ gb.text }}</span>
+      <el-tag :type="statusType" effect="light" round>{{ st.text }}</el-tag>
+      <el-tag :type="gateType" effect="light" round>{{ gb.text }}</el-tag>
       <span class="pcard-id">{{ p.defect_id || p.id || '' }}</span>
       <span class="pcard-time">{{ timeText }}</span>
     </div>
     <div class="pcard-title">{{ title }}</div>
     <div class="pcard-meta"><span>{{ p.category || '—' }}</span><span>{{ p.priority || '—' }}</span><span>AI {{ p.ai_mode || '—' }}</span><span>{{ files.length }} 个文件</span><span class="dstat add">+{{ p.added || 0 }}</span><span class="dstat del">−{{ p.removed || 0 }}</span><span v-if="p.locate_empty" class="cnt warn">⚠ 未定位到文件</span><span v-if="errCount" class="cnt bad">{{ errCount }} 补丁错误</span><span v-if="warnCount" class="cnt warn">{{ warnCount }} 告警</span><span v-if="gateFailed.length" class="cnt bad">闸门失败: {{ gateFailed.join(', ') }}</span><span v-if="p.sha" class="sha">{{ String(p.sha).slice(0, 8) }}</span></div>
     <div class="pcard-root" v-if="p.root_cause">{{ p.root_cause }}</div>
-  </div>
+  </el-card>
 </template>

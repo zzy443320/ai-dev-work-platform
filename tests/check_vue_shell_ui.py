@@ -43,10 +43,12 @@ def main() -> int:
 
             check("Vue 应用已挂载（#app 有子节点）",
                   page.eval_on_selector("#app", "el => el.children.length") > 0)
+            # 页签栏已换成 Element 的 el-tabs：选项节点是 .el-tabs__item（文案在内部）。
+            # 页签**容器**的契约没变：每个 pane 仍是 #pane-<name> 且活动页带 active 类。
             check("页签渲染出 8 个",
-                  page.eval_on_selector_all("#tabs .tab", "els => els.length") == 8,
+                  page.eval_on_selector_all("#tabs .el-tabs__item", "els => els.length") == 8,
                   str(page.eval_on_selector_all(
-                      "#tabs .tab", "els => els.map(e => e.dataset.tab)")))
+                      "#tabs .el-tabs__item", "els => els.map(e => e.innerText.trim())")))
             check("默认停在 stats",
                   page.eval_on_selector("#pane-stats", "el => el.classList.contains('active')"))
             check("switchTab 全局可用（界面用例依赖）",
@@ -59,8 +61,13 @@ def main() -> int:
                   page.eval_on_selector("#pane-chat", "el => el.classList.contains('active')"))
             check("切页签后统计 pane 不再激活",
                   not page.eval_on_selector("#pane-stats", "el => el.classList.contains('active')"))
+            # 高亮态由 el-tabs 自己维护（.el-tabs__item.is-active）。
+            # 用 eval_on_selector_all 而不是 eval_on_selector：后者在找不到元素时会抛错，
+            # 那样断言失败会变成异常，看不出真正的差异。
+            active_items = page.eval_on_selector_all(
+                "#tabs .el-tabs__item.is-active", "els => els.map(e => e.innerText.trim())")
             check("切页签会同步高亮对应 tab 按钮",
-                  page.eval_on_selector("#tabs .tab.active", "el => el.dataset.tab") == "chat")
+                  any("问答" in t for t in active_items), str(active_items))
 
             # 流程条只属于缺陷修复页签
             page.evaluate("() => switchTab('stats')")

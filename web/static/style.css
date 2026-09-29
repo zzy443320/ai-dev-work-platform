@@ -22,15 +22,18 @@
   --danger: #f87171;
   --danger-soft: rgba(248, 113, 113, 0.14);
   --code-bg: rgba(0, 0, 0, 0.35);
-  --input-bg: rgba(255, 255, 255, 0.05);
+  --input-bg: rgba(255, 255, 255, 0.07);
+  /* 输入控件专用描边：暗色下通用 --border(9%) 太弱，输入框会和面板糊成一块 */
+  --input-border: rgba(255, 255, 255, 0.17);
+  --input-border-hover: rgba(255, 255, 255, 0.30);
   --shadow: 0 8px 32px rgba(0, 0, 0, 0.35);
   color-scheme: dark;
 }
 
 [data-theme="light"] {
   --bg: #f3f5fa;
-  --bg-glow-1: rgba(99, 102, 241, 0.10);
-  --bg-glow-2: rgba(168, 85, 247, 0.08);
+  --bg-glow-1: rgba(99, 102, 241, 0.05);
+  --bg-glow-2: rgba(168, 85, 247, 0.04);
   --panel: rgba(255, 255, 255, 0.85);
   --panel-solid: #ffffff;
   --border: rgba(15, 23, 42, 0.08);
@@ -49,6 +52,8 @@
   --danger-soft: rgba(220, 38, 38, 0.10);
   --code-bg: #0f172a;
   --input-bg: rgba(255, 255, 255, 0.7);
+  --input-border: rgba(15, 23, 42, 0.20);
+  --input-border-hover: rgba(15, 23, 42, 0.34);
   --shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
   color-scheme: light;
 }
@@ -73,25 +78,49 @@ body {
     radial-gradient(700px 500px at 90% 10%, var(--bg-glow-2), transparent 60%);
 }
 
-/* ===== Topbar ===== */
+/* ===== Topbar =====
+   吸顶：负 margin 抵消 body padding，滚动后仍可切页签/开关配置。
+   z-index 58：高于配置遮罩(55)——抽屉打开时顶栏仍可点（齿轮关闭抽屉），
+   低于抽屉本体(60)。之前顶栏(40)被遮罩压住，齿轮点不到、抽屉关不掉。 */
 .topbar {
   display: flex; justify-content: space-between; align-items: center;
-  margin-bottom: 18px;
+  position: sticky; top: 0; z-index: 58;
+  margin: -20px -28px 16px; padding: 18px 28px 12px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
 }
 .brand { display: flex; align-items: center; gap: 12px; }
 .logo {
-  width: 40px; height: 40px; border-radius: 12px;
+  width: 38px; height: 38px; border-radius: 11px;
   display: grid; place-items: center;
   color: #fff;
   background: linear-gradient(135deg, var(--primary), var(--primary-2));
-  box-shadow: 0 4px 14px rgba(99, 102, 241, 0.4);
+  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.25);
 }
-.title-block h1 { font-size: 18px; font-weight: 700; letter-spacing: 0.01em; }
+.title-block h1 { font-size: 17px; font-weight: 600; letter-spacing: 0.01em; }
 .subtitle {
   font-size: 11.5px; color: var(--text-dim); margin-top: 2px;
   font-family: ui-monospace, "SF Mono", Consolas, monospace;
 }
 .top-actions { display: flex; align-items: center; gap: 10px; }
+
+/* ===== el-select 宽度契约（原生 select 时代是内容自适应，换 el-select 后
+   没有宽度就会被 flex 压缩/裁成半个字，选中值看不见）===== */
+.field-inline .el-select { flex: 1 1 auto; min-width: 170px; max-width: 240px; }
+.filter-wrap .el-select { width: 150px; }
+/* 顶栏风格切换：flex 子项默认可收缩，会被顶栏挤到 40px（选中的风格名只剩半个字） */
+.top-actions > .el-select { flex: none; }
+
+/* 顶栏风格切换（el-select）：不给宽度时选中的风格名会被裁成半个字。
+   注意：style.css 在 element-plus.css 之前加载，Element 的基础规则
+   .el-select { width: var(--el-select-width) }（默认 100%）同为 0-1-0 但靠后，
+   会盖掉 .style-picker{width:98px}——所以这里必须抬权重（0-3-0）才压得住。 */
+.top-actions > .el-select.style-picker { --el-select-width: 98px; width: 98px; flex: none; }
+.style-picker .el-select__wrapper { min-height: 28px; }
+.style-picker .style-dot {
+  display: inline-block; width: 9px; height: 9px; border-radius: 50%;
+  margin-right: 6px; vertical-align: -1px;
+}
 
 .status-pill {
   padding: 6px 14px;
@@ -120,8 +149,8 @@ body {
 .stage-flow {
   display: flex; align-items: stretch; gap: 8px;
   margin-top: 4px; margin-bottom: 20px; padding: 14px 16px;
-  background: var(--panel); border: 1px solid var(--border);
-  border-radius: 14px; backdrop-filter: blur(10px);
+  background: var(--panel-solid); border: 1px solid var(--border);
+  border-radius: 12px;
   overflow-x: auto;
 }
 .stage {
@@ -169,28 +198,134 @@ body {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 330px;
   gap: 18px; align-items: start;
+  transition: grid-template-columns 0.25s ease;
 }
+/* 收起配置栏：右侧只剩一条竖排展开按钮的宽度，主栏占满 */
+.layout.side-collapsed { grid-template-columns: minmax(0, 1fr) 52px; }
 @media (max-width: 1100px) { .layout { grid-template-columns: 1fr; } }
-.col-main, .col-side { display: grid; gap: 18px; min-width: 0; }
+/* 轨道同样锁死：col-main 的隐式列 auto 会被 el-tabs（页签条 nowrap 的
+   min-content）撑开，窄窗口下整体右移压进配置栏 —— 与内容无关的页签条宽度。 */
+.col-main, .col-side { display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; min-width: 0; }
+/* el-tabs 是 col-main 的 grid item，min-width:auto 会把页签条 min-content 传播出去 */
+.col-main > #tabs { min-width: 0; }
 
-/* ===== Panels ===== */
-.panel {
+/* 收起态：面板整体藏起来，只留竖排「配置栏」按钮（SettingsPanel 渲染） */
+.col-side.collapsed > #settings-panel { display: none; }
+.col-side.collapsed { gap: 0; }
+.side-rail {
+  writing-mode: vertical-rl; letter-spacing: 0.35em;
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  min-height: 220px; padding: 14px 0; width: 100%;
+  border: 1px solid var(--border); border-radius: 12px;
+  background: var(--panel); color: var(--text-dim);
+  font: inherit; font-size: 12px; font-weight: 600; cursor: pointer;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+.side-rail:hover { color: var(--primary); border-color: var(--primary); background: var(--primary-soft); }
+.side-rail svg { transform: rotate(90deg); }
+
+/* ===== 布局模式（useLayout）：tri=默认三栏 / top=顶部导航 / side=侧边工作台 =====
+   top/side 模式下右侧配置栏脱离文档流变成右侧抽屉：DOM 不动（SettingsPanel
+   仍是 .layout 的子元素），只改定位 —— 界面用例跑默认 tri，互不干扰。 */
+.layout.layout-top { grid-template-columns: minmax(0, 1fr); }
+.layout.layout-side { grid-template-columns: 212px minmax(0, 1fr); }
+/* side 布局：导航由左侧 side-nav 承担，只藏页签头，内容体（pane 容器）保留 */
+.layout.layout-side #tabs > .el-tabs__header { display: none; }
+
+.layout.layout-top > .col-side,
+.layout.layout-side > .col-side {
+  position: fixed; z-index: 60;
+  top: 78px; right: 20px; bottom: 20px;
+  width: 348px; max-width: calc(100vw - 40px);
+  overflow: auto;
+  transform: translateX(calc(100% + 40px));
+  visibility: hidden;
+  transition: transform 0.25s ease, visibility 0.25s;
+}
+.layout.layout-top.config-open > .col-side,
+.layout.layout-side.config-open > .col-side {
+  transform: translateX(0); visibility: visible;
+}
+/* 抽屉模式与 ui-sidebar 收起态互斥：曾收起过的用户切过来不能看到空抽屉 */
+.layout.layout-top > .col-side.collapsed > #settings-panel,
+.layout.layout-side > .col-side.collapsed > #settings-panel { display: grid; }
+/* 抽屉下的收起态（side-rail 竖排按钮）没有意义，强制展开样式 */
+.layout.layout-top.config-open > .col-side .side-rail,
+.layout.layout-side.config-open > .col-side .side-rail { display: none; }
+
+.config-mask {
+  position: fixed; inset: 0; z-index: 55;
+  background: rgba(8, 11, 20, 0.45);
+}
+
+/* 顶栏布局切换器：三个排列图标按钮，选中态用主色 */
+.layout-switch {
+  display: flex; align-items: center; gap: 2px; padding: 2px;
+  border: 1px solid var(--border); border-radius: 10px;
   background: var(--panel);
+}
+.ls-btn {
+  width: 28px; height: 26px; border: none; border-radius: 8px;
+  background: transparent; color: var(--text-dim); cursor: pointer;
+  display: grid; place-items: center; transition: background 0.15s, color 0.15s;
+}
+.ls-btn:hover { color: var(--text); }
+.ls-btn.active { background: var(--primary-soft); color: var(--primary); }
+
+/* ===== 侧边工作台导航（side 布局） ===== */
+.side-nav {
+  display: flex; flex-direction: column; gap: 18px;
+  position: sticky; top: 20px; align-self: start;
+}
+.nav-group { display: grid; gap: 3px; }
+.nav-group-label {
+  font-size: 11px; font-weight: 600; letter-spacing: 0.1em;
+  color: var(--muted); padding: 0 11px; margin-bottom: 3px;
+}
+.nav-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 11px; border-radius: 10px; border: 1px solid transparent;
+  background: transparent; color: var(--text-dim);
+  font: inherit; font-size: 13px; font-weight: 400; cursor: pointer; text-align: left;
+  transition: background 0.15s, color 0.15s;
+}
+.nav-item svg { flex: none; opacity: 0.85; }
+.nav-item:hover { background: var(--panel); color: var(--text); }
+.nav-item.active {
+  background: var(--primary-soft); color: var(--primary); font-weight: 600;
+}
+.nav-item.active svg { opacity: 1; }
+@media (max-width: 1100px) {
+  /* 窄屏本来就是单列，收起后竖排按钮太高，压到正常按钮高度 */
+  .layout.side-collapsed { grid-template-columns: 1fr; }
+  .side-rail { writing-mode: horizontal-tb; letter-spacing: 0.08em; min-height: 0; padding: 8px 12px; }
+  .side-rail svg { transform: none; }
+}
+
+/* ===== Panels =====
+   视觉体系：卡片靠「清晰边框 + 白实底」分层，不靠重阴影和磨砂玻璃 ——
+   浅色下半透明底叠光斑会发灰发脏，blur 大面积拖性能。 */
+.panel {
+  background: var(--panel-solid);
   border: 1px solid var(--border);
-  border-radius: 14px;
-  padding: 18px 20px;
-  backdrop-filter: blur(10px);
-  box-shadow: var(--shadow);
+  border-radius: 12px;
+  padding: 16px 20px;
+  box-shadow: 0 1px 2px rgba(9, 12, 24, 0.04);
 }
 .panel h2 {
-  font-size: 13px; font-weight: 700; color: var(--text);
-  letter-spacing: 0.04em;
+  font-size: 14px; font-weight: 600; color: var(--text);
+  letter-spacing: 0;
   display: flex; align-items: center; gap: 8px;
 }
-.panel h2 svg { color: var(--primary); }
+.panel h2 svg { color: var(--primary); flex: none; }
 .panel-head {
   display: flex; justify-content: space-between; align-items: center;
   margin-bottom: 14px;
+}
+/* 面板标题后的弱化副标题（如「配置 · 仓库 · 模型 · 接入」） */
+.panel-head .head-note {
+  font-size: 10.5px; color: var(--muted); font-weight: 400;
+  margin-left: 4px; letter-spacing: 0.02em; white-space: nowrap;
 }
 /* ===== 可折叠面板 ===== */
 .panel.collapsible > .panel-head { cursor: pointer; user-select: none; }
@@ -219,14 +354,17 @@ body {
 /* 行内字段的标签不许被挤得换行（「技术栈」曾被折成「技术/栈」两行） */
 .field-inline > span { flex: none; white-space: nowrap; }
 .field-inline.grow { flex: 1; min-width: 180px; }
-.field-inline input {
-  background: var(--input-bg); border: 1px solid var(--border);
-  color: var(--text); border-radius: 8px; padding: 7px 10px; font-size: 13px;
-  transition: border-color 0.2s;
+/* 注意 :not(...)：label.field(.field-inline) 里现在包的是 el-input / el-select，
+   它们的内层原生 input（.el-input__inner / .el-select__input）若再吃到这条规则，
+   就会「框里套框」出现双重边框（外层 wrapper 一圈 + 内层 input 一圈）。 */
+.field-inline input:not(.el-input__inner):not(.el-select__input) {
+  background: var(--input-bg); border: 1px solid var(--input-border);
+  color: var(--text); border-radius: 10px; padding: 7px 10px; font-size: 13px;
+  transition: border-color 0.2s, box-shadow 0.2s;
 }
-.field-inline input:focus { outline: none; border-color: var(--primary); }
+.field-inline input:not(.el-input__inner):not(.el-select__input):focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-soft); }
 .field-inline input[type="number"] { width: 64px; }
-.field-inline input[type="text"] { flex: 1; min-width: 120px; }
+.field-inline input:not(.el-input__inner)[type="text"] { flex: 1; min-width: 120px; }
 
 /* ===== 分段选择（Figma 取稿通道等） ===== */
 .seg {
@@ -467,23 +605,33 @@ button { font-family: inherit; }
 }
 
 /* ===== Settings ===== */
+/* 分组从「虚线分隔」升级成嵌套小卡片：侧栏内容多，卡片化之后每段边界一眼可辨 */
 .settings-group {
-  padding: 12px 0; border-bottom: 1px dashed var(--border);
+  padding: 12px 14px; border: 1px solid var(--border); border-radius: 12px;
+  background: rgba(127, 127, 127, 0.04);
   display: grid; gap: 10px;
 }
-.settings-group:first-of-type { padding-top: 0; }
+.settings-group + .settings-group { margin-top: 10px; }
 .group-title {
-  font-size: 11px; font-weight: 700; color: var(--muted);
+  font-size: 11px; font-weight: 700; color: var(--text-dim);
   text-transform: uppercase; letter-spacing: 0.08em;
+  display: flex; align-items: center; gap: 6px;
+}
+.group-title::before {
+  content: ""; width: 6px; height: 6px; border-radius: 2px; flex: none;
+  background: linear-gradient(135deg, var(--primary), var(--primary-2));
 }
 .field { display: grid; gap: 5px; font-size: 12px; color: var(--text-dim); }
-.field input, .field select {
-  background: var(--input-bg); border: 1px solid var(--border);
-  color: var(--text); border-radius: 8px; padding: 8px 10px;
+/* 同上：排除 el-input / el-textarea / el-select 的内层原生控件，避免双重边框 */
+.field input:not(.el-input__inner):not(.el-textarea__inner):not(.el-select__input), .field select:not(.el-select__input) {
+  background: var(--input-bg); border: 1px solid var(--input-border);
+  color: var(--text); border-radius: 10px; padding: 8px 10px;
   font-size: 12.5px; width: 100%; font-family: ui-monospace, Consolas, monospace;
-  transition: border-color 0.2s;
+  transition: border-color 0.2s, box-shadow 0.2s;
 }
-.field input:focus, .field select:focus { outline: none; border-color: var(--primary); }
+.field input:not(.el-input__inner):not(.el-textarea__inner):not(.el-select__input):focus, .field select:not(.el-select__input):focus {
+  outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-soft);
+}
 .field .hint { color: var(--muted); font-size: 11px; }
 .repo-hint { font-size: 11.5px; margin-top: -4px; }
 .repo-hint.ok { color: var(--success); }
@@ -589,11 +737,13 @@ button { font-family: inherit; }
 .run-root { font-size: 11.5px; color: var(--muted); margin-top: 6px; }
 
 /* ===== Explanatory note / panel foot note ===== */
+/* 面板底部的说明条：低饱和的脚注观感 —— 信息在，但不跟主内容抢视觉 */
 .info-note {
-  font-size: 12px; line-height: 1.75; padding: 9px 12px; border-radius: 9px; margin-bottom: 12px;
-  background: var(--primary-soft); color: var(--text-dim);
+  font-size: 11.5px; line-height: 1.75; padding: 9px 13px; border-radius: 10px; margin-bottom: 12px;
+  background: var(--input-bg); color: var(--muted);
   border: 1px solid var(--border);
 }
+.info-note b, .info-note strong { color: var(--text-dim); font-weight: 600; }
 /* 说明条里按句分行的段落之间留点缝（usage-note 等动态拼 <div> 的地方） */
 .info-note > div + div { margin-top: 5px; }
 .panel-note { font-size: 11.5px; color: var(--muted); margin-top: 12px; line-height: 1.75; }
@@ -877,12 +1027,14 @@ button { font-family: inherit; }
 .stat-fixed .stat-rate { color: var(--muted); }
 
 /* ===== Gate settings ===== */
-.field textarea {
-  background: var(--input-bg); border: 1px solid var(--border); color: var(--text);
-  border-radius: 8px; padding: 8px 10px; font-size: 12px; width: 100%; resize: vertical;
+/* :not(.el-textarea__inner)：设置面板的 textarea 已换成 el-input(type=textarea)，
+   内层原生 textarea 吃这条会跟 el-textarea__inner 的描边叠成双框 */
+.field textarea:not(.el-textarea__inner) {
+  background: var(--input-bg); border: 1px solid var(--input-border); color: var(--text);
+  border-radius: 10px; padding: 8px 10px; font-size: 12px; width: 100%; resize: vertical;
   font-family: ui-monospace, Consolas, monospace; line-height: 1.5;
 }
-.field textarea:focus { outline: none; border-color: var(--primary); }
+.field textarea:not(.el-textarea__inner):focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-soft); }
 .gate-preview {
   border: 1px dashed var(--border); border-radius: 9px; padding: 10px 11px;
   font-size: 11.5px; color: var(--text-dim); background: var(--input-bg); line-height: 1.6;
@@ -1070,7 +1222,11 @@ details.adv .adv-body .field:first-child { padding-top: 10px; }
 [data-theme="light"] .tab.active { color: #fff; }
 
 .tabpane { display: none; }
-.tabpane.active { display: grid; gap: 18px; }
+/* 轨道锁死 minmax(0,1fr)：否则隐式列 auto 的 min-content 会被统计页的
+   ECharts canvas（固定像素宽）撑开且缩不回 —— 表现为切布局后统计页宽度
+   不跟随、横向溢出盖住配置栏（其他模块内容可收缩所以无此问题）。
+   轨道锁死后容器真变窄，EChart.vue 的 ResizeObserver 才能触发 chart.resize()。 */
+.tabpane.active { display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; }
 
 #artifact-panel { margin-top: 18px; }
 
@@ -1440,14 +1596,17 @@ details.adv .adv-body .field:first-child { padding-top: 10px; }
 .usage-card-foot .muted { margin-left: auto; font-size: 10.5px; }
 
 /* ---- 图表通用 ---- */
-.usage-chart { --c-in: var(--primary); --c-out: #14b8a6; min-width: 0; }
-.usage-svg { display: block; width: 100%; height: auto; overflow: visible; }
-.usage-axis {
-  font-size: 10px; fill: var(--muted);
-  font-family: ui-monospace, Consolas, monospace;
-}
-.usage-bar rect { transition: opacity 0.12s; }
-.usage-bar:hover rect { opacity: 0.78; }
+/* 统计页的图由 ECharts 画（见 components/EChart.vue）：--c-in/--c-out 在这里定义，
+   组件用 getComputedStyle 读出实际色值再交给 ECharts（它不认 CSS 变量）。 */
+/* 两条系列的颜色都来自主题：--primary 与 --accent-2 由 useTheme 随风格一起写。
+   fallback 只是兜底（JS 没跑起来时仍能画出图）。 */
+.usage-chart { --c-in: var(--primary); --c-out: var(--accent-2, #14b8a6); min-width: 0; }
+.usage-chart-inner { min-width: 0; }
+.echart-host { width: 100%; min-width: 0; }
+/* 图例可点：点击隐藏 / 显示对应系列（ECharts 侧由组件处理） */
+.clickable { cursor: pointer; transition: opacity 0.15s; }
+.clickable:hover { opacity: 0.82; }
+.clickable.off { opacity: 0.38; }
 .usage-legend {
   display: flex; gap: 14px; margin-bottom: 6px;
   font-size: 11px; color: var(--text-dim);
@@ -1490,9 +1649,14 @@ details.adv .adv-body .field:first-child { padding-top: 10px; }
 }
 
 /* ---- 环形图（按模型） ---- */
-.usage-donut { max-width: 240px; margin: 0 auto; }
-.usage-donut-total { font-size: 19px; font-weight: 700; fill: var(--text); }
-.usage-donut-cap { font-size: 10px; fill: var(--muted); letter-spacing: 1px; }
+/* ECharts 画环，中心的总量文字是覆盖在上面的 HTML（配色能跟主题，用例也认这个 class） */
+.usage-donut { position: relative; max-width: 240px; margin: 0 auto; }
+.usage-donut-center {
+  position: absolute; inset: 0; pointer-events: none;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+}
+.usage-donut-total { font-size: 19px; font-weight: 700; color: var(--text); }
+.usage-donut-cap { font-size: 10px; color: var(--muted); letter-spacing: 1px; }
 .usage-donut-legend { margin-top: 12px; display: flex; flex-direction: column; gap: 6px; }
 .usage-donut-legend > div { display: flex; align-items: center; gap: 7px; font-size: 11px; }
 .usage-donut-name {
@@ -1569,39 +1733,73 @@ details.adv .adv-body .field:first-child { padding-top: 10px; }
 .chat-chip-meta { font-size: 10.5px; color: var(--muted); }
 
 .chat-box {
-  border: 1px solid var(--border); border-radius: 12px;
+  border: 1px solid var(--border); border-radius: 14px;
   background: var(--panel); overflow: hidden;
 }
 .chat-stream {
-  min-height: 300px; max-height: 56vh; overflow-y: auto;
-  padding: 14px 16px; display: flex; flex-direction: column; gap: 14px;
+  min-height: 320px; max-height: 58vh; overflow-y: auto;
+  padding: 18px 16px; display: flex; flex-direction: column; gap: 16px;
+  /* 主流 AI 对话的观感：消息流不管窗口多宽都居中在一条窄栏里（≤860px），
+     用 padding 而不是给子元素限宽 —— 不破坏 me/ai 的 align-self 布局 */
+  padding-inline: max(16px, calc((100% - 860px) / 2));
 }
 .chat-stream::-webkit-scrollbar { width: 8px; }
 
 .chat-empty { margin: auto; text-align: center; color: var(--text-dim); }
-.chat-empty-title { font-size: 14px; font-weight: 600; color: var(--text); margin-bottom: 10px; }
-.chat-empty-tips { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
-.chat-empty-tips span {
-  display: inline-block; padding: 5px 12px; border-radius: 20px;
-  background: var(--input-bg); border: 1px solid var(--border); font-size: 12px;
+.chat-empty-logo {
+  width: 46px; height: 46px; margin: 0 auto 12px; border-radius: 14px;
+  display: grid; place-items: center; color: #fff;
+  background: linear-gradient(135deg, var(--primary), var(--primary-2));
+  box-shadow: 0 6px 18px rgba(99, 102, 241, 0.35);
 }
-.chat-empty-note { font-size: 11.5px; color: var(--muted); max-width: 520px; }
+.chat-empty-title { font-size: 15px; font-weight: 600; color: var(--text); margin-bottom: 14px; }
+.chat-empty-tips { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; align-items: center; }
+/* 建议问题 = 可点击的开场引导（ChatPane 的 askSample） */
+.chat-empty-tips .chat-tip {
+  padding: 7px 14px; border-radius: 20px; font: inherit; font-size: 12px;
+  background: var(--input-bg); border: 1px solid var(--border); color: var(--text-dim);
+  cursor: pointer; transition: border-color .15s, color .15s, background .15s, transform .15s;
+}
+.chat-empty-tips .chat-tip:hover {
+  color: var(--primary); border-color: var(--primary); background: var(--primary-soft);
+  transform: translateY(-1px);
+}
+.chat-empty-note { font-size: 11.5px; color: var(--muted); max-width: 520px; margin-inline: auto; }
 
 .chat-msg { display: flex; flex-direction: column; gap: 5px; max-width: 92%; }
 .chat-msg.me { align-self: flex-end; align-items: flex-end; }
-.chat-msg.ai { align-self: flex-start; }
+.chat-msg.ai { align-self: flex-start; max-width: 100%; }
 .chat-role {
   display: flex; align-items: center; gap: 8px;
   font-size: 11px; color: var(--muted); font-weight: 600;
 }
+/* 助手消息带一枚小徽标，用户消息不带 —— 一眼区分角色 */
+.chat-msg.ai .chat-role::before {
+  content: ""; width: 16px; height: 16px; border-radius: 5px; flex: none;
+  background: linear-gradient(135deg, var(--primary), var(--primary-2));
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.25);
+}
 .chat-time { font-weight: 400; }
+/* 主流对话样式：助手消息无气泡（直接落在画布上），用户消息才是彩色气泡 */
 .chat-body {
-  padding: 10px 14px; border-radius: 12px; font-size: 13px; line-height: 1.68;
+  padding: 10px 14px; border-radius: 4px 14px 14px 14px; font-size: 13px; line-height: 1.68;
   border: 1px solid var(--border); background: var(--input-bg);
   max-width: 100%; overflow-wrap: anywhere;
 }
-.chat-msg.me .chat-body { background: var(--primary-soft); border-color: transparent; }
-.chat-msg.pending .chat-body { border-style: dashed; }
+.chat-msg.ai .chat-body { background: transparent; border-color: transparent; padding-left: 2px; }
+.chat-msg.me .chat-body {
+  background: linear-gradient(135deg, var(--primary), var(--primary-2));
+  color: #fff; border-color: transparent;
+  border-radius: 14px 14px 4px 14px;
+}
+/* 用户气泡是渐变底，内嵌代码块换深玻璃底保证可读 */
+.chat-msg.me .chat-body code {
+  background: rgba(255, 255, 255, 0.16); color: #fff;
+}
+/* pending 占位气泡：助手消息本体是透明底，占位要自己把底色和描边带回来 */
+.chat-msg.pending .chat-body {
+  border-style: dashed; border-color: var(--border-strong); background: var(--input-bg);
+}
 .chat-body p { margin: 0 0 8px; }
 .chat-body p:last-child { margin-bottom: 0; }
 .chat-body ul, .chat-body ol { margin: 6px 0 8px 20px; }
@@ -1669,25 +1867,35 @@ details.adv .adv-body .field:first-child { padding-top: 10px; }
 }
 .chat-status { color: var(--primary); }
 
-.chat-input { display: flex; gap: 10px; align-items: stretch; margin: 10px 12px 12px; } /* 嵌在 .chat-box 内：上接 chat-live 状态行，四周留出容器内边距 */
-.chat-input textarea {
-  flex: 1; resize: vertical; min-height: 74px; max-height: 240px;
-  padding: 10px 12px; border-radius: 10px; font: inherit; font-size: 13px;
-  border: 1px solid var(--border); background: var(--input-bg); color: var(--text);
-}
-.chat-input textarea:focus { outline: none; border-color: var(--primary); }
-.chat-input-side { display: flex; flex-direction: column; gap: 8px; }
-.chat-input-side .btn-primary, .chat-input-side .btn-ghost { justify-content: center; }
-
 /* ===== 问答附件（粘贴截图 / 上传文件） =====
    外层 #chat-drop 是拖拽落点：拖进来时整块高亮，让人知道「松手就行」。 */
+
+/* 输入区 = 一体化 composer：外面一圈卡片（.chat-drop 落点即卡片），
+   textarea 无边框融在卡片里，发送按钮居右。整体像主流 AI 对话的输入条。 */
+.chat-input { display: flex; gap: 10px; align-items: flex-end; margin: 10px 12px 12px; }
 .chat-drop {
-  flex: 1; display: flex; flex-direction: column; gap: 8px;
-  border: 1px dashed transparent; border-radius: 12px;
-  padding: 2px; transition: border-color 0.15s, background 0.15s;
+  flex: 1; display: flex; flex-direction: column; gap: 6px;
+  border: 1px solid var(--input-border); border-radius: 14px;
+  background: var(--input-bg);
+  padding: 8px 10px; transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+}
+/* 焦点光环放在卡片上，而不是 textarea 上（textarea 已无框） */
+.chat-drop:focus-within {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-soft);
 }
 .chat-drop.dragging { border-color: var(--primary); background: var(--primary-soft); }
-.chat-drop textarea { width: 100%; box-sizing: border-box; }
+.chat-drop textarea {
+  width: 100%; box-sizing: border-box; resize: vertical;
+  min-height: 64px; max-height: 240px;
+  padding: 6px 4px; font: inherit; font-size: 13px; line-height: 1.6;
+  border: none; background: transparent; color: var(--text);
+}
+.chat-drop textarea:focus { outline: none; }
+.chat-input-side { display: flex; flex-direction: column; gap: 8px; align-items: stretch; }
+.chat-input-side .btn-primary, .chat-input-side .btn-ghost { justify-content: center; margin: 0; }
+/* 发送按钮：胶囊渐变，与输入卡片底对齐 */
+.chat-input-side .btn-primary { border-radius: 12px; padding: 10px 18px; }
 
 .chat-attach { display: flex; flex-wrap: wrap; gap: 8px; }
 .chat-attach-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }

@@ -35,8 +35,8 @@ const typeLabel = computed(() => props.label || '产出物')
     <div id="artifacts" class="proposal-grid">
       <div v-if="error" class="empty">产出物加载失败: {{ error }}</div>
       <div v-else-if="!sorted.length" class="empty">还没有产出物。填写左侧信息点「生成」后，AI 结果会在这里等你审阅采纳。</div>
-      <div v-for="a in sorted" :key="a.id" class="pcard" :class="`pc-${a.status || 'pending'}`"
-           @click="emit('open', a.id)">
+      <el-card shadow="never" v-for="a in sorted" :key="a.id" class="pcard" :class="`pc-${a.status || 'pending'}`"
+               @click="emit('open', a.id)">
         <div class="pcard-top">
           <span class="st" :class="`st-${a.status || 'pending'}`">{{ artifactStatusText(a.status) }}</span>
           <span class="pcard-id">{{ a.id || '' }}</span>
@@ -50,7 +50,7 @@ const typeLabel = computed(() => props.label || '产出物')
         </div>
         <div v-if="a.error" class="pcard-root" style="color:var(--danger)">{{ a.error }}</div>
         <div v-else-if="a.summary" class="pcard-root">{{ a.summary }}</div>
-      </div>
+      </el-card>
     </div>
     <p class="panel-note">采纳只会把文件写入工作区（不 commit、不 push）；覆盖已有文件前会自动备份，可在详情里撤销。</p>
   </section>

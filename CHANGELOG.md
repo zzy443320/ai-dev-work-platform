@@ -321,4 +321,28 @@
 - 文件：web/server.py、frontend/src/views/ChatPane.vue、web/static/style.css、scripts/changelog.py（docstring 示例路径更新）
 - 影响：需重启后端（中间件有改动）+ 刷新页面；已构建 68 模块（新 bundle `app.2ahB7EtX.js`）。回归：实测 `/static/style.css` → no-cache、`/static/vue/*.js` → immutable；`chat-input` 在 `.chat-box` 内（`contains` 为真）；`tests/check_vue_all.py` 14 个用例非零退出 0 个。
 
+## 2026-09-29 10:10 · 改进 · 统计页图表升级 ECharts，带动效与交互
 
+- 内容：① 「消耗趋势」堆叠柱与「按模型」环形图改由 ECharts 绘制：柱子依次长出的入场动画、切粒度/区间时的平滑过渡、hover 高亮 + 跟随光标的富 tooltip（替代原来的 SVG \<title\>）、环形图 hover 扇区放大；② 图例变为可点击——趋势图可隐藏输入/输出任一系列，环形图可临时隐藏某个模型；③ 新增图表通用壳组件，后续加图直接复用。
+- 做法：按需引入 echarts/core（Bar/Pie + Grid/Tooltip + SVGRenderer），并以 defineAsyncComponent 异步加载——ECharts 单独成一个 chunk（505KB，gzip 178KB），不撑大首屏 app.js（292KB，gzip 105KB）。ECharts 不认 CSS 变量，新增 utils/chartTheme.js 在渲染时把 --c-in/--c-out/--border 等解析成具体色值，主题切换即重算重绘；空槽用低透明度底色保留「有记录但 0 token」的存在感。tooltip 文案改为组件先算成 rows[].tip 再由 formatter 原样吐出（文案只有一处来源）；环形图中心总量改 HTML 覆盖层（.usage-donut-total 保留，配色跟主题）。
+- 文件：frontend/src/components/EChart.vue（新）、utils/chartTheme.js（新）、UsageTrendChart.vue、UsageDonut.vue、views/StatsPane.vue、web/static/style.css、frontend/package.json（+echarts@6）
+- 影响：刷新页面即生效（构建产物已随仓库提交，用户侧无需装依赖；重新构建需要 npm i）。回归：tests/check_vue_stats_ui.py 与 check_usage_ui.py 的图表断言改为读图表宿主节点契约（__probe / __ec.getOption()），语义等价（空桶在、tooltip 文案、轴刻度、扇区数=模型数）；顺手修掉 stats 用例写死日期（09-28）跨天必挂的问题；tests/check_vue_all.py 14 个用例非零退出 0 个。
+
+## 2026-09-29 10:30 · 重构 · 界面组件全量迁移 Element Plus，新增五套可切换配色风格
+
+- 内容：① 自研 UI 原语全部换成 Element Plus——按钮、输入框、下拉、开关、折叠面板、标签、表格、分页、步骤条、六个弹窗、空态、页签、消息提示；② 顶栏新增「风格」下拉：靛青 / 海蓝 / 松石 / 琥珀 / 玫瑰五套强调色，与明暗模式正交组合，localStorage 各自记忆，切换时按钮、页签、滑块、焦点环、图表高亮整套跟着变；③ 构建产物把 element-plus / vue 拆成独立 chunk：入口 app.js 从 572KB 降到 235KB（gzip 180→80KB），element-plus 单独成块（gzip 304KB），业务改动不再打穿组件库缓存。
+- 做法：unplugin-auto-import + unplugin-vue-components 自动按需引入（模板零 import，命令式 ElMessage 也由插件注入）；新增 styles/theme.css 把 Element 变量桥接到项目变量（明暗双写 [data-theme] 与 html.dark，只设一个会出现「面板暗、按钮亮」）；五套风格各只存「主色 + 次色」，6 个派生色按 Element 官方混色比例在运行时算，改一个主色整套生效。踩过的坑：① el-dialog 内容体首次打开前不渲染，弹窗外要套常驻 div 承载稳定 id 与 hidden 语义，但 overlay 是 position:fixed 不撑父盒、壳的盒子恒为 0 高——用例判「弹窗打开」要看壳内的 .el-dialog，不能判壳可见；② el-select 把透传的 id 绑在内层 input 上（点它会被后缀图标判「pointer events 被拦截」直到超时），且选项不渲染 value，要按 input 的 aria-controls 指向的 listbox 定位选项；③ el-pagination 的页大小必须是常量，用「当前页切片长度」推导会让末页总页数与「下一页」禁用态全乱；④ el-tag 是原子行内级盒子，innerText 会在它前面插一个换行（截图核实视觉仍在同一行，textContent 也紧邻）；⑤ el-table 的 prop 列不会渲染「%」这类后缀，占比列要显式写插槽。
+- 文件：frontend/vite.config.js、main.js、styles/theme.css（新）、composables/useTheme.js、useToast.js、App.vue、components/ 下 18 个组件（弹窗/表格/分页/卡片/消息条）、views/ 下全部 9 个页签、frontend/package.json（+element-plus@2.14.6、@element-plus/icons-vue、unplugin-auto-import、unplugin-vue-components）、web/static/style.css、tests/ui_select.py、tests/check_vue_migration.py、check_vue_shell_ui.py、check_vue_defect_ui.py、check_vue_stats_ui.py、check_usage_ui.py、check_layout_ui.py、tests/test_browser_e2e.py、test_browser_guards.py、test_browser_ai_config.py
+- 影响：刷新页面即生效（构建产物随仓库走，用户侧无需装依赖；本机重新构建需先 npm i）。回归：tests/check_vue_all.py 14 个用例非零退出 0 个、check_layout_ui 12/12；五套风格与明暗模式实机截图核实（_tmp_shots/style_*.png）。两个退役用例（check_chat_ui / check_page_login_ui / check_pager）不在执行清单里，仍引用旧版 .tab / .pg-num 选择器，未随本次迁移更新。
+
+## 2026-09-29 · 修复 · 输入框样式统一：暗色不再糊成黑块，聚焦有主色光环
+- 内容：全部输入框（侧栏配置、长任务表单、大模型弹窗、问答输入区、筛选下拉等）描边统一走 --input-border：暗色从几乎不可见的 9% 白提到 17%（悬停 30%），亮色 20%；聚焦时加一圈主色软光环；原生输入框/下拉与 Element 控件的圆角统一为 10px；暗色输入底色微抬一档（5%→7%）。
+- 做法：新增 --input-border / --input-border-hover 两个主题令牌（style.css 明暗两块各一份），theme.css 里 el-input/el-textarea/el-select 的描边、悬停、聚焦全部改读令牌；原生 .field input/select、.field-inline input、.filter-wrap select、.chat-input textarea 同步对齐。顺手修了一个真 bug：GET / 之前没有 Cache-Control，浏览器启发式缓存旧入口 HTML 后会引用已被构建清掉的旧 hash 产物（表现为「改了样式看不到/界面缺一块」），现在入口与 style.css 一样永远 no-cache——若仍见旧样式请 Ctrl+F5 强刷一次。
+- 文件：web/static/style.css、frontend/src/styles/theme.css、web/server.py
+- 影响：样式刷新页面即生效；server.py 的缓存头改动需重启后端。回归：tests/check_vue_all.py 14 个用例非零退出 0 个；明暗双主题输入框/聚焦态/弹窗/问答/需求页实机截图核实（_tmp_shots/in2_*.png、chk_*.png）。
+
+## 2026-09-29 12:20 · 修复 · 最后 4 个原生下拉迁到 el-select；el-select 宽度契约（选中值不再被裁）
+- 内容：长任务作业的「技术栈 / 只看 / 发给」与缺陷页的「筛选」4 个原生 <select> 全部换成 el-select（至此应用里不再有原生下拉，CsSelect.vue 死代码一并删除）；修掉 el-select 选中值不显示的宽度问题——顶栏风格选择器被压到 40px（只剩半个字）、表单里的下拉没有宽度契约。
+- 做法：el-option 全部补 data-value 供用例确定性选值；#team-filter 改 :model-value + @update:model-value；宽度契约三条——.field-inline .el-select（170-240px 弹性）、.filter-wrap .el-select（150px）、顶栏 .top-actions > .el-select.style-picker（98px，**必须抬权重到 0-3-0**：style.css 在 element-plus.css 之前加载，Element 基础规则 .el-select{width:var(--el-select-width)}（默认100%）同为 0-1-0 但靠后，同权重写 width 会被盖掉，这是这次最贵的坑）；.field/.field-inline 的原生 input 规则补 :not(.el-select__input) 防止「框里套框」复发（el-select 内层也有原生 input 且 id 绑在它上面）。
+- 文件：frontend/src/views/TeamPane.vue、DefectPane.vue、web/static/style.css、tests/ui_select.py（新增 el_select_values 助手）、tests/check_vue_defect_ui.py、tests/check_vue_team_ui.py、删 frontend/src/components/CsSelect.vue
+- 影响：刷新页面即生效。回归：check_vue_all.py 14 个用例非零退出 0 个；技术栈下拉选值回显、风格选择器 98px、筛选联动（applied→空态→回全部）实机探针核实。

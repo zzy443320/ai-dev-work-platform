@@ -1,12 +1,17 @@
 <script setup>
 // 统计页签（#pane-stats）。旧版 index.html:90-168 + app.js:2752-3134 的等价迁移。
 //
-// 迁移要点（也是后面几个页签的模板）：
-//   1. 五个 panel 的骨架照搬，class / id 与旧版一致 —— style.css 直接复用，
-//      界面用例的 `#usage-cards` / `#usage-trend` 等选择器也还能命中；
-//   2. 所有 innerHTML 拼串换成子组件 + 模板绑定，转义交给 Vue（不再手工 escapeHtml）；
-//   3. 折叠状态走 useFold（localStorage 键 `panel-fold-state`，与旧版同源可互通）；
-//   4. 进入页签时拉数据，granularity / days 落 localStorage（键名不变）。
+// 组件化收口后的状态：按钮 → el-button，空态 → el-empty。
+//
+// **刻意保留的两类东西**（不是漏改，见文件末尾注释）：
+//   1. `.panel` / `.panel-head` 面板骨架 —— `check_panel_fold.py` 断言
+//      `#pane-defect > .panel` 的结构顺序，并用
+//      `.panel.collapsible.collapsed > *:not(.panel-head)` 做折叠隐藏。
+//      el-card 会把内容塞进内部的 .el-card__body，直接破坏这两条断言；
+//   2. `.seg` / `.seg-btn` 分段控件 —— 用例按 `#usage-gran .seg-btn[data-g='week']`
+//      点击并读 `.seg-btn.active`，data-* 与 active 都是契约。
+//
+// 另外 ECharts 的 `__ec` / `__probe` 契约（见 components/EChart.vue 头部）不动。
 import { computed, onMounted, ref } from 'vue'
 import { useUsageReport } from '../composables/useUsageReport.js'
 import { useFold } from '../composables/useFold.js'
@@ -78,6 +83,14 @@ const dayOptions = [
 const modelsTop = computed(() => models.value.slice(0, 8))
 const modelsTotal = computed(() => modelsTop.value.reduce((s, r) => s + r.total, 0))
 
+// 环形图的图例在父组件里手写（布局比 ECharts 自带图例好排版），点击隐藏某个模型
+// 交给子组件的 toggle —— 状态留在子组件，父组件只读它暴露的 hidden 决定灰显。
+const donutRef = ref(null)
+const donutHidden = computed(() => (donutRef.value && donutRef.value.hidden) || [])
+function toggleModel(key) {
+  if (donutRef.value) donutRef.value.toggle(key)
+}
+
 const taskMeta = computed(() =>
   tasks.value.length ? `${tasks.value.length} 个任务（按区间内合计降序）` : ''
 )
@@ -89,6 +102,9 @@ const recentMeta = computed(() => {
 })
 
 const ledger = computed(() => (report.value && report.value.note && report.value.note.ledger) || '')
+
+/** 三个加载/错误/空态复用的尺寸，避免 el-empty 的默认插图把面板撑太高 */
+const EMPTY_SIZE = 56
 </script>
 
 <template>
@@ -109,14 +125,16 @@ const ledger = computed(() => (report.value && report.value.note && report.value
                   :class="{ active: days === o.d }" :data-d="o.d"
                   @click="onDays(o.d)">{{ o.label }}</button>
         </div>
-        <button class="btn-ghost" :disabled="loading" @click="refresh">刷新</button>
+        <!-- class="btn-ghost" 是迁移期保留的选择器契约（旧版这个刷新按钮就是
+             .usage-controls .btn-ghost，用例 check_vue_stats_ui.py 按它点刷新） -->
+        <el-button class="btn-ghost" :loading="loading" @click="refresh">刷新</el-button>
         <span class="muted" id="usage-gen">{{ genText }}</span>
       </div>
     </div>
 
     <div class="usage-cards" id="usage-cards">
-      <div class="empty" v-if="error">用量统计加载失败：{{ error }}</div>
-      <div class="empty" v-else-if="!report">加载中…</div>
+      <el-empty v-if="error" :image-size="EMPTY_SIZE" :description="`用量统计加载失败：${error}`" />
+      <el-empty v-else-if="!report" :image-size="EMPTY_SIZE" description="加载中…" />
       <UsageCards v-else :cards="cards" />
     </div>
     <UsageNote v-if="report" :totals="totals" :ledger="ledger" />
@@ -131,8 +149,8 @@ const ledger = computed(() => (report.value && report.value.note && report.value
       <span class="muted" id="usage-trend-meta">{{ trendMeta }}</span>
     </div>
     <div class="usage-chart" id="usage-trend">
-      <div class="empty" v-if="error">用量统计加载失败：{{ error }}</div>
-      <div class="empty" v-else-if="!report">加载中…</div>
+      <el-empty v-if="error" :image-size="EMPTY_SIZE" :description="`用量统计加载失败：${error}`" />
+      <el-empty v-else-if="!report" :image-size="EMPTY_SIZE" description="加载中…" />
       <UsageTrendChart v-else ref="trendRef" :buckets="buckets"
                        :granularity="gran" />
     </div>
@@ -147,25 +165,28 @@ const ledger = computed(() => (report.value && report.value.note && report.value
     </div>
     <div class="usage-split">
       <div class="usage-chart" id="usage-kinds">
-        <div class="empty" v-if="error">用量统计加载失败：{{ error }}</div>
-        <div class="empty" v-else-if="!report">加载中…</div>
+        <el-empty v-if="error" :image-size="EMPTY_SIZE" :description="`用量统计加载失败：${error}`" />
+        <el-empty v-else-if="!report" :image-size="EMPTY_SIZE" description="加载中…" />
         <template v-else>
           <div class="usage-chart-title">按任务类型</div>
-          <div class="empty" v-if="!kinds.length">暂无数据</div>
+          <el-empty v-if="!kinds.length" :image-size="EMPTY_SIZE" description="暂无数据" />
           <UsageBarRows v-else :rows="kinds" :palette="PALETTE"
                         :label-of="(r) => r.label || r.key" />
         </template>
       </div>
       <div class="usage-chart" id="usage-models">
-        <div class="empty" v-if="error">用量统计加载失败：{{ error }}</div>
-        <div class="empty" v-else-if="!report">加载中…</div>
+        <el-empty v-if="error" :image-size="EMPTY_SIZE" :description="`用量统计加载失败：${error}`" />
+        <el-empty v-else-if="!report" :image-size="EMPTY_SIZE" description="加载中…" />
         <template v-else>
           <div class="usage-chart-title">按模型</div>
-          <div class="empty" v-if="!modelsTop.length || !modelsTotal">暂无数据</div>
+          <el-empty v-if="!modelsTop.length || !modelsTotal" :image-size="EMPTY_SIZE" description="暂无数据" />
           <template v-else>
-            <UsageDonut :rows="modelsTop" :palette="PALETTE" />
+            <UsageDonut ref="donutRef" :rows="modelsTop" :palette="PALETTE" />
             <div class="usage-donut-legend">
-              <div v-for="(r, i) in modelsTop" :key="r.key">
+              <div v-for="(r, i) in modelsTop" :key="r.key" class="clickable"
+                   :class="{ off: donutHidden.includes(r.key) }"
+                   :title="`点击显示 / 隐藏 ${r.key}`"
+                   @click="toggleModel(r.key)">
                 <i :style="{ background: PALETTE[i % PALETTE.length] }" />
                 <span class="usage-donut-name" :title="r.key">{{ r.key }}</span>
                 <span class="muted">{{ r.total.toLocaleString('en-US') }} · {{ ((r.total / modelsTotal) * 100).toFixed(1) }}%</span>
@@ -190,9 +211,9 @@ const ledger = computed(() => (report.value && report.value.note && report.value
       <span class="muted" id="usage-task-meta">{{ taskMeta }}</span>
     </div>
     <div id="usage-tasks" class="usage-table-wrap">
-      <div class="empty" v-if="error">用量统计加载失败：{{ error }}</div>
-      <div class="empty" v-else-if="!report">加载中…</div>
-      <div class="empty" v-else-if="!tasks.length">区间内还没有任务级记录。</div>
+      <el-empty v-if="error" :image-size="EMPTY_SIZE" :description="`用量统计加载失败：${error}`" />
+      <el-empty v-else-if="!report" :image-size="EMPTY_SIZE" description="加载中…" />
+      <el-empty v-else-if="!tasks.length" :image-size="EMPTY_SIZE" description="区间内还没有任务级记录。" />
       <UsageTasksTable v-else :rows="tasks" :totals="totals" />
     </div>
   </section>
@@ -210,9 +231,9 @@ const ledger = computed(() => (report.value && report.value.note && report.value
       <span class="muted" id="usage-recent-meta">{{ recentMeta }}</span>
     </div>
     <div id="usage-recent" class="usage-table-wrap">
-      <div class="empty" v-if="error">用量统计加载失败：{{ error }}</div>
-      <div class="empty" v-else-if="!report">加载中…</div>
-      <div class="empty" v-else-if="!recent.length">区间内还没有调用记录。</div>
+      <el-empty v-if="error" :image-size="EMPTY_SIZE" :description="`用量统计加载失败：${error}`" />
+      <el-empty v-else-if="!report" :image-size="EMPTY_SIZE" description="加载中…" />
+      <el-empty v-else-if="!recent.length" :image-size="EMPTY_SIZE" description="区间内还没有调用记录。" />
       <UsageRecentTable v-else :rows="recent" :kind-labels="kindLabels" />
     </div>
   </section>

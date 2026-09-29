@@ -2,6 +2,16 @@ import { createApp } from 'vue'
 import App from './App.vue'
 import { TABS, DEFAULT_TAB } from './components/tabs.js'
 
+// ---------------------------------------------------------------------------
+// Element Plus 样式加载顺序（**不能颠倒**）：
+//   1. 暗色变量表：Element 的暗色主题只认 `html.dark`，这套变量必须先进来；
+//   2. 项目桥接层：把 --el-* 映射到项目自己的 CSS 变量，并覆盖 Element 默认观感。
+// 桥接层里用的是与 Element 同权重的选择器，靠「后加载者生效」，顺序反了会一半错色。
+// 组件自身的样式不在这里 —— 由 unplugin-vue-components 按需注入（见 vite.config.js）。
+// ---------------------------------------------------------------------------
+import 'element-plus/theme-chalk/dark/css-vars.css'
+import './styles/theme.css'
+
 const app = createApp(App)
 app.mount('#app')
 

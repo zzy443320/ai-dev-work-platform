@@ -1,66 +1,133 @@
 <script setup>
-// 模型占比环形图。旧版 app.js:3035 `usageDonut` 的等价复刻。
+// 模型占比环形图。旧版 app.js:3035 `usageDonut` 的口径复刻，绘制交给 ECharts：
+// 带扫出动画、hover 扇区放大 + 阴影、跟随光标的 tooltip，点图例可临时隐藏某个模型。
 //
-// 两个分支要留意：只有 1 个模型时画整圈（单条 path 的 arc 首尾重合会变成空路径），
-// 这也是旧版特意分开写的理由。
-import { computed } from 'vue'
+// 与旧版的差异只有一处**实现**：单模型时不再需要「画整圈」的特判——旧版是因为
+// 一条 arc 首尾重合会退化成空路径才分开写，ECharts 的饼图天然支持 100% 单扇区。
+// 中心的总量文字保留成 HTML 覆盖层（`.usage-donut-total`），一是配色跟得上主题，
+// 二是既有界面用例按这个 class 断文案。
+import { computed, defineAsyncComponent, onMounted, ref, watch } from 'vue'
+// 与趋势图一致：ECharts 走异步 chunk，不并进入口 app.js
+const EChart = defineAsyncComponent(() => import('./EChart.vue'))
 import { fmtTok, fmtInt } from '../utils/format.js'
+import { readChartColors, resolveColor } from '../utils/chartTheme.js'
+import { useTheme } from '../composables/useTheme.js'
 
 const props = defineProps({
   rows: { type: Array, default: () => [] },
   palette: { type: Array, default: () => [] },
 })
 
-const CX = 108, CY = 104, RO = 78, RI = 52
+const { theme } = useTheme()
+
+const CHART_H = 220
+
+const wrap = ref(null)
+const colors = ref(null)
+/** 调色板解析结果（ECharts 只吃具体色值，var(--primary) 要先解析） */
+const palette = ref([])
+
+function readColors() {
+  if (!wrap.value) return
+  colors.value = readChartColors(wrap.value)
+  palette.value = props.palette.map((c) => resolveColor(wrap.value, c))
+}
+onMounted(readColors)
+watch(theme, readColors)
+// 调色板来自 props，父组件不变就不变；跟着主题一起重算最省心
+watch(() => props.palette, readColors, { deep: true })
+
+const colorAt = (i) => palette.value[i] || props.palette[i] || ''
 
 const total = computed(() => props.rows.reduce((s, r) => s + r.total, 0))
 
-const single = computed(() => props.rows.length === 1)
-const singleWidth = RO - RI
-
-const colorAt = (i) => props.palette[i % (props.palette.length || 1)]
-
-const arcPath = (rad, ang) => [
-  (CX + rad * Math.cos(ang)).toFixed(2),
-  (CY + rad * Math.sin(ang)).toFixed(2),
-]
-
-/** 逐段扫出扇环路径。起始角 -90°（12 点方向），顺时针铺满一圈。 */
-const arcs = computed(() => {
-  if (single.value || !total.value) return []
-  let a = -Math.PI / 2
-  return props.rows.map((r, i) => {
-    const sweep = (r.total / total.value) * Math.PI * 2
-    const a0 = a
-    const a1 = a + sweep
-    a = a1
-    const large = sweep > Math.PI ? 1 : 0
-    const [x0, y0] = arcPath(RO, a0)
-    const [x1, y1] = arcPath(RO, a1)
-    const [x2, y2] = arcPath(RI, a1)
-    const [x3, y3] = arcPath(RI, a0)
-    const d = `M${x0} ${y0} A${RO} ${RO} 0 ${large} 1 ${x1} ${y1}` +
-      ` L${x2} ${y2} A${RI} ${RI} 0 ${large} 0 ${x3} ${y3} Z`
-    const pct = ((r.total / total.value) * 100).toFixed(1)
+/** 每个模型一行：tooltip 文案 + 占比（文案与旧版一致） */
+const rows = computed(() =>
+  props.rows.map((r, i) => {
+    const pct = total.value ? ((r.total / total.value) * 100).toFixed(1) : '0.0'
     return {
       key: r.key,
-      d,
-      fill: colorAt(i),
+      i,
+      total: r.total,
+      pct,
       tip: `${r.key}：${fmtInt(r.total)} tokens（${pct}%）`,
     }
   })
+)
+
+// 图例点击隐藏：保留原始下标 i（颜色要对得上图例），允许隐藏到只剩一个
+const hidden = ref([])
+function toggle(key) {
+  if (hidden.value.includes(key)) {
+    hidden.value = hidden.value.filter((k) => k !== key)
+  } else if (rows.value.length - hidden.value.length > 1) {
+    hidden.value = [...hidden.value, key]
+  }
+}
+
+const visible = computed(() => rows.value.filter((r) => !hidden.value.includes(r.key)))
+
+const option = computed(() => {
+  if (!colors.value) return {}
+  const c = colors.value
+  return {
+    animationType: 'scale',
+    animationDuration: 700,
+    tooltip: {
+      trigger: 'item',
+      confine: true,
+      backgroundColor: c.panel,
+      borderColor: c.axisLine,
+      textStyle: { color: c.text, fontSize: 11.5 },
+      formatter: (p) => {
+        const r = visible.value[p.dataIndex]
+        return r ? r.tip.replace(/\n/g, '<br/>') : ''
+      },
+    },
+    series: [
+      {
+        id: 'models',
+        type: 'pie',
+        radius: ['48%', '76%'],
+        center: ['50%', '50%'],
+        startAngle: 90,          // 12 点方向起画，与旧版一致
+        clockwise: true,
+        avoidLabelOverlap: false,
+        label: { show: false },  // 名称/占比走右侧自定义图例
+        labelLine: { show: false },
+        emphasis: {
+          scale: true,
+          scaleSize: 6,
+          itemStyle: { shadowBlur: 12, shadowColor: 'rgba(0, 0, 0, 0.28)' },
+        },
+        data: visible.value.map((r) => ({
+          name: r.key,
+          value: r.total,
+          itemStyle: { color: colorAt(r.i) },
+        })),
+      },
+    ],
+  }
 })
+
+/** 给界面用例读的语义化数据（EChart.vue 头部的 __probe 约定） */
+const probe = computed(() => ({
+  kind: 'donut',
+  total: total.value,
+  rows: rows.value,
+  sectors: visible.value.length,
+  hidden: [...hidden.value],
+}))
+
+defineExpose({ toggle, hidden })
 </script>
 
 <template>
-  <svg class="usage-svg usage-donut" viewBox="0 0 216 208" role="img" aria-label="模型占比">
-    <!-- 单模型：直接画一个粗描边圆环，比 arc 路径稳（首尾重合的 arc 会退化成空路径） -->
-    <circle v-if="single" :cx="CX" :cy="CY" :r="(RO + RI) / 2" fill="none"
-            stroke="var(--primary)" :stroke-width="singleWidth" />
-    <path v-for="a in arcs" v-else :key="a.key" :d="a.d" :fill="a.fill">
-      <title>{{ a.tip }}</title>
-    </path>
-    <text :x="CX" :y="CY - 2" text-anchor="middle" class="usage-donut-total">{{ fmtTok(total) }}</text>
-    <text :x="CX" :y="CY + 16" text-anchor="middle" class="usage-donut-cap">tokens</text>
-  </svg>
+  <div ref="wrap" class="usage-donut">
+    <EChart :option="option" :height="CHART_H" :probe="probe" />
+    <div class="usage-donut-center">
+      <span class="usage-donut-total">{{ fmtTok(total) }}</span>
+      <span class="usage-donut-cap">tokens</span>
+    </div>
+  </div>
 </template>

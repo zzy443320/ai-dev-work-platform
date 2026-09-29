@@ -1,25 +1,21 @@
-// 全局提示条。与旧版 `toast(msg, kind)` 同样的 2.6s 自动消失。
+// 全局提示。原来是自绘的 #toast 胶囊，现在交给 Element Plus 的 ElMessage。
 //
-// 旧版是命令式全局函数，这里做成组件 + 一个可在任意处调用的单例，
-// 这样从 Vue 组件和从非组件代码（如 SSE 回调）都能用。
-import { ref } from 'vue'
+// 对外签名刻意保持 `toast(msg, kind)` 不变 —— 全项目 40+ 处调用点（composables
+// 与各视图）都不用动，kind 仍是旧版那三个值：ok / err / warn。
+//
+// ElMessage 由 unplugin-auto-import 按需注入（见 vite.config.js）：这里**不写
+// import 是刻意的**，插件会同时补上组件与它的样式；改成显式 import 反而会丢样式。
+const KIND_TO_TYPE = { ok: 'success', err: 'error', warn: 'warning' }
 
-const message = ref('')
-const kind = ref('ok')
-const visible = ref(false)
-let timer = null
-
-export function toast(msg, k = 'ok') {
-  message.value = msg
-  kind.value = k
-  visible.value = true
-  if (timer) clearTimeout(timer)
-  timer = setTimeout(() => {
-    visible.value = false
-    timer = null
-  }, 2600)
+export function toast(msg, kind = 'ok') {
+  ElMessage({
+    message: String(msg == null ? '' : msg),
+    type: KIND_TO_TYPE[kind] || 'info',
+    duration: 2600,   // 与旧版 #toast 的 2.6s 一致
+    grouping: true,   // 连续同类提示合并，避免刷屏
+  })
 }
 
 export function useToast() {
-  return { message, kind, visible, toast }
+  return { toast }
 }

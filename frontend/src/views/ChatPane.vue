@@ -86,6 +86,14 @@ function onKeydown(e) {
   }
 }
 
+/** 空态建议问题：点一下直接替用户提问（填进输入框 → 走同一条 send 链路） */
+async function askSample(text) {
+  const el = textEl.value
+  if (!el || busy.value) return
+  el.value = text
+  await send()
+}
+
 function pickFile() {
   const fi = fileEl.value
   if (fi) fi.click()
@@ -139,6 +147,7 @@ onMounted(async () => {
         问答 · 随便问，或顺手改点代码
       </h2>
       <div class="usage-controls">
+        <!-- 偏好开关：保留原生 checkbox（id 被 Playwright 直接 check/uncheck/读 checked） -->
         <label class="switch" title="开启后 AI 可以自己去仓库里列目录/读文件/正则搜索找证据">
           <input type="checkbox" id="chat-use-repo" v-model="useRepo" @change="persistPrefs">
           <span class="track" /><span class="switch-label">允许查仓库</span>
@@ -147,14 +156,14 @@ onMounted(async () => {
           <input type="checkbox" id="chat-allow-patch" v-model="allowPatch" @change="persistPrefs">
           <span class="track" /><span class="switch-label">可出改动提案</span>
         </label>
-        <button class="btn-ghost" id="btn-chat-new" @click="newSession()">
+        <el-button id="btn-chat-new" @click="newSession()">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14" /></svg>
           新会话
-        </button>
-        <button class="btn-ghost" id="btn-chat-clear" title="清空当前会话的消息（保留会话）"
-                @click="clearSession()">清空</button>
-        <button class="btn-ghost" id="btn-chat-del" title="删除当前会话"
-                @click="deleteSession()">删除会话</button>
+        </el-button>
+        <el-button id="btn-chat-clear" title="清空当前会话的消息（保留会话）"
+                   @click="clearSession()">清空</el-button>
+        <el-button id="btn-chat-del" title="删除当前会话"
+                   @click="deleteSession()">删除会话</el-button>
       </div>
     </div>
 
@@ -165,11 +174,16 @@ onMounted(async () => {
       <div id="chat-stream" ref="streamEl" class="chat-stream"
            data-placeholder="在下面输入你的问题。可以问「这个项目的路由是怎么配的」，也可以直接说「把 xxx 组件的 loading 状态补上」。">
         <div v-if="!messages.length && !busy" class="chat-empty">
+          <div class="chat-empty-logo" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor"
+                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 9.7 9.7 0 0 1-2.8-.4L3 21l1.6-4.6A8.4 8.4 0 0 1 12 3.1a8.4 8.4 0 0 1 9 8.4Z" /></svg>
+          </div>
           <div class="chat-empty-title">随便问点什么，或者顺手让我改点代码</div>
+          <!-- 建议问题可直接点击发起（askSample），像主流 AI 对话的开场引导 -->
           <div class="chat-empty-tips">
-            <span>这个项目的路由是怎么配的？</span>
-            <span>这个报错可能是什么原因？（把日志粘进来）</span>
-            <span>把 xxx 组件的 loading 状态补上</span>
+            <button type="button" class="chat-tip" @click="askSample('这个项目的路由是怎么配的？')">这个项目的路由是怎么配的？</button>
+            <button type="button" class="chat-tip" @click="askSample('这个报错可能是什么原因？（把日志粘进来）')">这个报错可能是什么原因？（把日志粘进来）</button>
+            <button type="button" class="chat-tip" @click="askSample('把 xxx 组件的 loading 状态补上')">把 xxx 组件的 loading 状态补上</button>
           </div>
           <div class="chat-empty-note">
             开启「允许查仓库」时，我会自己列目录 / 读文件 / 正则搜索去找证据；引用代码会带 <code>文件路径:行号</code>。
@@ -193,30 +207,32 @@ onMounted(async () => {
           <div class="chat-attach" id="chat-attach">
             <ChatAttachBar :atts="pendingAtts" :uploading="uploading" @remove="removeAtt" />
           </div>
+          <!-- 保留原生 textarea：id 被 Playwright fill/press/读 value，且 send() 直接读 el.value -->
           <textarea id="chat-text" ref="textEl" rows="3"
                     placeholder="Enter 发送，Shift+Enter 换行。支持直接粘贴截图（Ctrl/⌘+V），也可以点「上传文件」或把文件拖到这里。"
                     @keydown="onKeydown" @paste="onPaste" />
           <div class="chat-attach-bar">
+            <!-- 保留原生 file input：Element 的 el-upload 事件模型与原生差别大，硬套会丢 paste/drop 链路 -->
             <input type="file" id="chat-file" ref="fileEl" multiple class="hidden"
                    accept="image/*,.txt,.log,.md,.csv,.json,.xml,.yml,.yaml,.ts,.tsx,.js,.jsx,.vue,.css,.scss,.py,.java,.go,.sh,.sql,.ini,.conf,.patch,.diff"
                    @change="onFileChange">
-            <button class="btn-ghost btn-sm" id="btn-chat-upload" title="选择图片或文本文件（日志、代码、配置等）"
-                    @click="pickFile">
+            <el-button id="btn-chat-upload" size="small" title="选择图片或文本文件（日志、代码、配置等）"
+                       @click="pickFile">
               <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="17 8 12 3 7 8" /><line x1="12" y1="3" x2="12" y2="15" /></svg>
               上传文件
-            </button>
+            </el-button>
             <span class="chat-attach-hint muted" id="chat-attach-hint"
                   :class="{ hidden: !!pendingAtts.length }">可粘贴截图 / 上传日志与代码文件</span>
           </div>
         </div>
         <div class="chat-input-side">
-          <button class="btn-primary" id="btn-chat-send" :disabled="sendDisabled" @click="send">
+          <el-button type="primary" id="btn-chat-send" :disabled="sendDisabled" @click="send">
             <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 11 13" /><path d="M22 2l-7 20-4-9-9-4 20-7Z" /></svg>
             发送
-          </button>
-          <button class="btn-ghost" id="btn-chat-stop" :class="{ hidden: !busy }"
-                  title="断开当前输出（服务端会跑完这一次调用，结果仍会存进会话）"
-                  @click="stop()">停止</button>
+          </el-button>
+          <el-button id="btn-chat-stop" :class="{ hidden: !busy }"
+                     title="断开当前输出（服务端会跑完这一次调用，结果仍会存进会话）"
+                     @click="stop()">停止</el-button>
         </div>
       </div>
     </div>

@@ -86,6 +86,8 @@ function onExpand() {
 
 <template>
   <div class="log-wrap">
+    <!-- ⚠️ #run-log 容器与 class 一律不动：旧版 innerHTML 直接拼的结构化结果靠它复位空白，
+         :empty 占位提示也绑定在它身上。 -->
     <pre
       class="log"
       id="run-log"
@@ -94,9 +96,25 @@ function onExpand() {
       @click="onResultClick"
     ><template v-if="hasResult"><span v-html="resultHtml" /><details v-if="replay.length" class="ai-replay"><summary>展开本次大模型的实时思考 / 输出记录</summary><template v-for="r in replay" :key="r.id"><div class="ai-replay-defect">工单 {{ r.id }}</div><div class="ai-stream"><template v-if="r.think"><div class="ai-block think"><div class="ai-block-label">思考</div><pre>{{ r.think }}</pre></div></template><template v-if="r.out"><div class="ai-block out"><div class="ai-block-label">输出</div><pre>{{ r.out }}</pre></div></template></div></template></details></template><template v-else-if="hasLiveContent"><span class="live-lines"><span v-for="(l, i) in lines" :key="i" class="live-line" :class="l.kind"><span class="t">{{ l.t }}</span><span>{{ l.text }}</span></span></span><span class="ai-stream" :class="{ hidden: !hasLive }"><span class="ai-stream-head"><span class="ai-dot" /><span>大模型实时输出</span><span class="ai-stream-meta">{{ modelName }}</span></span><span class="ai-block think" :class="{ hidden: !live.think }"><span class="ai-block-label">思考</span><pre ref="thinkEl">{{ live.think }}</pre></span><span class="ai-block out" :class="{ hidden: !live.out }"><span class="ai-block-label">输出</span><pre ref="outEl">{{ live.out }}</pre></span></span></template></pre>
 
-    <button class="log-expand" :class="{ hidden: !hasResult }" id="btn-run-expand"
-            title="放大查看" @click="onExpand">
+    <!-- 放大按钮：外层悬浮控件，迁移到 el-button；保留 id / class 钩子与 absolute 定位。 -->
+    <el-button
+      class="log-expand"
+      :class="{ hidden: !hasResult }"
+      id="btn-run-expand"
+      title="放大查看"
+      @click="onExpand"
+    >
       <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9" /><polyline points="9 21 3 21 3 15" /><line x1="21" y1="3" x2="14" y2="10" /><line x1="3" y1="21" x2="10" y2="14" /></svg>
-    </button>
+    </el-button>
   </div>
 </template>
+
+<style scoped>
+/* el-button 默认有内边距/边框，会破坏 .log-expand 的绝对定位方块外观；
+   用 scoped 覆盖回原生 .log-expand 的样式（位置/尺寸由全局 style.css 负责）。 */
+.log-expand {
+  padding: 0 !important;
+  border: 1px solid var(--border-strong) !important;
+  background: var(--panel-solid) !important;
+}
+</style>

@@ -144,61 +144,63 @@ onMounted(async () => {
         <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="7" r="3" /><circle cx="18" cy="7" r="3" /><circle cx="12" cy="18" r="3" /><path d="M9 7h6M8.3 9.4l2.5 6M15.7 9.4l-2.5 6" /></svg>
         长任务作业 · 多子 Agent 协作
       </h2>
-      <button class="fold-btn" title="折叠 / 展开" @click="toggleFold('team-run-panel')">
+      <el-button text circle class="fold-btn" title="折叠 / 展开" @click="toggleFold('team-run-panel')">
         <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9" /></svg>
-      </button>
+      </el-button>
     </div>
     <div class="run-form">
       <label class="field-inline grow">
         <span>任务标题</span>
-        <input type="text" id="team-title" v-model="title" placeholder="例如：订单列表页从旧架构迁移到新架构">
+        <el-input type="text" id="team-title" v-model="title" placeholder="例如：订单列表页从旧架构迁移到新架构" />
       </label>
       <label class="field-inline grow">
         <span>改造范围（glob，可留空）</span>
-        <input type="text" id="team-scope" v-model="scope" placeholder="src/views/order/** , src/api/**">
+        <el-input type="text" id="team-scope" v-model="scope" placeholder="src/views/order/** , src/api/**" />
       </label>
     </div>
     <div class="run-form">
       <label class="field-inline">
         <span>技术栈</span>
-        <select id="team-framework" v-model="framework">
-          <option v-for="f in TEAM_FRAMEWORKS" :key="f">{{ f }}</option>
-        </select>
+        <el-select id="team-framework" v-model="framework" placeholder="选择技术栈">
+          <el-option v-for="f in TEAM_FRAMEWORKS" :key="f" :value="f" :label="f" :data-value="f" />
+        </el-select>
       </label>
       <label class="field-inline">
         <span>最多返工轮次</span>
-        <input type="number" id="team-rounds" v-model.number="rounds" min="0" max="5">
+        <el-input type="number" id="team-rounds" v-model.number="rounds" :min="0" :max="5" />
       </label>
     </div>
     <label class="field">
       <span>任务描述（越大越模糊的任务越要写清目标与不做什么）</span>
-      <textarea id="team-task" rows="4" v-model="task" placeholder="要改什么、改成什么样、哪些必须保持不变（对外接口 / 埋点 / 兼容性）。例如：把 src/views 下的 12 个列表页统一迁移到新表格组件，接口调用改为 src/api/v2，页面路由与参数保持不变。"></textarea>
+      <el-input type="textarea" id="team-task" :rows="4" v-model="task" placeholder="要改什么、改成什么样、哪些必须保持不变（对外接口 / 埋点 / 兼容性）。例如：把 src/views 下的 12 个列表页统一迁移到新表格组件，接口调用改为 src/api/v2，页面路由与参数保持不变。" />
     </label>
     <label class="field">
       <span>其他约定（可选）</span>
-      <input type="text" id="team-notes" v-model="notes" placeholder="目录规范、必须复用的工具函数、禁止引入的依赖等">
+      <el-input type="text" id="team-notes" v-model="notes" placeholder="目录规范、必须复用的工具函数、禁止引入的依赖等" />
     </label>
     <div class="run-form team-roles-bar">
       <span class="scope-label">参与角色：</span>
-      <label class="switch" title="没有决策官就无法拆解任务，因此它始终参与">
-        <input type="checkbox" id="team-role-planner" v-model="roleOn.planner" checked disabled>
-        <span class="track" /><span class="switch-label">🧭 决策官</span>
-      </label>
-      <label class="switch"><input type="checkbox" id="team-role-coder" v-model="roleOn.coder"><span class="track" /><span class="switch-label">⌨️ 编码工程师</span></label>
-      <label class="switch"><input type="checkbox" id="team-role-tester" v-model="roleOn.tester"><span class="track" /><span class="switch-label">🧪 测试工程师</span></label>
-      <label class="switch"><input type="checkbox" id="team-role-reviewer" v-model="roleOn.reviewer"><span class="track" /><span class="switch-label">🔍 复核官</span></label>
+      <!-- 决策官始终参与：disabled；其余角色用 el-switch 替代原来自绘 .switch -->
+      <el-switch id="team-role-planner" v-model="roleOn.planner" disabled title="没有决策官就无法拆解任务，因此它始终参与" />
+      <span class="switch-label">🧭 决策官</span>
+      <el-switch id="team-role-coder" v-model="roleOn.coder" />
+      <span class="switch-label">⌨️ 编码工程师</span>
+      <el-switch id="team-role-tester" v-model="roleOn.tester" />
+      <span class="switch-label">🧪 测试工程师</span>
+      <el-switch id="team-role-reviewer" v-model="roleOn.reviewer" />
+      <span class="switch-label">🔍 复核官</span>
     </div>
     <div class="run-form">
-      <button class="btn-primary" id="btn-team-run" :disabled="running" @click="onStart">
+      <el-button type="primary" id="btn-team-run" :disabled="running" @click="onStart">
         <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="6 3 20 12 6 21 6 3" /></svg>
         开始作业
-      </button>
-      <button class="btn-ghost" id="btn-team-pause" :disabled="!(running && !paused)" @click="onIntervene('pause')">暂停</button>
-      <button class="btn-ghost" id="btn-team-resume" :disabled="!(running && paused)" @click="onIntervene('resume')">继续</button>
-      <button class="btn-ghost" id="btn-team-replan" :disabled="!running" @click="askReplan()">要求重规划</button>
-      <button class="btn-ghost" id="btn-team-skip" :disabled="!running" @click="onIntervene('skip')">跳过当前项</button>
-      <button class="btn-danger" id="btn-team-stop" :disabled="!running" @click="onIntervene('stop')">终止</button>
-      <button class="btn-ghost" @click="loadRuns()">刷新历史</button>
+      </el-button>
+      <el-button id="btn-team-pause" :disabled="!(running && !paused)" @click="onIntervene('pause')">暂停</el-button>
+      <el-button id="btn-team-resume" :disabled="!(running && paused)" @click="onIntervene('resume')">继续</el-button>
+      <el-button id="btn-team-replan" :disabled="!running" @click="askReplan()">要求重规划</el-button>
+      <el-button id="btn-team-skip" :disabled="!running" @click="onIntervene('skip')">跳过当前项</el-button>
+      <el-button type="danger" id="btn-team-stop" :disabled="!running" @click="onIntervene('stop')">终止</el-button>
+      <el-button @click="loadRuns()">刷新历史</el-button>
     </div>
     <div class="info-note">
       把大任务拆给不同职责的子 Agent 去跑：<strong>决策官</strong>拆工作项定方案，<strong>编码工程师</strong>逐项实现，<strong>测试工程师</strong>补测试，<strong>复核官</strong>收口找问题。<br>
@@ -216,9 +218,9 @@ onMounted(async () => {
         子 Agent 看板
         <span class="count-badge" :class="{ hidden: !running }" id="team-live-badge">运行中</span>
       </h2>
-      <button class="fold-btn" title="折叠 / 展开" @click="toggleFold('team-board-panel')">
+      <el-button text circle class="fold-btn" title="折叠 / 展开" @click="toggleFold('team-board-panel')">
         <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9" /></svg>
-      </button>
+      </el-button>
       <span class="muted" id="team-run-meta">{{ runMeta }}</span>
     </div>
     <div id="team-agents" class="team-agents">
@@ -237,9 +239,9 @@ onMounted(async () => {
         <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4" /><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" /></svg>
         工作项
       </h2>
-      <button class="fold-btn" title="折叠 / 展开" @click="toggleFold('team-plan-panel')">
+      <el-button text circle class="fold-btn" title="折叠 / 展开" @click="toggleFold('team-plan-panel')">
         <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9" /></svg>
-      </button>
+      </el-button>
       <span class="muted" id="team-plan-summary">{{ planSummary }}</span>
     </div>
     <div id="team-plan" class="team-plan">
@@ -280,15 +282,17 @@ onMounted(async () => {
         <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l3 8 4-16 3 8h4" /></svg>
         实时时间线
       </h2>
-      <button class="fold-btn" title="折叠 / 展开" @click="toggleFold('team-timeline-panel')">
+      <el-button text circle class="fold-btn" title="折叠 / 展开" @click="toggleFold('team-timeline-panel')">
         <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9" /></svg>
-      </button>
+      </el-button>
       <label class="filter-wrap">
         <span class="muted">只看</span>
-        <select id="team-filter" :value="filter" @change="setFilter($event.target.value)">
-          <option value="all">全部</option>
-          <option v-for="a in filterOptions" :key="a.id" :value="a.id">{{ a.emoji ? a.emoji + ' ' : '' }}{{ a.name }}</option>
-        </select>
+        <el-select id="team-filter" :model-value="filter"
+                   @update:model-value="setFilter" placeholder="全部">
+          <el-option value="all" label="全部" data-value="all" />
+          <el-option v-for="a in filterOptions" :key="a.id" :value="a.id"
+                     :label="a.emoji ? a.emoji + ' ' + a.name : a.name" :data-value="a.id" />
+        </el-select>
       </label>
     </div>
     <div class="log-wrap">
@@ -298,10 +302,10 @@ onMounted(async () => {
       <pre id="team-log" class="log" ref="logEl"
            data-placeholder="开始作业后，这里按时间顺序显示每个子 Agent 的动作、人工介入与阶段结论（大模型的逐字思考/输出在各自看板卡片里）"
       ><span v-if="visibleLogLines.length" class="team-lines"><span v-for="l in visibleLogLines" :key="l.seq" class="live-line" :class="l.kind"><span class="t">{{ l.t }}</span><span>{{ l.text }}</span></span></span></pre>
-      <button class="log-expand" :class="{ hidden: !hasLog }" id="btn-team-expand"
-              title="放大查看" @click="openLog">
+      <el-button text circle class="log-expand" :class="{ hidden: !hasLog }" id="btn-team-expand"
+                title="放大查看" @click="openLog">
         <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9" /><polyline points="9 21 3 21 3 15" /><line x1="21" y1="3" x2="14" y2="10" /><line x1="3" y1="21" x2="10" y2="14" /></svg>
-      </button>
+      </el-button>
     </div>
   </section>
 
@@ -313,29 +317,29 @@ onMounted(async () => {
         <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2Z" /></svg>
         人工介入 · 追问与纠偏
       </h2>
-      <button class="fold-btn" title="折叠 / 展开" @click="toggleFold('team-intervene-panel')">
+      <el-button text circle class="fold-btn" title="折叠 / 展开" @click="toggleFold('team-intervene-panel')">
         <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9" /></svg>
-      </button>
+      </el-button>
       <span class="muted" id="team-intervene-hint">{{ interveneHint }}</span>
     </div>
     <div class="run-form">
       <label class="field-inline">
         <span>发给</span>
-        <select id="team-intervene-agent" v-model="interveneAgent">
-          <option value="*">全部角色</option>
-          <option value="planner">🧭 决策官</option>
-          <option value="coder">⌨️ 编码工程师</option>
-          <option value="tester">🧪 测试工程师</option>
-          <option value="reviewer">🔍 复核官</option>
-        </select>
+        <el-select id="team-intervene-agent" v-model="interveneAgent">
+          <el-option value="*" label="全部角色" data-value="*" />
+          <el-option value="planner" label="🧭 决策官" data-value="planner" />
+          <el-option value="coder" label="⌨️ 编码工程师" data-value="coder" />
+          <el-option value="tester" label="🧪 测试工程师" data-value="tester" />
+          <el-option value="reviewer" label="🔍 复核官" data-value="reviewer" />
+        </el-select>
       </label>
       <label class="field-inline grow">
         <span>指令内容</span>
-        <input type="text" id="team-intervene-text" v-model="interveneText"
-               placeholder="例如：不要新建工具文件，直接改 src/utils/request.ts；迁移顺序先把 api 层做完再做页面"
-               @keydown.enter.exact.prevent="sendMessage()">
+        <el-input type="text" id="team-intervene-text" v-model="interveneText"
+                  placeholder="例如：不要新建工具文件，直接改 src/utils/request.ts；迁移顺序先把 api 层做完再做页面"
+                  @keydown.enter.exact.prevent="sendMessage()" />
       </label>
-      <button class="btn-primary" id="btn-team-send" :disabled="!canIntervene" @click="sendMessage()">发送</button>
+      <el-button type="primary" id="btn-team-send" :disabled="!canIntervene" @click="sendMessage()">发送</el-button>
     </div>
     <div id="team-intervene-list" class="team-intervene-list">
       <div v-if="!interventions.length" class="empty">还没有人工指令。跑的过程中发现某个子 Agent 方向不对，随时在这里纠正它。</div>
@@ -363,14 +367,14 @@ onMounted(async () => {
         历史作业
         <span class="count-badge" :class="{ hidden: !runs.length }" id="team-history-count">{{ runs.length }}</span>
       </h2>
-      <button class="fold-btn" title="折叠 / 展开" @click="toggleFold('team-history-panel')">
+      <el-button text circle class="fold-btn" title="折叠 / 展开" @click="toggleFold('team-history-panel')">
         <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9" /></svg>
-      </button>
+      </el-button>
     </div>
     <div id="team-history" class="proposal-grid">
       <div v-if="runsError" class="empty">历史作业加载失败: {{ runsError }}</div>
       <div v-else-if="!runs.length" class="empty">还没有作业记录。跑一次之后，计划、每个角色的动作轨迹与人工介入都会留在这里。</div>
-      <div v-for="x in runs" :key="x.id" class="pcard" :class="`pc-${runCls(x)}`" @click="onRunClick(x.id)">
+      <el-card shadow="never" v-for="x in runs" :key="x.id" class="pcard" :class="`pc-${runCls(x)}`" @click="onRunClick(x.id)">
         <div class="pcard-top">
           <span class="st" :class="`st-${runCls(x)}`">{{ RUN_STATUS[x.status] || x.status || '—' }}</span>
           <span v-if="x.running" class="team-running-chip">运行中</span>
@@ -386,7 +390,7 @@ onMounted(async () => {
         </div>
         <div v-if="x.error" class="pcard-root" style="color:var(--danger)">{{ x.error }}</div>
         <div v-else-if="x.summary" class="pcard-root">{{ x.summary }}</div>
-      </div>
+      </el-card>
     </div>
     <p class="panel-note">点开任意一次作业可以回看它的计划、每个角色的动作轨迹与人工介入记录（不含大模型逐字输出——那部分体量太大，不落盘）。</p>
   </section>

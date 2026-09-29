@@ -39,7 +39,10 @@ def run():
 
         # ---- 1. 更新日志：①②③ 分点各自一行 ----
         pg.click("#changelog-btn") if pg.locator("#changelog-btn").count() else None
-        pg.wait_for_selector("#chmodal:not(.hidden)", timeout=8000)
+        # 等「真的弹出来」要看对话框本体：#chmodal 只是常驻壳（承载稳定 id 与
+        # hidden 语义），el-dialog 的 overlay 是 position:fixed，不撑开父盒，
+        # 所以那个壳的 bounding box 恒为 0 高，Playwright 判它不可见。
+        pg.wait_for_selector("#chmodal .el-dialog", timeout=8000)
         pg.wait_for_selector(".ch-item", timeout=8000)
         nums = pg.evaluate("""() => {
           const els = [...document.querySelectorAll('.ch-val .ch-para.num')];

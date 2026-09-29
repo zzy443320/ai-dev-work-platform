@@ -82,7 +82,7 @@ def main():
 
             print("\n[1] gate_failed 的按钮态")
             page.locator(f'#proposals .pcard[onclick*="{pid}"]').first.click()
-            page.wait_for_selector("#pmodal:not(.hidden)", timeout=10000)
+            page.wait_for_selector("#pmodal .el-dialog", timeout=10000)
             check("普通采纳按钮置灰", page.locator("#btn-approve").is_disabled())
             check("强制采纳按钮可见", page.is_visible("#btn-force"))
             check("风险勾选框可见", page.is_visible("#force-confirm"))
@@ -93,9 +93,13 @@ def main():
             print("\n[2] 不勾选就点强制采纳 -> 应被拒且不改仓库")
             page.click("#btn-force")
             page.wait_for_timeout(1500)
-            check("出现必须勾选的提示",
-                  "勾选" in page.inner_text("#toast") or "知悉" in page.inner_text("#toast"),
-                  page.inner_text("#toast"))
+            # 提示已由 Element Plus 的 ElMessage 承载（旧版是个常驻的 #toast 节点，
+            # 迁移后节点已退场，见 composables/useToast.js）。ElMessage 默认 3s 自动
+            # 关闭，上面只等了 1.5s，这里再等节点出现即可，不会扑空。
+            page.wait_for_selector(".el-message", timeout=8000)
+            tip = page.eval_on_selector_all(
+                ".el-message", "els => els.map(e => e.innerText).join(' | ')")
+            check("出现必须勾选的提示", "勾选" in tip or "知悉" in tip, tip)
             check("仓库未被改动", git("log", "--oneline") == "f6fc53a init")
 
             print("\n[3] 勾选后强制采纳 -> 写盘（不 commit），且标注 forced")
@@ -128,7 +132,7 @@ def main():
                   not page.is_visible("#repo-banner") or "未提交" not in page.inner_text("#repo-banner"),
                   page.inner_text("#repo-banner")[:110])
             page.locator(f'#proposals .pcard[onclick*="{newpid}"]').first.click()
-            page.wait_for_selector("#pmodal:not(.hidden)", timeout=10000)
+            page.wait_for_selector("#pmodal .el-dialog", timeout=10000)
             check("弹窗内没有预检告警", "仓库预检未通过" not in page.inner_text("#pmodal"))
             page.screenshot(path=str(SHOTS / "ui_dirty_banner.png"), full_page=True)
             check("无 pageerror", not errors, str(errors[:2])[:200])

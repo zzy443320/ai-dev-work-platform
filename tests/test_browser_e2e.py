@@ -90,7 +90,7 @@ def main():
 
         print("\n[3] 打开新提案")
         page.locator(f'#proposals .pcard[onclick*="{pid}"]').first.click()
-        page.wait_for_selector("#pmodal:not(.hidden)", timeout=10000)
+        page.wait_for_selector("#pmodal .el-dialog", timeout=10000)
         check("详情弹窗打开", page.is_visible("#pmodal"))
         txt = page.inner_text("#pmodal")
         check("有根因", "根因" in txt)
@@ -129,7 +129,7 @@ def main():
         page.reload(wait_until="networkidle")
         page.wait_for_selector("#proposals .pcard", timeout=20000)
         page.locator(f'#proposals .pcard[onclick*="{pid}"]').first.click()
-        page.wait_for_selector("#pmodal:not(.hidden)", timeout=10000)
+        page.wait_for_selector("#pmodal .el-dialog", timeout=10000)
         check("已采纳后出现撤销按钮", page.locator("#btn-undo").count() == 1
               and page.is_visible("#btn-undo"))
         check("已采纳后采纳/拒绝按钮被隐藏",

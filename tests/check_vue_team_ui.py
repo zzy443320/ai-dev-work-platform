@@ -39,6 +39,8 @@ sys.path.insert(0, str(ROOT))
 
 from playwright.sync_api import sync_playwright      # noqa: E402
 
+from ui_select import el_select_values               # noqa: E402
+
 OK, BAD = [], []
 
 
@@ -172,9 +174,10 @@ def run(base: str, *, errors: list) -> None:
             names = [c.inner_text() for c in cards]
             for want in ("决策官", "编码工程师", "测试工程师", "复核官"):
                 check(f"看板含角色「{want}」", any(want in n for n in names))
-        opts = page.eval_on_selector_all("#team-filter option", "els => els.map(e => e.value)")
+        # #team-filter 已迁 el-select：选项列表惰性渲染，用助手点开读 data-value
+        opts = el_select_values(page, "#team-filter")
         check("时间线筛选按角色填充（all + 4）",
-              opts[:1] == ["all"] and len(opts) >= 5, str(opts))
+              opts and opts[0][0] == "all" and len(opts) >= 5, str(opts))
 
         # ── 5. 跑一次作业（Mock，秒级完成）：点真实「开始作业」按钮 ──
         page.fill("#team-title", "UI 自检 · 旧表格组件迁移")

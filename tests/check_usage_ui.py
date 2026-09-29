@@ -2,12 +2,14 @@
 """UI 检查：统计面板（第一个页签）+ token 用量图表。
 
 覆盖：
-1. 统计面板是**第一个页签**且为默认落地页（`.tab` 首位、pane-stats 带 active）；
+1. 统计面板是**第一个页签**且为默认落地页（`.el-tabs__item` 首位、pane-stats 带 active）；
 2. 五张汇总卡片（区间/今天/本周/本月/累计）数值与 `/api/usage/report` 完全一致——
    断言的是 DOM 事实，顺带兜住 `NaN` / `undefined` 这类渲染事故；
-3. 趋势图按粒度画堆叠柱（输入+输出），柱子数 == 分桶数；空桶也有存在感；
+3. 趋势图按粒度画堆叠柱（输入+输出），柱子数 == 分桶数；空桶也有存在感
+   ——图表由 ECharts 绘制（见 components/EChart.vue），断言走图表宿主节点上的
+   `__probe` / `__ec` 契约，不比 SVG 路径坐标；
 4. 「按任务类型」横向条数量 == 类型数，且标签走中文（KIND_LABELS 同源）；
-5. 「按模型」环形图（多模型走弧线、单模型走整环降级）；
+5. 「按模型」环形图扇区数 == 模型数（单模型时也是整环一个扇区）；
 6. 「单任务消耗」排行表按合计降序，第一名就是账本里最费 token 的任务；
 7. 最近调用明细带「估算 / 失败」角标；
 8. 粒度（日/周/月）与区间（7/30/90/365）分段控件真的重新取数并写入 localStorage，
@@ -137,6 +139,24 @@ def api(base: str, path: str) -> dict:
         return json.loads(r.read().decode("utf-8"))
 
 
+# 趋势图的刻度数：从图表宿主节点的 __probe 读（契约见 components/EChart.vue 头部）。
+# 图表组件是异步 chunk，未挂载时返回 -1 —— 调用方要显式等 `>= 0`。
+TREND_ROWS_JS = ("(() => { const el = document.querySelector('#usage-trend .echart-host');"
+                 " return el && el.__probe ? el.__probe.rows.length : -1; })()")
+
+
+def chart_ready(page) -> bool:
+    """等两张 ECharts 图挂载完成（异步 chunk + 数据回来后才有 __ec / __probe）。"""
+    try:
+        return bool(page.wait_for_function(
+            "() => { const t = document.querySelector('#usage-trend .echart-host');"
+            " const d = document.querySelector('#usage-models .echart-host');"
+            " return !!(t && t.__ec && t.__probe && d && d.__ec && d.__probe); }",
+            timeout=15000))
+    except Exception:
+        return False
+
+
 # ------------------------------------------------------------------- 断言
 def run(base: str, seeded: bool) -> None:
     rep = api(base, "/api/usage/report?days=30&granularity=day")
@@ -162,10 +182,14 @@ def run(base: str, seeded: bool) -> None:
         page.wait_for_timeout(1200)
 
         # ── 1. 第一个页签 + 默认落地 ──
-        order = page.evaluate("() => [...document.querySelectorAll('.tab')].map(t => t.dataset.tab)")
+        # 页签已换成 <el-tabs>：导航项 id 是 `tab-<name>`（Element 的约定），
+        # 活动态是 is-active（旧版是 .tab + data-tab + active）。
+        order = page.evaluate(
+            "() => [...document.querySelectorAll('.el-tabs__item')]"
+            ".map(t => (t.id || '').replace(/^tab-/, ''))")
         check("统计是第一个页签", order and order[0] == "stats", str(order))
         check("默认落在统计面板",
-              "active" in (page.get_attribute('.tab[data-tab="stats"]', "class") or ""))
+              "is-active" in (page.get_attribute('#tab-stats', "class") or ""))
         check("pane-stats 是可见的活动页",
               page.eval_on_selector("#pane-stats",
                                     "el => el.classList.contains('active') && "
@@ -209,23 +233,33 @@ def run(base: str, seeded: bool) -> None:
 
         # ── 4. 趋势图 ──
         if tot["total"]:
-            bars = page.eval_on_selector_all("#usage-trend .usage-bar",
-                                             "els => els.length")
-            check("趋势柱子数 = 分桶数", bars == len(rep["buckets"]),
-                  f"DOM={bars} API={len(rep['buckets'])}")
+            check("图表挂载完成（ECharts 异步 chunk 已就绪）", chart_ready(page))
+            bars = page.evaluate(TREND_ROWS_JS)
+            check("趋势刻度数 = 分桶数", bars == len(rep["buckets"]),
+                  f"图={bars} API={len(rep['buckets'])}")
             check("趋势图有输入/输出图例",
                   page.eval_on_selector_all("#usage-trend .usage-legend span",
                                             "els => els.length") == 2)
-            check("趋势图是手绘 SVG（无第三方图表库依赖）",
-                  page.eval_on_selector("#usage-trend", "el => !!el.querySelector('svg')"))
+            check("趋势图由 ECharts 绘制（SVG 渲染器，两个系列）",
+                  page.evaluate("""() => {
+                    const el = document.querySelector('#usage-trend .echart-host');
+                    if (!el || !el.__ec) return null;
+                    const o = el.__ec.getOption();
+                    return { svg: !!el.querySelector('svg'),
+                             names: (o.series || []).map(s => s.name),
+                             lens: (o.series || []).map(s => (s.data || []).length) };
+                  }""") == {"svg": True, "names": ["输入", "输出"],
+                            "lens": [len(rep["buckets"])] * 2})
             meta = page.inner_text("#usage-trend-meta")
             check("趋势标题写明粒度与刻度数",
                   "每天" in meta and "刻度" in meta and "峰值" in meta, meta)
-            # 悬停提示带真实数值（<title> 是 SVG tooltip）：取峰值那根柱子来验，
-            # 空桶也要有提示（否则「有断档」这件事在界面上无从察觉）
-            tips = page.eval_on_selector_all(
-                "#usage-trend .usage-bar",
-                "els => els.map(e => e.querySelector('title').textContent)")
+            # tooltip 文案由组件算好交给 ECharts 的 formatter（不是 SVG <title> 了），
+            # 空桶也必须有提示，否则「有断档」这件事在界面上无从察觉
+            tips = page.evaluate(
+                "() => { const el = document.querySelector('#usage-trend .echart-host');"
+                " return el && el.__probe ? el.__probe.rows.map(r => r.tip) : null; }")
+            check("每根柱都有 tooltip 文案", tips is not None and len(tips) == 30,
+                  str(len(tips) if tips else tips))
             peak_i = max(range(len(rep["buckets"])),
                          key=lambda i: rep["buckets"][i]["total"])
             peak = rep["buckets"][peak_i]
@@ -266,13 +300,23 @@ def run(base: str, seeded: bool) -> None:
         if rep["models"]:
             check("模型环形图存在",
                   page.eval_on_selector("#usage-models", "el => !!el.querySelector('.usage-donut')"))
-            paths = page.eval_on_selector_all("#usage-models .usage-donut path",
-                                              "els => els.length")
-            if len(rep["models"]) == 1:
-                check("单模型时降级为整环（不画 0 度弧）", paths == 0)
-            else:
-                check("多模型时弧数 = 模型数", paths == len(rep["models"]),
-                      f"DOM={paths} API={len(rep['models'])}")
+            sectors = page.evaluate("""() => {
+              const el = document.querySelector('#usage-models .echart-host');
+              if (!el || !el.__ec) return null;
+              const s = (el.__ec.getOption().series || [])[0] || {};
+              return { n: (s.data || []).length,
+                       names: (s.data || []).map(d => d.name),
+                       total: (el.__probe || {}).total };
+            }""")
+            # 旧版单模型要特判「整环」（arc 首尾重合会退化成空路径），ECharts 天然支持，
+            # 所以这里不再分叉：一律「扇区数 = 模型数」。
+            check("环形图扇区数 = 模型数（按合计降序）",
+                  bool(sectors) and sectors["n"] == len(rep["models"])
+                  and sectors["names"] == [m["key"] for m in rep["models"]],
+                  f"图={sectors and sectors['n']} API={len(rep['models'])}")
+            check("环形图扇区合计 = 区间合计",
+                  bool(sectors) and sectors["total"] == tot["total"],
+                  f"图={sectors and sectors['total']} API={tot['total']}")
             legend = page.eval_on_selector_all("#usage-models .usage-donut-legend div",
                                                "els => els.map(e => e.textContent)")
             check("环形图例含模型名与占比", len(legend) == len(rep["models"]),
@@ -334,9 +378,9 @@ def run(base: str, seeded: bool) -> None:
               "active" in (page.get_attribute('#usage-gran .seg-btn[data-g="week"]', "class") or ""))
         rep_w = api(base, "/api/usage/report?days=30&granularity=week")
         if rep_w["buckets"] and tot["total"]:
-            n_bars = page.eval_on_selector_all("#usage-trend .usage-bar", "els => els.length")
-            check("切「周」后柱子数 = 周分桶数", n_bars == len(rep_w["buckets"]),
-                  f"DOM={n_bars} API={len(rep_w['buckets'])}")
+            n_bars = page.evaluate(TREND_ROWS_JS)
+            check("切「周」后刻度数 = 周分桶数", n_bars == len(rep_w["buckets"]),
+                  f"图={n_bars} API={len(rep_w['buckets'])}")
             check("趋势标题改口为「每周」", "每周" in page.inner_text("#usage-trend-meta"))
 
         page.click('#usage-range .seg-btn[data-d="7"]')
@@ -365,9 +409,9 @@ def run(base: str, seeded: bool) -> None:
               and "active" in (page.get_attribute('#usage-range .seg-btn[data-d="7"]', "class") or ""))
 
         # 切到别的页签再回来，不应该报错/丢数据
-        page.click('.tab[data-tab="defect"]')
+        page.click('#tab-defect')
         page.wait_for_timeout(400)
-        page.click('.tab[data-tab="stats"]')
+        page.click('#tab-stats')
         page.wait_for_timeout(900)
         check("来回切页签后统计面板仍正常渲染",
               page.eval_on_selector_all("#usage-cards .usage-card", "els => els.length") == 5)

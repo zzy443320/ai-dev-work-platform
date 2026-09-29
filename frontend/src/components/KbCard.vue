@@ -1,6 +1,6 @@
 <script setup>
 // 知识库卡片（模式 / 缺陷卡两种形态）。
-// 旧版 app.js:788（`loadPatterns` 里的 pattern 卡）与 app.js:860（`loadCards`）的等价复刻。
+// 旧版 app.js:788（loadPatterns 里的 pattern 卡）与 app.js:860（loadCards）的等价复刻。
 import { computed } from 'vue'
 import { gateBadge, statusBadge } from '../utils/labels.js'
 
@@ -23,6 +23,20 @@ const cardTime = computed(() =>
   String((props.item.updated || props.item.created) || '').slice(0, 16).replace('T', ' ')
 )
 
+// 状态 / 分类小胶囊迁移到 <el-tag>（见 ProposalCard 的同款说明）。
+const STATUS_TAG_TYPE = {
+  pending: 'warning', gate_failed: 'danger', invalid: 'info',
+  applied: 'success', apply_failed: 'danger', rejected: 'info',
+}
+const statusType = computed(() => {
+  const s = props.item.status === 'proposed' ? 'pending' : (props.item.status || 'pending')
+  return STATUS_TAG_TYPE[s] || 'info'
+})
+const gateType = computed(() => {
+  const map = { explicit: 'success', package_json: 'primary', degraded: 'warning', none: 'info' }
+  return map[props.item.gate_level] || 'info'
+})
+
 function openProposal(ev, id) {
   // 底部的「查看提案」链接：别让点击冒泡到卡片（旧版是 onclick + stopPropagation）
   if (ev) ev.stopPropagation()
@@ -37,9 +51,16 @@ function open() {
 
 <template>
   <!-- 模式卡 -->
-  <div v-if="view === 'pattern'" class="kb-card pattern" :class="{ hot: isHot }" @click="open">
+  <el-card
+    v-if="view === 'pattern'"
+    shadow="never"
+    class="kb-card pattern"
+    :class="{ hot: isHot }"
+    :body-style="{ padding: '0' }"
+    @click="open"
+  >
     <div class="kb-meta">
-      <span class="kb-cat">模式</span>
+      <el-tag effect="light" round>模式</el-tag>
       <span class="kb-rep" :class="{ hot: isHot }">复发 {{ rep }} 次</span>
     </div>
     <div class="kb-title">{{ item.name || item.id }}</div>
@@ -49,22 +70,28 @@ function open() {
       <span v-if="item.applied" class="kb-status ok">已采纳 {{ item.applied }}</span>
       <span v-else class="kb-status skipped">尚无采纳案例</span>
     </div>
-  </div>
+  </el-card>
 
   <!-- 缺陷卡（兜底分支，必须排在最后） -->
-  <div v-else class="kb-card" @click="open">
+  <el-card
+    v-else
+    shadow="never"
+    class="kb-card"
+    :body-style="{ padding: '0' }"
+    @click="open"
+  >
     <div class="kb-meta">
-      <span class="kb-cat">{{ item.category }}</span>
+      <el-tag effect="light" round>{{ item.category }}</el-tag>
       <span>{{ item.priority || '—' }}</span>
     </div>
     <div class="kb-title">{{ item.title || item.id }}</div>
     <div class="kb-footer">
       <span class="kb-id">{{ item.id }}</span>
-      <span :class="st.cls">{{ st.text }}</span>
-      <span v-if="gb" :class="gb.cls">{{ gb.text }}</span>
+      <el-tag :type="statusType" effect="light" round>{{ st.text }}</el-tag>
+      <el-tag v-if="gb" :type="gateType" effect="light" round>{{ gb.text }}</el-tag>
       <span v-if="item.commit" class="sha">{{ item.commit }}</span>
       <a v-if="item.proposal_id" class="link" @click="openProposal($event, item.proposal_id)">查看提案</a>
       <span>{{ timeText }}</span>
     </div>
-  </div>
+  </el-card>
 </template>

@@ -1,0 +1,318 @@
+/* ---------------------------------------------------------------------------
+ * Element Plus × 项目设计系统 的桥接层
+ *
+ * 为什么需要这一层：项目原有的视觉全在 web/static/style.css 的 CSS 变量里
+ * （--bg / --panel / --border / --text / --primary ...），而 Element Plus 有自己
+ * 一套 --el-* 变量。如果两套各说各话，就会出现「面板是暗的、按钮是亮的」，
+ * 而且换风格（data-style）时只有一半界面跟着变。
+ *
+ * 这里做三件事：
+ *   1. **变量互通** —— 把 --el-* 映射到项目变量，控制权留在项目这一侧；
+ *   2. **观感对齐** —— Element 默认是 4px 圆角 / 14px 字 / 实心灰底，跟项目的
+ *      10px 圆角、13px 字、半透明面板不一致，逐个组件调回来；
+ *   3. **明暗修正** —— Element 的暗色主题自带一套很暗的底色，跟项目的玻璃感
+ *      差得远，这里用项目变量压回去。
+ *
+ * 加载顺序：暗色变量表（element-plus/theme-chalk/dark/css-vars.css）与本文件都在
+ * main.js 里显式 import，且**暗色表在前、本文件在后** —— 同权重规则靠后的生效，
+ * 顺序写反了暗色模式就会一片错色。自定义属性（--el-*）由 useTheme 以 inline style
+ * 写在 <html> 上，优先级最高，这里只提供兜底与结构类变量。
+ * ------------------------------------------------------------------------- */
+
+/* ===== 1. 变量互通 ===== */
+/* 选择器同时写上 html.dark 与 html:not(.dark)，因为 Element 的暗色变量定义在
+   html.dark 里（元素+类 = 0,1,1），只写 :root 会被它盖掉。 */
+:root,
+html.dark,
+html:not(.dark) {
+  /* 形状与字号：对齐项目的紧凑观感 */
+  --el-border-radius-base: 10px;
+  --el-border-radius-small: 8px;
+  --el-border-radius-round: 20px;
+  --el-font-size-base: 13px;
+  --el-font-size-small: 12px;
+  --el-font-size-extra-small: 11px;
+  --el-font-size-large: 15px;
+  --el-font-family: inherit;
+
+  /* 强调色（兜底；实际值由 useTheme 按风格 inline 写） */
+  --el-color-primary: var(--primary);
+  --el-color-success: var(--success);
+  --el-color-warning: var(--warn);
+  --el-color-danger: var(--danger);
+  --el-color-error: var(--danger);
+  --el-color-info: var(--muted);
+
+  /* 表面 / 文字 / 边框 */
+  --el-bg-color: var(--panel-solid);
+  --el-bg-color-page: var(--bg);
+  --el-bg-color-overlay: var(--panel-solid);
+  --el-text-color-primary: var(--text);
+  --el-text-color-regular: var(--text-dim);
+  --el-text-color-secondary: var(--muted);
+  --el-text-color-placeholder: var(--muted);
+  --el-text-color-disabled: var(--muted);
+  --el-border-color: var(--border);
+  --el-border-color-light: var(--border);
+  --el-border-color-lighter: var(--border);
+  --el-border-color-extra-light: var(--border);
+  --el-border-color-dark: var(--border-strong);
+  --el-border-color-darker: var(--border-strong);
+  --el-border-color-hover: var(--border-strong);
+  --el-fill-color: var(--input-bg);
+  --el-fill-color-light: var(--input-bg);
+  --el-fill-color-lighter: var(--panel);
+  --el-fill-color-extra-light: var(--panel);
+  --el-fill-color-blank: var(--input-bg);
+  --el-disabled-bg-color: var(--input-bg);
+  --el-box-shadow: var(--shadow);
+  --el-box-shadow-light: var(--shadow);
+  --el-box-shadow-lighter: var(--shadow);
+  --el-mask-color: rgba(6, 10, 20, 0.66);
+  --el-overlay-color-lighter: rgba(6, 10, 20, 0.66);
+
+  /* 弹窗 */
+  --el-dialog-bg-color: var(--panel-solid);
+  --el-dialog-border-radius: 16px;
+  --el-dialog-box-shadow: var(--shadow);
+  --el-dialog-padding-primary: 18px;
+  --el-dialog-title-font-size: 15px;
+  --el-dialog-content-font-size: 13px;
+
+  /* 表格：沿用项目的玻璃面板观感，不要 Element 的实心灰 */
+  --el-table-bg-color: transparent;
+  --el-table-tr-bg-color: transparent;
+  --el-table-header-bg-color: var(--panel);
+  --el-table-header-text-color: var(--text-dim);
+  --el-table-text-color: var(--text);
+  --el-table-border-color: var(--border);
+  --el-table-border: 1px solid var(--border);
+  --el-table-row-hover-bg-color: var(--primary-soft);
+  --el-table-current-row-bg-color: var(--primary-soft);
+
+  /* 折叠面板 / 卡片 */
+  --el-collapse-border-color: var(--border);
+  --el-collapse-header-bg-color: transparent;
+  --el-collapse-content-bg-color: transparent;
+  --el-collapse-header-text-color: var(--text);
+  --el-collapse-content-text-color: var(--text-dim);
+  --el-card-bg-color: var(--panel);
+  --el-card-border-color: var(--border);
+
+  /* 页签 */
+  --el-tabs-header-height: 40px;
+
+  /* 消息提示 */
+  --el-message-bg-color: var(--panel-solid);
+  --el-message-border-color: var(--border);
+  --el-message-text-color: var(--text);
+}
+
+/* ===== 2. 组件观感对齐 ===== */
+
+/* 卡片：项目的 .panel 是半透明 + 模糊，el-card 默认是实心 */
+.el-card {
+  backdrop-filter: blur(10px);
+  --el-card-padding: 14px;
+}
+
+/* 弹窗：贴项目的圆角与描边；暗色下 Element 会加一层很暗的底，这里交回项目变量 */
+.el-dialog {
+  border: 1px solid var(--border);
+  backdrop-filter: blur(14px);
+}
+.el-dialog__header {
+  margin-right: 0;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+.el-dialog__title {
+  font-weight: 700;
+  color: var(--text);
+}
+.el-dialog__body {
+  padding-top: 14px;
+  color: var(--text);
+}
+.el-dialog__footer {
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.el-overlay {
+  backdrop-filter: blur(2px);
+}
+
+/* 表格：表头加一条底线、去掉外框，和项目原来的 .usage-table 观感一致 */
+.el-table {
+  background: transparent;
+}
+.el-table th.el-table__cell {
+  font-weight: 600;
+  font-size: 11.5px;
+  letter-spacing: 0.4px;
+}
+.el-table td.el-table__cell,
+.el-table th.el-table__cell {
+  padding: 9px 0;
+}
+.el-table::before,
+.el-table--border::after {
+  background-color: var(--border);
+}
+.el-table .cell {
+  font-size: 12.5px;
+}
+
+/* 页签：分段胶囊（segmented control）——导航条做成一整条凹槽，活动页签是
+   浮起的小胶囊。比下划线式更有「面板感」，也让顶部结构与下方卡片呼应。 */
+.el-tabs__header {
+  margin-bottom: 14px;
+}
+.el-tabs__nav-wrap::after {
+  display: none;
+}
+#tabs.el-tabs > .el-tabs__header .el-tabs__nav {
+  padding: 3px;
+  background: var(--input-bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+.el-tabs__item {
+  font-size: 13px;
+  color: var(--text-dim);
+  height: 34px;
+  line-height: 34px;
+  border-radius: 9px;
+  transition: color .18s, background-color .18s, box-shadow .18s;
+}
+.el-tabs__item:hover {
+  color: var(--text);
+}
+.el-tabs__item.is-active {
+  color: var(--primary);
+  font-weight: 600;
+  background: var(--panel-solid);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.10);
+}
+.el-tabs__active-bar {
+  display: none;
+}
+
+/* 步骤条：对齐项目流程条的尺寸，状态色沿用主题语义色 */
+.el-steps {
+  --el-text-color-placeholder: var(--text-dim);
+}
+.el-step__title {
+  font-size: 13px;
+  font-weight: 600;
+}
+.el-step__description {
+  font-size: 11px;
+}
+.el-step__icon {
+  width: 24px;
+  height: 24px;
+  font-size: 12px;
+}
+
+/* 输入类控件：项目原来是半透明底 + 细描边。
+   描边统一走 --input-border（暗色 17% 白）：通用 --border(9%) 在暗色下面板里
+   几乎不可见，输入框会糊成一块「死黑圆角块」；聚焦再加一圈主色软光环。 */
+.el-input__wrapper,
+.el-textarea__inner,
+.el-select__wrapper {
+  background-color: var(--input-bg);
+  box-shadow: 0 0 0 1px var(--input-border) inset;
+}
+.el-input__wrapper:hover,
+.el-textarea__inner:hover,
+.el-select__wrapper:hover:not(.is-focused) {
+  box-shadow: 0 0 0 1px var(--input-border-hover) inset;
+}
+.el-input__wrapper.is-focus,
+.el-input__wrapper:focus-within,
+.el-textarea__inner:focus,
+.el-select__wrapper.is-focused {
+  box-shadow: 0 0 0 1px var(--primary) inset, 0 0 0 3px var(--primary-soft);
+}
+.el-textarea__inner {
+  font-family: ui-monospace, 'SF Mono', Consolas, monospace;
+  line-height: 1.6;
+  border-radius: 10px;
+}
+.el-textarea__inner:focus {
+  outline: none;
+}
+
+/* 下拉面板 / 弹出层：统一圆角与描边。
+   注意只给 .el-popper 一层描边：el-select 的选项列表 popper 本身自带 1px 边框，
+   再给内层 .el-select-dropdown 加一圈就是「框里套框」（用户实测反馈过）。 */
+.el-select__wrapper {
+  min-height: 34px;
+}
+.el-select__wrapper.is-focused {
+  box-shadow: 0 0 0 1px var(--primary) inset, 0 0 0 3px var(--primary-soft);
+}
+.el-popper.is-light {
+  border: 1px solid var(--border);
+  background: var(--panel-solid);
+  border-radius: 10px;
+}
+/* 选中/悬停的选项底色做成内收的小圆角条，不再是一整条方块 */
+.el-select-dropdown__item {
+  border-radius: 8px;
+  margin: 0 6px;
+}
+.el-select-dropdown__item.is-selected {
+  color: var(--primary);
+  font-weight: 600;
+}
+
+/* 分页：与项目的 .prop-pager 视觉一致 */
+.el-pagination {
+  --el-pagination-bg-color: transparent;
+  --el-pagination-button-bg-color: transparent;
+  --el-pagination-text-color: var(--text-dim);
+  --el-pagination-hover-color: var(--primary);
+  font-size: 12.5px;
+}
+.el-pagination .el-pager li.is-active {
+  background: var(--primary);
+  color: #fff;
+}
+
+/* 消息提示：项目的 #toast 是浮在右上角的胶囊 */
+.el-message {
+  border: 1px solid var(--border);
+  backdrop-filter: blur(12px);
+  border-radius: 12px;
+}
+
+/* 空态 / 加载遮罩 */
+.el-empty__description p {
+  color: var(--muted);
+}
+.el-loading-mask {
+  background-color: var(--el-mask-color);
+}
+
+/* 标签：项目原来的小胶囊 */
+.el-tag {
+  border-radius: 20px;
+  font-weight: 600;
+  font-size: 11px;
+  border-color: transparent;
+}
+
+/* 折叠面板标题：项目原来的 .panel-head 也是这种密度 */
+.el-collapse-item__header {
+  font-size: 13px;
+  font-weight: 600;
+  gap: 8px;
+}
+
+/* 开关 */
+.el-switch.is-checked .el-switch__core {
+  border-color: var(--primary);
+  background-color: var(--primary);
+}

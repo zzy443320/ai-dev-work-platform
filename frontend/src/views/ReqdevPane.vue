@@ -8,6 +8,10 @@
 // #figma-tree 是 v-html（.log-title / .info-note / .log-html 三段结构），
 // 空态靠 style.css 的 `#figma-tree:empty::before` 显示 data-placeholder ——
 // 所以空的时候 <pre> 里一个子节点都不能有，拉取失败时才退回纯文本。
+//
+// 迁移说明：文本/密码 input 与 textarea 换成 el-input，框架下拉换成 el-select，
+// 按钮换成 el-button。Figma 取稿通道的 .seg 分段按钮保持原生：界面用例直接点击
+// #req-figma-mode .seg-btn[data-mode='browser']，el-radio-button 改结构会让选择器失效。
 import { useTasks } from '../composables/useTasks.js'
 import { useFold } from '../composables/useFold.js'
 
@@ -31,8 +35,9 @@ const { isCollapsed, toggleFold } = useFold()
     <div class="run-form">
       <label class="field-inline grow">
         <span>Figma 设计稿链接（可带 node-id，定位到具体画板）</span>
-        <input type="text" id="req-figma-url" v-model="figmaUrl" placeholder="https://www.figma.com/design/xxxx/文件名?node-id=12-34">
+        <el-input id="req-figma-url" v-model="figmaUrl" placeholder="https://www.figma.com/design/xxxx/文件名?node-id=12-34" />
       </label>
+      <!-- 分段按钮保持原生：page.click('#req-figma-mode .seg-btn[data-mode=...]') -->
       <div class="seg" id="req-figma-mode">
         <button type="button" class="seg-btn" :class="{ active: figmaMode === 'token' }"
                 data-mode="token" @click="setFigmaMode('token')">Token</button>
@@ -41,24 +46,24 @@ const { isCollapsed, toggleFold } = useFold()
       </div>
       <label class="field-inline" id="req-figma-token-field" :class="{ hidden: figmaMode === 'browser' }">
         <span>Figma Token（留空=用已保存）</span>
-        <input type="password" id="req-figma-token" v-model="figmaToken" placeholder="留空则用设置里的" autocomplete="off">
+        <el-input id="req-figma-token" type="password" v-model="figmaToken" placeholder="留空则用设置里的" autocomplete="off" />
       </label>
       <label class="field-inline">
         <span>技术栈</span>
-        <select id="req-framework" v-model="reqFramework">
-          <option>React + TypeScript</option>
-          <option>Vue 3 + TypeScript</option>
-          <option>React + JavaScript</option>
-          <option>Vue 2 + JavaScript</option>
-          <option>小程序原生</option>
-          <option>uni-app</option>
-        </select>
+        <el-select id="req-framework" v-model="reqFramework">
+          <el-option value="React + TypeScript" label="React + TypeScript" />
+          <el-option value="Vue 3 + TypeScript" label="Vue 3 + TypeScript" />
+          <el-option value="React + JavaScript" label="React + JavaScript" />
+          <el-option value="Vue 2 + JavaScript" label="Vue 2 + JavaScript" />
+          <el-option value="小程序原生" label="小程序原生" />
+          <el-option value="uni-app" label="uni-app" />
+        </el-select>
       </label>
-      <button class="btn-ghost" id="btn-figma" :disabled="fetching"
+      <el-button class="btn-ghost" id="btn-figma" :disabled="fetching"
               title="只读拉取 Figma 设计稿结构，供 AI 参考" @click="fetchFigma()">
         <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg>
         {{ fetching ? '拉取中…' : '拉取设计稿' }}
-      </button>
+      </el-button>
     </div>
     <div class="info-note" id="req-figma-hint">Figma 官方接口只认 Personal Access Token（没有账号密码登录通道）。<br>没配 Token 也可以切到「浏览器打开」：用本机浏览器（含已登录的 Figma 会话）打开设计稿，只能拿到页面可见文案，<strong>拿不到图层结构</strong>，还原度会明显偏低。</div>
     <!-- 空态走 :empty 占位；失败时退回纯文本 -->
@@ -66,18 +71,18 @@ const { isCollapsed, toggleFold } = useFold()
     <pre v-else id="figma-tree" class="log" :data-placeholder="'拉取后的设计稿结构会显示在这里（缩进表示层级，含尺寸/颜色/文案）'" v-html="figmaTree" />
     <label class="field">
       <span>需求描述</span>
-      <textarea id="req-desc" rows="3" v-model="reqDesc" placeholder="这个页面/组件要做什么：交互、数据来源、状态与边界情况" />
+      <el-input id="req-desc" type="textarea" :rows="3" v-model="reqDesc" placeholder="这个页面/组件要做什么：交互、数据来源、状态与边界情况" />
     </label>
     <label class="field">
       <span>现有代码参考（可选，粘贴相关组件/封装，让生成的代码风格一致）</span>
-      <textarea id="req-context" rows="3" spellcheck="false" v-model="reqContext" />
+      <el-input id="req-context" type="textarea" :rows="3" v-model="reqContext" />
     </label>
     <label class="field">
       <span>其他约定（可选）</span>
-      <input type="text" id="req-notes" v-model="reqNotes" placeholder="命名规范、目录位置、UI 组件库等">
+      <el-input id="req-notes" v-model="reqNotes" placeholder="命名规范、目录位置、UI 组件库等" />
     </label>
     <div class="run-form">
-      <button class="btn-primary" id="btn-reqdev" :disabled="running" @click="runTask('reqdev')">生成代码</button>
+      <el-button type="primary" class="btn-primary" id="btn-reqdev" :disabled="running" @click="runTask('reqdev')">生成代码</el-button>
     </div>
     <div class="info-note">「拉取设计稿」只读调用 Figma 官方接口，不写任何东西；<br>「生成代码」产出「产出物」（文件 + 方案），确认后在产出物详情里点「采纳」才写入工作区（不 commit、不 push）。</div>
   </section>

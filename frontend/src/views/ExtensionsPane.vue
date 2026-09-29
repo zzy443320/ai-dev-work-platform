@@ -6,6 +6,12 @@
 // #mcp-count / #mcp-test-result / #ext-mcp-stdio-fields / #ext-mcp-http-fields /
 // 每张 MCP 卡的 #mcp-out-<id>，全部沿用旧 id。
 // 空态文案与旧版 innerHTML 逐字一致（界面用例会断言）。
+//
+// 迁移说明：文本/数字 input 与 textarea 换成 el-input，按钮换成 el-button，
+// #ext-mcp-transport 换成 el-select（id 落在根 .el-select 上，pick_select 已
+// 配套升级为可驱动 el-select）。作用范围 / 启用的勾选保留原生 checkbox：
+// 界面用例用 page.check('#ext-skill-scope-reqdev') 直接勾选，el-switch 改 DOM
+// 结构会让它失效，而原 .switch 已是自绘开关，外壳不动。
 import { onMounted, nextTick, ref } from 'vue'
 import { useExtensions, EXT_SCOPE_TEXT, EXT_SCOPE_KEYS } from '../composables/useExtensions.js'
 import { useFold } from '../composables/useFold.js'
@@ -82,36 +88,37 @@ onMounted(loadExtensions)
         技能（团队规范 / 提示词包，自动注入 AI 任务）
         <span class="count-badge" id="skill-count">{{ badge(skills) }}</span>
       </h2>
-      <button class="btn-ghost" id="btn-skill-add" @click="onAddSkill">
+      <el-button class="btn-ghost" id="btn-skill-add" @click="onAddSkill">
         <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14" /></svg>
         新增技能
-      </button>
+      </el-button>
     </div>
     <div id="skill-form" class="ext-form" :class="{ hidden: !skillFormVisible }">
       <div class="run-form">
         <label class="field-inline grow">
           <span>技能名称</span>
-          <input type="text" id="ext-skill-name" ref="skillNameInput" v-model="skillName" placeholder="例如：团队前端代码规范">
+          <el-input id="ext-skill-name" ref="skillNameInput" v-model="skillName" placeholder="例如：团队前端代码规范" />
         </label>
         <label class="field-inline grow">
           <span>一句话描述</span>
-          <input type="text" id="ext-skill-desc" v-model="skillDesc" placeholder="这段规范管什么">
+          <el-input id="ext-skill-desc" v-model="skillDesc" placeholder="这段规范管什么" />
         </label>
       </div>
       <label class="field">
         <span>技能内容（会原样注入 AI 的 system prompt）</span>
-        <textarea id="ext-skill-content" rows="6" spellcheck="false" v-model="skillContent" placeholder="例如：&#10;1. 组件一律函数式 + hooks；&#10;2. 请求必须走 src/utils/request 封装；&#10;3. 样式用 less module，禁止内联颜色。" />
+        <el-input id="ext-skill-content" type="textarea" :rows="6" v-model="skillContent" placeholder="例如：&#10;1. 组件一律函数式 + hooks；&#10;2. 请求必须走 src/utils/request 封装；&#10;3. 样式用 less module，禁止内联颜色。" />
       </label>
       <div class="run-form">
         <span class="scope-label">作用范围：</span>
+        <!-- 保留原生 checkbox：page.check('#ext-skill-scope-*') 直接勾选 -->
         <label v-for="k in EXT_SCOPE_KEYS" :key="k" class="switch">
           <input type="checkbox" :id="`ext-skill-scope-${k}`" v-model="skillScope[k]"><span class="track" /><span class="switch-label">{{ EXT_SCOPE_TEXT[k] }}</span>
         </label>
         <label class="switch"><input type="checkbox" id="ext-skill-enabled" v-model="skillEnabled"><span class="track" /><span class="switch-label">启用</span></label>
       </div>
       <div class="run-form">
-        <button class="btn-primary" @click="saveSkill()">保存技能</button>
-        <button class="btn-ghost" @click="hideSkillForm()">取消</button>
+        <el-button type="primary" class="btn-primary" @click="saveSkill()">保存技能</el-button>
+        <el-button class="btn-ghost" @click="hideSkillForm()">取消</el-button>
       </div>
     </div>
     <div id="skill-list" class="ext-list">
@@ -122,9 +129,9 @@ onMounted(loadExtensions)
           <b>{{ s.name || '' }}</b>
           <span class="muted">{{ s.description || '' }}</span>
           <span class="ext-actions">
-            <button class="btn-mini" @click="toggleSkill(s.id)">{{ s.enabled ? '停用' : '启用' }}</button>
-            <button class="btn-mini" @click="onEditSkill(s.id)">编辑</button>
-            <button class="btn-mini" @click="onDeleteSkill(s.id)">删除</button>
+            <el-button size="small" class="btn-mini" @click="toggleSkill(s.id)">{{ s.enabled ? '停用' : '启用' }}</el-button>
+            <el-button size="small" class="btn-mini" @click="onEditSkill(s.id)">编辑</el-button>
+            <el-button size="small" class="btn-mini" @click="onDeleteSkill(s.id)">删除</el-button>
           </span>
         </div>
         <div class="ext-scopes"><template v-for="(t, i) in scopeTexts(s)" :key="i"><span class="probe-kw">{{ t }}</span>{{ ' ' }}</template></div>
@@ -140,27 +147,29 @@ onMounted(loadExtensions)
         MCP 服务（AI 任务中可调用的外部工具）
         <span class="count-badge" id="mcp-count">{{ badge(mcp) }}</span>
       </h2>
-      <button class="btn-ghost" id="btn-mcp-add" @click="onAddMcp">
+      <el-button class="btn-ghost" id="btn-mcp-add" @click="onAddMcp">
         <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14" /></svg>
         新增 MCP 服务
-      </button>
+      </el-button>
     </div>
     <div id="mcp-form" class="ext-form" :class="{ hidden: !mcpFormVisible }">
       <div class="run-form">
         <label class="field-inline grow">
           <span>服务名称</span>
-          <input type="text" id="ext-mcp-name" ref="mcpNameInput" v-model="mcpName" placeholder="例如：figma-mcp / database-tools">
+          <el-input id="ext-mcp-name" ref="mcpNameInput" v-model="mcpName" placeholder="例如：figma-mcp / database-tools" />
         </label>
         <label class="field-inline">
           <span>传输方式</span>
-          <select id="ext-mcp-transport" v-model="mcpTransport">
-            <option value="stdio">stdio（本地子进程）</option>
-            <option value="http">HTTP（远程服务）</option>
-          </select>
+          <!-- 迁移重点：原生 select → el-select，id 落在根 .el-select 上；
+               data-value 供 pick_select 按值定位选项（见 tests/ui_select.py） -->
+          <el-select id="ext-mcp-transport" v-model="mcpTransport">
+            <el-option value="stdio" data-value="stdio" label="stdio（本地子进程）" />
+            <el-option value="http" data-value="http" label="HTTP（远程服务）" />
+          </el-select>
         </label>
         <label class="field-inline">
           <span>超时(秒)</span>
-          <input type="number" id="ext-mcp-timeout" v-model="mcpTimeout" min="3">
+          <el-input id="ext-mcp-timeout" type="number" v-model="mcpTimeout" />
         </label>
         <label class="switch"><input type="checkbox" id="ext-mcp-enabled" v-model="mcpEnabled"><span class="track" /><span class="switch-label">启用</span></label>
       </div>
@@ -168,21 +177,21 @@ onMounted(loadExtensions)
         <div class="run-form">
           <label class="field-inline grow">
             <span>启动命令</span>
-            <input type="text" id="ext-mcp-command" v-model="mcpCommand" placeholder="npx / node / python（建议用绝对路径）">
+            <el-input id="ext-mcp-command" v-model="mcpCommand" placeholder="npx / node / python（建议用绝对路径）" />
           </label>
           <label class="field-inline grow">
             <span>命令参数（空格分隔，支持引号）</span>
-            <input type="text" id="ext-mcp-args" v-model="mcpArgs" placeholder="-y @modelcontextprotocol/server-figma">
+            <el-input id="ext-mcp-args" v-model="mcpArgs" placeholder="-y @modelcontextprotocol/server-figma" />
           </label>
         </div>
         <div class="run-form">
           <label class="field-inline grow">
             <span>环境变量（每行 KEY: VALUE，可选）</span>
-            <input type="text" id="ext-mcp-env" v-model="mcpEnv" placeholder="FIGMA_TOKEN: figd_xxx">
+            <el-input id="ext-mcp-env" v-model="mcpEnv" placeholder="FIGMA_TOKEN: figd_xxx" />
           </label>
           <label class="field-inline grow">
             <span>工作目录（可选）</span>
-            <input type="text" id="ext-mcp-cwd" v-model="mcpCwd" placeholder="D:/tools/mcp-servers">
+            <el-input id="ext-mcp-cwd" v-model="mcpCwd" placeholder="D:/tools/mcp-servers" />
           </label>
         </div>
       </div>
@@ -190,18 +199,18 @@ onMounted(loadExtensions)
         <div class="run-form">
           <label class="field-inline grow">
             <span>服务 URL（MCP Streamable HTTP 端点）</span>
-            <input type="text" id="ext-mcp-url" v-model="mcpUrl" placeholder="https://host/mcp">
+            <el-input id="ext-mcp-url" v-model="mcpUrl" placeholder="https://host/mcp" />
           </label>
           <label class="field-inline grow">
             <span>请求头（每行 KEY: VALUE，可选）</span>
-            <input type="text" id="ext-mcp-headers" v-model="mcpHeaders" placeholder="Authorization: Bearer xxx">
+            <el-input id="ext-mcp-headers" v-model="mcpHeaders" placeholder="Authorization: Bearer xxx" />
           </label>
         </div>
       </div>
       <div class="run-form">
-        <button class="btn-ghost" id="btn-mcp-test" @click="testMcpForm()">测试连接</button>
-        <button class="btn-primary" @click="saveMcp()">保存服务</button>
-        <button class="btn-ghost" @click="hideMcpForm()">取消</button>
+        <el-button class="btn-ghost" id="btn-mcp-test" @click="testMcpForm()">测试连接</el-button>
+        <el-button type="primary" class="btn-primary" @click="saveMcp()">保存服务</el-button>
+        <el-button class="btn-ghost" @click="hideMcpForm()">取消</el-button>
       </div>
       <!-- 空的时候不带内容节点；hidden 由 formTest 是否有值驱动（与旧版 hidden class 一致） -->
       <pre id="mcp-test-result" class="log" :class="{ hidden: !formTest }"
@@ -217,10 +226,10 @@ onMounted(loadExtensions)
           <b>{{ s.name || '' }}</b>
           <span class="muted ext-where">{{ mcpWhere(s) }}</span>
           <span class="ext-actions">
-            <button class="btn-mini" @click="testMcp(s.id)">测试</button>
-            <button class="btn-mini" @click="toggleMcp(s.id)">{{ s.enabled ? '停用' : '启用' }}</button>
-            <button class="btn-mini" @click="onEditMcp(s.id)">编辑</button>
-            <button class="btn-mini" @click="onDeleteMcp(s.id)">删除</button>
+            <el-button size="small" class="btn-mini" @click="testMcp(s.id)">测试</el-button>
+            <el-button size="small" class="btn-mini" @click="toggleMcp(s.id)">{{ s.enabled ? '停用' : '启用' }}</el-button>
+            <el-button size="small" class="btn-mini" @click="onEditMcp(s.id)">编辑</el-button>
+            <el-button size="small" class="btn-mini" @click="onDeleteMcp(s.id)">删除</el-button>
           </span>
         </div>
         <div class="mcp-test-out" :id="`mcp-out-${s.id}`" v-html="mcpOut[s.id] || ''" />

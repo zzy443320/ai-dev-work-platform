@@ -1,6 +1,9 @@
 <script setup>
 // 更新日志弹窗（#chmodal）。旧版 index.html:1201-1216 骨架 + renderChangelog。
 // 按日期分组、分类 chips 过滤；条目 HTML 与旧版 renderChEntry 逐字节一致。
+//
+// 组件已换成 <el-dialog>；分类筛选用 <el-check-tag>（就是「可点亮的筛选胶囊」）。
+// 外层常驻 div 承载稳定 id 与 hidden 语义，原因见 KbModal.vue 的说明。
 import { useChangelog } from '../composables/useChangelog.js'
 
 const {
@@ -10,26 +13,46 @@ const {
 </script>
 
 <template>
-  <div id="chmodal" class="modal chmodal" :class="{ hidden: !visible }" @click.self="close()">
-    <div class="modal-box chmodal-box" @click.stop>
-      <div class="modal-head">
-        <h3>
-          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 2.6-6.4"/><polyline points="3 4 3 9 8 9"/><path d="M12 7.5v5l3.5 2"/></svg>
-          更新日志
-        </h3>
-        <button class="close" @click="close()">×</button>
-      </div>
-      <div class="modal-meta ch-filters" id="ch-filters">
-        <button v-for="c in chips" :key="c.slug" class="ch-chip" :class="{ active: filter === c.slug }" @click="setFilter(c.slug)">
-          {{ c.name }}<span>{{ c.count }}</span>
-        </button>
-      </div>
-      <div class="modal-body ch-body" id="ch-body">
-        <div v-if="!data" class="empty">加载中…</div>
-        <div v-else-if="data.offline" class="empty">读不到更新日志：{{ data.reason || '未知原因' }}
-          <div class="ch-hint">若是 404，说明后端还是旧代码——重启 <code>python -m web.server</code> 后刷新页面即可。</div>
+  <div id="chmodal" class="chmodal-host" :class="{ hidden: !visible }">
+    <el-dialog
+      class="chmodal-dialog"
+      :model-value="visible"
+      width="min(920px, 94vw)"
+      top="6vh"
+      :show-close="false"
+      @update:model-value="close()"
+      @close="close()"
+    >
+      <template #header>
+        <div class="modal-head">
+          <h3>
+            <el-icon><Clock /></el-icon>
+            更新日志
+          </h3>
+          <el-button class="close" text @click="close()">×</el-button>
         </div>
-        <div v-else-if="!groups.length" class="empty">该分类下暂无记录</div>
+      </template>
+
+      <div class="modal-meta ch-filters" id="ch-filters">
+        <el-check-tag
+          v-for="c in chips"
+          :key="c.slug"
+          class="ch-chip"
+          :class="{ active: filter === c.slug }"
+          :checked="filter === c.slug"
+          @change="setFilter(c.slug)"
+        >
+          {{ c.name }}<span>{{ c.count }}</span>
+        </el-check-tag>
+      </div>
+
+      <div class="modal-body ch-body" id="ch-body">
+        <el-empty v-if="!data" description="加载中…" :image-size="70" />
+        <el-empty v-else-if="data.offline" :image-size="70"
+                  :description="`读不到更新日志：${data.reason || '未知原因'}`">
+          <p class="ch-hint">若是 404，说明后端还是旧代码——重启 <code>python -m web.server</code> 后刷新页面即可。</p>
+        </el-empty>
+        <el-empty v-else-if="!groups.length" description="该分类下暂无记录" :image-size="70" />
         <template v-else>
           <div v-for="g in groups" :key="g.date" class="ch-day">
             <div class="ch-day-label">
@@ -41,13 +64,23 @@ const {
           </div>
         </template>
       </div>
-      <div class="ch-foot" id="ch-foot">
-        <template v-if="data && !data.offline">
-          <span>{{ footLeft }} · {{ groups.length }} 天</span>
-          <span v-if="data.updated_at">日志文件更新于 {{ String(data.updated_at).replace('T', ' ').slice(0, 16) }}</span>
-          <span>来源 {{ data.source || 'CHANGELOG.md' }}</span>
-        </template>
-      </div>
-    </div>
+
+      <template #footer>
+        <div class="ch-foot" id="ch-foot">
+          <template v-if="data && !data.offline">
+            <span>{{ footLeft }} · {{ groups.length }} 天</span>
+            <span v-if="data.updated_at">日志文件更新于 {{ String(data.updated_at).replace('T', ' ').slice(0, 16) }}</span>
+            <span>来源 {{ data.source || 'CHANGELOG.md' }}</span>
+          </template>
+        </div>
+      </template>
+    </el-dialog>
   </div>
 </template>
+
+<style scoped>
+#ch-body {
+  max-height: 62vh;
+  overflow: auto;
+}
+</style>

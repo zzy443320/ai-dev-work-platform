@@ -5,6 +5,9 @@
 // #test-preview 与 #figma-tree 同套契约：空态走 style.css 的
 // `#test-preview:empty::before`（data-placeholder），所以空的时候
 // <pre> 内部不能有子节点；读取失败才退回纯文本。
+//
+// 迁移说明：文本 input 与 textarea 换成 el-input，测试框架下拉换成 el-select，
+// 按钮换成 el-button。v-model 路径与字段名一律不改。
 import { useTasks } from '../composables/useTasks.js'
 
 const {
@@ -24,27 +27,27 @@ const {
     <div class="run-form">
       <label class="field-inline grow">
         <span>目标文件路径（相对仓库根）</span>
-        <input type="text" id="test-file" v-model="testFile" placeholder="src/components/OrderList/index.tsx">
+        <el-input id="test-file" v-model="testFile" placeholder="src/components/OrderList/index.tsx" />
       </label>
       <label class="field-inline">
         <span>测试框架</span>
-        <select id="test-framework" v-model="testFramework">
-          <option>vitest</option>
-          <option>vitest + Testing Library</option>
-          <option>jest</option>
-          <option>jest + Testing Library</option>
-          <option>cypress 组件测试</option>
-        </select>
+        <el-select id="test-framework" v-model="testFramework">
+          <el-option value="vitest" label="vitest" />
+          <el-option value="vitest + Testing Library" label="vitest + Testing Library" />
+          <el-option value="jest" label="jest" />
+          <el-option value="jest + Testing Library" label="jest + Testing Library" />
+          <el-option value="cypress 组件测试" label="cypress 组件测试" />
+        </el-select>
       </label>
-      <button class="btn-ghost" id="btn-test-load" :disabled="testLoading"
-              title="只读预览目标文件内容" @click="loadTestFile()">{{ testLoading ? '读取中…' : '预览文件' }}</button>
+      <el-button class="btn-ghost" id="btn-test-load" :disabled="testLoading"
+              title="只读预览目标文件内容" @click="loadTestFile()">{{ testLoading ? '读取中…' : '预览文件' }}</el-button>
     </div>
     <label class="field">
       <span>重点关注（可选）</span>
-      <textarea id="test-focus" rows="2" v-model="testFocus" placeholder="例如：分页逻辑、空数据渲染、提交失败后的状态回滚" />
+      <el-input id="test-focus" type="textarea" :rows="2" v-model="testFocus" placeholder="例如：分页逻辑、空数据渲染、提交失败后的状态回滚" />
     </label>
     <div class="run-form">
-      <button class="btn-primary" id="btn-codetest" :disabled="running" @click="runTask('codetest')">生成测试代码</button>
+      <el-button type="primary" class="btn-primary" id="btn-codetest" :disabled="running" @click="runTask('codetest')">生成测试代码</el-button>
     </div>
     <pre v-if="testError" id="test-preview" class="log">{{ testError }}</pre>
     <pre v-else id="test-preview" class="log" :data-placeholder="'点「预览文件」查看目标文件内容，确认路径无误'" v-html="testPreview" />

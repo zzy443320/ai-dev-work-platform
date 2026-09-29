@@ -11,7 +11,7 @@
 // 与问答页签一样**必须解构 useDefect()**：`<script setup>` 只对顶层绑定做模板
 // 自动解包，写 `const d = useDefect()` 再在模板里用 `d.mineOnly` 会拿到 ref 对象。
 import { computed, onMounted, ref } from 'vue'
-import { useDefect } from '../composables/useDefect.js'
+import { useDefect, PROP_PAGE_SIZE } from '../composables/useDefect.js'
 import { useFold } from '../composables/useFold.js'
 import { useRunModal } from '../composables/useRunModal.js'
 import { api } from '../api/client.js'
@@ -128,19 +128,19 @@ onMounted(async () => {
         <input type="text" id="opt-defect" v-model="defectId"
                placeholder="填 ONES 工单的 UUID；留空则拉最近工单列表">
       </label>
-      <button class="btn-primary" id="btn-run" :disabled="running" @click="start('run')">
+      <el-button type="primary" id="btn-run" :disabled="running" @click="start('run')">
         <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="6 3 20 12 6 21 6 3" /></svg>
         运行
-      </button>
-      <button class="btn-ghost" id="btn-probe" :disabled="running" @click="start('probe')"
+      </el-button>
+      <el-button id="btn-probe" :disabled="running" @click="start('probe')"
               title="只拉取 ONES 工单并 AI 定位问题，不生成提案、不进审批、不写任何文件">
         <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></svg>
         试运行
-      </button>
-      <button class="btn-ghost" @click="refreshAll()">
+      </el-button>
+      <el-button @click="refreshAll()">
         <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.6-6.3" /><polyline points="21 3 21 9 15 9" /></svg>
         刷新
-      </button>
+      </el-button>
     </div>
     <div class="info-note" id="dry-warn">说明：「试运行」只拉取 ONES 工单并 AI 定位问题（不生成提案、不进审批、不写文件），用来独立验证连通性和定位效果；<br>「运行」走完整流水线产出提案（补丁 + diff + 闸门结果 + 截图），同样不改动目标仓库，人工采纳才写工作区（不 commit、不 push）。<br>运行过程中可实时看到每个阶段的进展，以及大模型的思考与输出。</div>
 
@@ -167,16 +167,14 @@ onMounted(async () => {
       </button>
       <label class="filter-wrap">
         <span class="muted">筛选</span>
-        <!-- 原生 select 保留在 DOM 里（style.css 的 .cs-native 把它藏起来、旁边
-             放自绘触发器）；既有用例直接设 .value + 派发 change，所以不能换成组件。 -->
-        <select id="proposal-filter" :value="propFilter"
-                @change="setPropFilter($event.target.value)">
-          <option value="">全部</option>
-          <option value="pending">待审批</option>
-          <option value="applied">已采纳</option>
-          <option value="rejected">已拒绝</option>
-          <option value="invalid">无法生成补丁</option>
-        </select>
+        <el-select id="proposal-filter" :model-value="propFilter"
+                   @update:model-value="setPropFilter" placeholder="全部">
+          <el-option value="" label="全部" data-value="" />
+          <el-option value="pending" label="待审批" data-value="pending" />
+          <el-option value="applied" label="已采纳" data-value="applied" />
+          <el-option value="rejected" label="已拒绝" data-value="rejected" />
+          <el-option value="invalid" label="无法生成补丁" data-value="invalid" />
+        </el-select>
       </label>
     </div>
     <div class="block-banner" :class="{ hidden: !repoBanner }" id="repo-banner"
@@ -189,7 +187,8 @@ onMounted(async () => {
         <ProposalCard v-for="p in pageSlice" :key="p.id" :p="p"
                       @open="(id) => emit('open-proposal', id)" />
         <ProposalPager :info="pagerInfo" :nums="pagerNums" :current="curPage"
-                       :total-pages="totalPages" @goto="gotoPropPage" />
+                       :total-pages="totalPages" :page-size="PROP_PAGE_SIZE"
+                       @goto="gotoPropPage" />
       </template>
     </div>
     <p class="panel-note">运行流水线不会写目标仓库，只产出提案；在这里点「采纳」只会把改动写入工作区（不 commit、不 push），由你确认后自行提交。</p>

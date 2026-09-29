@@ -89,29 +89,36 @@ defineExpose({ append, refill })
 </script>
 
 <template>
-  <div class="team-agent" :class="agent.status || 'idle'" :data-agent="agent.id"
-       :style="{ '--agent-color': agent.color || '#6366f1' }">
-    <div class="team-agent-head">
-      <span class="team-dot" />
-      <span class="team-agent-emoji">{{ agent.emoji || '' }}</span>
-      <span class="team-agent-name">{{ agent.name || agent.id }}</span>
-      <span class="team-agent-stage">{{ stageLine }}</span>
-    </div>
-    <div class="team-agent-duty">{{ agent.duty || '' }}</div>
-    <div class="team-agent-now">{{ agent.current || '待命中' }}</div>
-    <div v-if="prog.total" class="team-progress" :title="`${prog.done}/${prog.total} 个工作项`">
-      <i :style="{ width: pct + '%' }" />
-    </div>
-    <div v-if="note" class="team-agent-note">{{ note }}</div>
-    <div v-if="shownFiles.length" class="team-agent-files">
-      <span v-for="f in shownFiles" :key="f" class="team-file-chip" :title="f">{{ shortPath(f) }}</span><span v-if="extraFiles" class="team-file-chip">+{{ extraFiles }}</span>
-    </div>
-    <details class="team-live" ref="liveEl">
-      <summary>实时思考 / 输出</summary>
-      <div class="ai-stream">
-        <div class="ai-block think" :class="{ hidden: !hasThink }"><div class="ai-block-label">思考</div><pre ref="thinkEl" /></div>
-        <div class="ai-block out" :class="{ hidden: !hasOut }"><div class="ai-block-label">输出</div><pre ref="outEl" /></div>
+  <!-- 外壳换成 el-card；内部 .team-agent 必须原样保留：
+       append() 直接写里面的 <pre>，且 .team-agent.<status> 是被用例断言的类钩子 -->
+  <el-card shadow="never" class="team-agent-card">
+    <div class="team-agent" :class="agent.status || 'idle'" :data-agent="agent.id"
+         :style="{ '--agent-color': agent.color || '#6366f1' }">
+      <div class="team-agent-head">
+        <span class="team-dot" />
+        <span class="team-agent-emoji">{{ agent.emoji || '' }}</span>
+        <span class="team-agent-name">{{ agent.name || agent.id }}</span>
+        <!-- 阶段 / 状态徽标：用 el-tag 承载 -->
+        <el-tag effect="light" round class="team-agent-stage">{{ stageLine }}</el-tag>
       </div>
-    </details>
-  </div>
+      <div class="team-agent-duty">{{ agent.duty || '' }}</div>
+      <div class="team-agent-now">{{ agent.current || '待命中' }}</div>
+      <div v-if="prog.total" class="team-progress" :title="`${prog.done}/${prog.total} 个工作项`">
+        <i :style="{ width: pct + '%' }" />
+      </div>
+      <div v-if="note" class="team-agent-note">{{ note }}</div>
+      <div v-if="shownFiles.length" class="team-agent-files">
+        <span v-for="f in shownFiles" :key="f" class="team-file-chip" :title="f">{{ shortPath(f) }}</span><span v-if="extraFiles" class="team-file-chip">+{{ extraFiles }}</span>
+      </div>
+      <!-- ⚠️ 折叠区用原生 <details>：append() 通过 liveEl.setAttribute('open','') 控制展开，
+           不能用 el-collapse（其根不是 details，setAttribute 会失效） -->
+      <details class="team-live" ref="liveEl">
+        <summary>实时思考 / 输出</summary>
+        <div class="ai-stream">
+          <div class="ai-block think" :class="{ hidden: !hasThink }"><div class="ai-block-label">思考</div><pre ref="thinkEl" /></div>
+          <div class="ai-block out" :class="{ hidden: !hasOut }"><div class="ai-block-label">输出</div><pre ref="outEl" /></div>
+        </div>
+      </details>
+    </div>
+  </el-card>
 </template>

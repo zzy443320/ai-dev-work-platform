@@ -7,7 +7,10 @@
 
 做法是「造一份小账本 → 只渲染一次 → 逐块断言可读文本」：
   - 账本用固定 ts（当天 00:00 起 + 1 小时/分钟步进），跨零点的抖动会被钳掉；
-  - 图表不比 SVG 路径（浮点坐标容易假报警），改成比「柱子数量 + 刻度文案 + tooltip」；
+  - 图表交给 ECharts 画（SVG 渲染器），画出来的节点没有我们的 class，所以断言走
+    组件留在图表宿主节点上的契约：`__probe`（语义化数据：每根柱/每个扇区的 tooltip
+    文案、轴刻度）与 `__ec`（ECharts 实例，用 getOption() 核对系列数据）。
+    这样比数 SVG 节点稳，也还是能证明「数据真的进了图里」；
   - 折叠、粒度切换、天数切换这些交互要在这一份实现上真的生效。
 
 为什么值得单独一个用例：统计页签是「纯读 + 纯展示」的页签，
@@ -63,6 +66,11 @@ EXP_RECENT_META = "最近 4 次 · 其中 1 次为估算"
 # 趋势图 y 轴刻度用 fmtTok（≥1e4 会压成 10.0k），不是千分位
 EXP_AXIS = ["0", "2,500", "5,000", "7,500", "10.0k"]
 
+# 趋势图的刻度数：从图表宿主节点的 __probe 读（契约见 components/EChart.vue 头部）。
+# 未挂载时返回 -1，调用方要自己挡住这个哨兵值，否则「变小」类断言会被误判成通过。
+TREND_ROWS_JS = ("(() => { const el = document.querySelector('#usage-trend .echart-host');"
+                 " return el && el.__probe ? el.__probe.rows.length : -1; })()")
+
 def seed(srv) -> None:
     """直接往临时账本目录写 jsonl —— 账本本来就是 append-only 的纯文本格式。
 
@@ -108,16 +116,46 @@ SNAP_JS = r"""
       .replace(/\s+/g, ' ').trim());
   const texts = (sel) => Array.from(document.querySelectorAll(sel))
     .map(e => (e.textContent || '').replace(/\s+/g, ' ').trim());
+  // 图表：ECharts 宿主节点上的 __probe / __ec（契约见 components/EChart.vue 头部）
+  const chartOf = (hostSel) => {
+    const el = document.querySelector(hostSel);
+    if (!el || !el.__ec) return null;
+    return { el, o: el.__ec.getOption(), p: el.__probe || {} };
+  };
+  const trend = (() => {
+    const c = chartOf('#usage-trend .echart-host');
+    if (!c) return null;
+    const y = (c.o.yAxis && c.o.yAxis[0]) || {};
+    return {
+      rows: c.p.rows || [],
+      axis: c.p.axis || [],
+      xLen: (c.o.xAxis && c.o.xAxis[0] ? c.o.xAxis[0].data || [] : []).length,
+      seriesNames: (c.o.series || []).map(s => s.name),
+      dataLens: (c.o.series || []).map(s => (s.data || []).length),
+      yMin: y.min, yMax: y.max, yInterval: y.interval,
+      svg: !!c.el.querySelector('svg'),
+    };
+  })();
+  const donut = (() => {
+    const c = chartOf('#usage-models .echart-host');
+    if (!c) return null;
+    const data = ((c.o.series || [])[0] || {}).data || [];
+    return {
+      sectors: data.length,
+      names: data.map(d => d.name),
+      values: data.map(d => d.value),
+      colors: data.map(d => (d.itemStyle || {}).color),
+      probeTotal: c.p.total == null ? null : c.p.total,
+      svg: !!c.el.querySelector('svg'),
+    };
+  })();
   return {
     cards: count('#usage-cards .usage-card'),
     cardValues: cells('#usage-cards .usage-card-value'),
     cardSubs: cells('#usage-cards .usage-card-sub'),
     noteText: txt('#usage-note'),
     trendMeta: txt('#usage-trend-meta'),
-    bars: count('#usage-trend .usage-bar'),
-    trendTips: texts('#usage-trend .usage-bar title'),
-    // y 轴刻度是唯一的「end 锚点刻度」（x 轴日期刻度是 middle，别混进来）
-    yLabels: texts('#usage-trend text.usage-axis[text-anchor="end"]'),
+    trend,
     legend: cells('#usage-trend .usage-legend > span'),
     kindsTitle: txt('#usage-kinds .usage-chart-title'),
     kindRows: cells('#usage-kinds .usage-row-label'),
@@ -125,7 +163,7 @@ SNAP_JS = r"""
     modelsTitle: txt('#usage-models .usage-chart-title'),
     donutLegend: cells('#usage-models .usage-donut-legend > div'),
     donutTotal: txt('#usage-models .usage-donut-total'),
-    donutArcs: count('#usage-models path'),
+    donut,
     taskMeta: txt('#usage-task-meta'),
     taskHead: cells('#usage-tasks thead th'),
     taskRows: count('#usage-tasks tbody tr'),
@@ -157,6 +195,14 @@ def main() -> int:
                 # 等真实 DOM：账本已经就位，卡片渲染出来就代表报表回来了。
                 page.wait_for_selector("#usage-cards .usage-card", timeout=15000)
                 page.wait_for_selector("#usage-recent tbody tr", timeout=15000)
+                # 图表组件是异步 chunk（ECharts 单独打包），要等它挂载完成：
+                # __ec / __probe 齐了才说明图真的画上去了，否则读到的是 null。
+                page.wait_for_selector("#usage-trend .echart-host", timeout=15000)
+                page.wait_for_function(
+                    "() => { const t = document.querySelector('#usage-trend .echart-host');"
+                    " const d = document.querySelector('#usage-models .echart-host');"
+                    " return !!(t && t.__ec && t.__probe && d && d.__ec && d.__probe); }",
+                    timeout=15000)
                 data = page.evaluate(SNAP_JS)
                 page.close()
                 return data
@@ -179,21 +225,41 @@ def main() -> int:
                   str(got["noteText"])[:160])
 
             print("\n  —— 消耗趋势 ——")
+            trend = got["trend"] or {}
+            # 两个系列都要拿到全部 30 个桶：空桶必须也在（有整天没调用时不能凭空断档）
             check("柱子数量 = 账本天数（含空桶，默认 30 天）",
-                  got["bars"] == 30, str(got["bars"]))
+                  trend.get("dataLens") == [30, 30] and trend.get("xLen") == 30
+                  and len(trend.get("rows") or []) == 30,
+                  f"series={trend.get('dataLens')} x={trend.get('xLen')} "
+                  f"rows={len(trend.get('rows') or [])}")
+            check("趋势图由 ECharts 绘制（SVG 渲染器 + 输入/输出两个系列）",
+                  trend.get("svg") is True
+                  and trend.get("seriesNames") == ["输入", "输出"],
+                  f"svg={trend.get('svg')} series={trend.get('seriesNames')}")
+            check("y 轴量程与步长（0 ~ 10.0k，四等分 2.5k）",
+                  (trend.get("yMin"), trend.get("yMax"), trend.get("yInterval"))
+                  == (0, 10000, 2500),
+                  str((trend.get("yMin"), trend.get("yMax"), trend.get("yInterval"))))
             check("趋势元信息（粒度 · 刻度数 · 峰值）",
                   got["trendMeta"] == f"每天 · 30 个刻度 · 峰值 {EXP_TOK}",
                   str(got["trendMeta"]))
+            # tooltip 文案由组件算好交给 ECharts 的 formatter（文案只有一处来源）
+            tips = [re.sub(r"\s+", " ", str(r.get("tip") or ""))
+                    for r in (trend.get("rows") or [])]
+            last = tips[-1] if tips else ""
             check("柱子 tooltip 含当日合计/输入输出/调用次数",
-                  len(got["trendTips"]) == 30
-                  and f"合计 {EXP_TOK} tokens" in got["trendTips"][-1]
-                  and "输入 5,500 · 输出 2,560" in got["trendTips"][-1]
-                  and "4 次调用" in got["trendTips"][-1]
-                  and "（1 次估算）" in got["trendTips"][-1]
-                  and "（1 次失败）" in got["trendTips"][-1],
-                  str(got["trendTips"][-1] if got["trendTips"] else []))
+                  len(tips) == 30
+                  and f"合计 {EXP_TOK} tokens" in last
+                  and "输入 5,500 · 输出 2,560" in last
+                  and "4 次调用" in last
+                  and "（1 次估算）" in last
+                  and "（1 次失败）" in last,
+                  last)
+            empty = [t for t in tips if "合计 0 tokens" in t and "0 次调用" in t]
+            check("空桶也有 tooltip（0 值与 0 次调用）", len(empty) == 29,
+                  f"空桶 {len(empty)} 个 / 共 {len(tips)} 个刻度")
             check("y 轴刻度文案（5 条网格线）",
-                  got["yLabels"] == EXP_AXIS, str(got["yLabels"]))
+                  trend.get("axis") == EXP_AXIS, str(trend.get("axis")))
             check("图例含输入/输出",
                   got["legend"] == ["输入", "输出"], str(got["legend"]))
 
@@ -206,7 +272,19 @@ def main() -> int:
                   got["kindVals"] == ["3,000 37.2%", "2,660 33.0%", "2,400 29.8%"],
                   str(got["kindVals"]))
             check("按模型标题", got["modelsTitle"] == "按模型", str(got["modelsTitle"]))
-            check("环形图扇区数 = 模型数", got["donutArcs"] == 2, str(got["donutArcs"]))
+            donut = got["donut"] or {}
+            check("环形图扇区数 = 模型数（按合计降序）",
+                  donut.get("sectors") == 2
+                  and donut.get("names") == ["deepseek-flash", "deepseek-pro"],
+                  f"sectors={donut.get('sectors')} names={donut.get('names')}")
+            check("环形图扇区取值与账本一致（合计 8,060）",
+                  donut.get("values") == [5060, 3000]
+                  and donut.get("probeTotal") == EXP_TOTAL,
+                  f"values={donut.get('values')} probeTotal={donut.get('probeTotal')}")
+            check("环形图由 ECharts 绘制（SVG 渲染器，扇区各有配色）",
+                  donut.get("svg") is True
+                  and all(bool(c) for c in (donut.get("colors") or [])),
+                  f"svg={donut.get('svg')} colors={donut.get('colors')}")
             check("环形图中心总量", got["donutTotal"] == EXP_TOK, str(got["donutTotal"]))
             check("环形图图例（按合计降序，含合计与占比）",
                   got["donutLegend"] == ["deepseek-flash 5,060 · 62.8%",
@@ -224,9 +302,16 @@ def main() -> int:
             # 「最后」列是相对时间（relTime），随墙上时钟变化：刚跑时是「N 小时前」，
             # 跨天/超过 24h 会变「N 天前」。这里只锁住它是个相对时间，不锁具体数字。
             first_cells = got["taskFirstCells"]
+            # 「调用」列 = 数字 + 「N 失败」角标。角标是 el-tag（原子行内级盒子），
+            # Chrome 的 innerText 会在它前面插一个换行 —— 截图证实视觉上仍在同一
+            # 行（_tmp_shots/usage_tasks_badge.png），textContent 也确实是紧邻的
+            # "11 失败"。旧版原生表格是普通 span 才拼得出无分隔文本，所以这里对该
+            # 列做去空白比较，别的列照旧。
+            calls_cell = re.sub(r"\s+", "", first_cells[3])
             check("首行数值（调用/输入/输出/合计/占比）",
-                  first_cells[:8] == ["1", "长任务作业", "升级到 Vite 6",
-                                      "11 失败", "3,000", "0", "3,000", "37.2%"],
+                  first_cells[:3] + [calls_cell] + first_cells[4:8]
+                  == ["1", "长任务作业", "升级到 Vite 6",
+                      "11失败", "3,000", "0", "3,000", "37.2%"],
                   str(first_cells))
             check("首行「最后」列是相对时间",
                   len(first_cells) == 9
@@ -242,8 +327,12 @@ def main() -> int:
                                         "合计", "耗时", "状态"],
                   str(got["recentHead"]))
             check("行数 = 账本记录数（4）", got["recentRows"] == 4, str(got["recentRows"]))
+            # 首行 ts 由 seed() 按「今天 00:00 + 偏移」算出来（i=3 → 01:30），
+            # 所以这里拼今天的日期，不能写死 —— 写死过一次，跨天后必挂。
+            from datetime import date as _date
+            exp_first_ts = f"{_date.today().strftime('%m-%d')} 01:30:00"
             check("首行数值（最新一条在最前）",
-                  got["recentFirstCells"] == ["09-28 01:30:00", "长任务作业 coder · coder",
+                  got["recentFirstCells"] == [exp_first_ts, "长任务作业 coder · coder",
                                               "deepseek-pro / chat", "3,000", "0",
                                               "3,000", "30.0s", "失败"],
                   str(got["recentFirstCells"]))
@@ -261,6 +350,8 @@ def main() -> int:
             page.on("pageerror", lambda e: errors.append(f"interact pageerror: {e}"))
             page.goto(srv.base + "/", wait_until="networkidle")
             page.wait_for_selector("#usage-cards .usage-card", timeout=15000)
+            # 图表是异步 chunk，交互前先等它挂载好，否则读刻度数只会拿到哨兵 -1
+            page.wait_for_function(f"() => {TREND_ROWS_JS} >= 0", timeout=15000)
 
             def wait_usage(days=None, gran=None, bars=None, timeout=6000):
                 cond = []
@@ -269,12 +360,11 @@ def main() -> int:
                 if gran is not None:
                     cond.append(f"localStorage.getItem('usage-gran') === '{gran}'")
                 if bars is not None:
-                    cond.append("document.querySelectorAll('#usage-trend .usage-bar').length"
-                                f" === {bars}")
+                    cond.append(f"{TREND_ROWS_JS} === {bars}")
                 return bool(page.wait_for_function("() => " + " && ".join(cond),
                                                    timeout=timeout))
 
-            before_bars = page.eval_on_selector_all("#usage-trend .usage-bar", "e => e.length")
+            before_bars = page.evaluate(TREND_ROWS_JS)
             # 注意：gran / days 的默认值（day / 30）是「没写 localStorage 时的回落值」
             # （见 useUsageReport.readGran / readDays），应用初始加载不会主动回写这两
             # 个键 —— 所以这里不能断言 localStorage，只能等「数据真的按默认口径画出来」。
@@ -283,13 +373,14 @@ def main() -> int:
 
             page.click("#usage-gran .seg-btn[data-g='week']")
             # localStorage 是 setGran 里同步写的，早于 /api/usage/report 返回；
-            # 只等它会在数据回来前就放行，读到旧柱子数（全量跑时必然踩到）。
+            # 只等它会在数据回来前就放行，读到旧刻度数（全量跑时必然踩到）。
             # 所以这里直接等「刻度数真的变少」，与下面的断言同一口径。
+            # `>= 0` 是挡 TREND_ROWS_JS 的未挂载哨兵（-1 会让「变小」永远成立）。
             check("切「按周」后状态落定（存储 + 重绘）",
                   wait_usage(gran="week") and bool(page.wait_for_function(
-                      f"() => document.querySelectorAll('#usage-trend .usage-bar').length < {before_bars}",
+                      f"() => {TREND_ROWS_JS} >= 0 && {TREND_ROWS_JS} < {before_bars}",
                       timeout=6000)))
-            after_bars = page.eval_on_selector_all("#usage-trend .usage-bar", "e => e.length")
+            after_bars = page.evaluate(TREND_ROWS_JS)
             check("切「按周」后刻度数变少", after_bars < before_bars,
                   f"{before_bars} → {after_bars}")
             check("切「按周」后按钮高亮跟随",

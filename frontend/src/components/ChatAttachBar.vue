@@ -26,8 +26,8 @@ function ext(name) {
     <span v-else class="chat-att-icon">{{ ext(a.name) }}</span>
     <span class="chat-att-name">{{ a.name }}</span>
     <span class="chat-att-size muted">{{ fmtSize(a.size) }}</span>
-    <button type="button" class="chat-att-del" title="移除这个附件"
-            @click="emit('remove', i)">✕</button>
+    <el-button text circle type="danger" class="chat-att-del" title="移除这个附件"
+               @click="emit('remove', i)">✕</el-button>
   </span>
 
   <span v-if="uploading" class="chat-att-chip uploading">
