@@ -49,5 +49,7 @@ _tmp_*
 _rewired_*
 .relay-test-repo/
 .workbuddy/
+# 桌面助手的画布缓存（工具生成的旁路产物，与本项目无关；`git add .` 会误收）
+qwenwork/
 .DS_Store
 Thumbs.db
