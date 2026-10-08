@@ -12,6 +12,7 @@
 跑法（不依赖 cwd）：
     PYTHONUTF8=1 .venv/Scripts/python.exe tests/check_kb_export.py
 """
+import re
 import shutil
 import sys
 import tempfile
@@ -22,7 +23,7 @@ TESTS_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(TESTS_DIR.parent))
 
 from scripts.kb_backup import (  # noqa: E402
-    KEEP_TERM_FILE, TERM_FILE, audit_masked, backup_zip, export_masked,
+    KEEP_TERM_FILE, TERM_FILE, audit_masked, backup_zip, collect_ids, export_masked,
     seed_terms_from_credentials, write_term_template)
 
 FAIL = []
@@ -93,6 +94,14 @@ occurrences: 4
 """
 
 
+INDEX = """# 缺陷知识库索引
+
+- [导入未拦截](逻辑/EXAMPLEid0000001.md)
+- [分页越界](UI/EXAMPLEid0000002.md)
+- [静默失败](_patterns/静默失败.md)
+"""
+
+
 def build_kb(root: Path) -> None:
     (root / "逻辑").mkdir(parents=True)
     (root / "UI").mkdir(parents=True)
@@ -100,6 +109,7 @@ def build_kb(root: Path) -> None:
     (root / "逻辑" / "EXAMPLEid0000001.md").write_text(CARD, encoding="utf-8")
     (root / "UI" / "EXAMPLEid0000002.md").write_text(CARD2, encoding="utf-8")
     (root / "_patterns" / "静默失败.md").write_text(PATTERN, encoding="utf-8")
+    (root / "INDEX.md").write_text(INDEX, encoding="utf-8")
     (root / "_stats.json").write_text('{"cards": 2, "repo": "D:/客户环境/x"}',
                                       encoding="utf-8")
 
@@ -119,9 +129,13 @@ def main() -> int:
     (kb / KEEP_TERM_FILE).write_text("validateImportRows2\n", encoding="utf-8")
 
     res = export_masked(kb, out)
+    # 卡片文件名本身就是工单号 → 导出必须连文件名一起换成合成 token（collect_ids 与
+    # 导出用的是同一份映射，所以这里可以直接算出期望路径）
+    tokens = collect_ids(kb)
+    card_rel = Path("逻辑") / (tokens["EXAMPLEid0000001"] + ".md")
 
     # ---- 1. 结构与数量：知识不能整块丢掉 ----
-    check("卡片数不变", res["files"] == 3, str(res["files"]))
+    check("卡片数不变", res["files"] == 4, str(res["files"]))
     check("类目目录保留", all((out / c).is_dir() for c in ("逻辑", "UI", "_patterns")),
           str([p.name for p in out.iterdir()]))
     check("写了导出说明", (out / "EXPORT-NOTE.md").is_file())
@@ -129,7 +143,29 @@ def main() -> int:
           str([p.name for p in out.rglob("*.json")]))
     check("词表文件本身不导出", not (out / TERM_FILE).exists())
 
-    card = (out / "逻辑" / "EXAMPLEid0000001.md").read_text(encoding="utf-8")
+    # ---- 1b. 文件名脱敏：这一条是导出提交前才发现的真漏（原来只洗内容） ----
+    paths = "\n".join(str(p.relative_to(out)).replace("\\", "/") for p in sorted(out.rglob("*.md")))
+    check("导出路径里不含原始工单记录号", "EXAMPLEid0000001" not in paths
+          and "EXAMPLEid0000002" not in paths, paths.replace("\n", " ")[:110])
+    check("文件名换成了 rec- 合成 token", card_rel.as_posix() in paths, str(card_rel))
+    check("卡片确实写到了 token 化路径下", (out / card_rel).is_file())
+    idx = (out / "INDEX.md").read_text(encoding="utf-8")
+    links = re.findall(r"\]\(([^)]+\.md)\)", idx)
+    check("INDEX 链接数量对得上", len(links) == 3, str(links))
+    broken = [l for l in links if not (out / l).is_file()]
+    check("重命名后 INDEX 里的链接全部可解析（没被改死）", not broken, str(broken))
+    check("INDEX 里也不残留原始记录号", "EXAMPLEid0000001" not in idx, idx.replace("\n", " ")[:90])
+
+    card = (out / card_rel).read_text(encoding="utf-8")
+
+    # ---- 1c. 重导必须扫尾：换了 token 之后旧名字的文件不会被覆盖，而是与新的并存，
+    #          旧文件里带着上一次的真实记录号 —— 实测就是这样把 13 个工单号留下的。
+    stale = out / "逻辑" / "STALE-old-name.md"
+    stale.write_text("旧的带真实记录号命名\n", encoding="utf-8")
+    export_masked(kb, out)
+    check("重导会清掉上一次留下的 .md", not stale.exists())
+    check("重导后卡片数仍正确", len(list(out.rglob("*.md"))) == 5,
+          str(sorted(p.name for p in out.rglob("*.md"))[:6]))
 
     # ---- 2. 该挡的：逐条断言 ----
     check("内网链接被挡", "test-intranet.customer.example.cn" not in card and
@@ -138,8 +174,12 @@ def main() -> int:
     check("账号口令被挡", "Passw0rd@2026" not in card and "someuser" not in card)
     check("凭据位留下占位符", "<已脱敏账号凭据>" in card)
     check("【测试账号】标签仍在（知道这里原本是什么）", "测试账号" in card)
-    check("工单记录号被挡", "EXAMPLEid0000001" not in
-          card.split("---", 2)[2] and "<已脱敏ID>" in card)
+    # 记录号（内容与文件名）换成 rec- token：既不留原值，又保持同一工单在整份副本里
+    # 指向同一个标识，卡片之间仍可交叉引用
+    check("工单记录号在正文里也不留原值", "EXAMPLEid0000001" not in card)
+    check("记录号换成 rec- 合成 token",
+          f"defect_id: {tokens['EXAMPLEid0000001']}" in card,
+          card.splitlines()[1][:40])
     check("绝对路径被挡", "D:\\" not in card and "<已脱敏路径>" in card)
     check("邮箱被挡", "someone@customer.example.cn" not in card)
     check("迭代号留形状去数值", "【迭代106】" not in card and "【迭代N】" in card)
@@ -189,7 +229,7 @@ def main() -> int:
     # 原件没有的串，它不报——这不是漏检，是不在比对范围内。）
     leaky = Path(tempfile.mkdtemp()) / "leaky"
     shutil.copytree(out, leaky)
-    (leaky / "逻辑" / "EXAMPLEid0000001.md").write_text(CARD, encoding="utf-8")
+    (leaky / card_rel).write_text(CARD, encoding="utf-8")
     rep2 = audit_masked(kb, leaky)
     toks = {r["token"] for r in rep2["leaked"]}
     check("规则失效时自检报出多项残留", len(rep2["leaked"]) >= 4,
@@ -204,6 +244,21 @@ def main() -> int:
     shape = redact("test-intranet.customer.example.cn")
     check("报告里敏感值只以打码形状出现",
           "test-intranet" not in shape and "*" in shape, shape)
+
+    # 专防「只在文件名里泄露」这一类：内容全洗干净、但文件名还是原始记录号。
+    # 这正是本模块最初的盲点（自检只比内容），必须有独立用例钉住。
+    nameonly = Path(tempfile.mkdtemp()) / "nameonly"
+    nameonly.mkdir(parents=True)
+    (nameonly / "逻辑").mkdir()
+    clean_card = (out / card_rel).read_text(encoding="utf-8")
+    (nameonly / "逻辑" / "EXAMPLEid0000001.md").write_text(clean_card, encoding="utf-8")
+    rep3 = audit_masked(kb, nameonly)
+    flagged = [r for r in rep3["leaked"] if r["token"] == "EXAMPLEid0000001"]
+    check("只在文件名里残留，自检也要报", bool(flagged),
+          str([r["token"] for r in rep3["leaked"]])[:110])
+    check("报告会点出是路径问题",
+          any("路径" in w for r in flagged for w in r["where"]),
+          str(flagged[:1])[:150])
 
     # ---- 4c. 账号名自动入表：裸出现的账号名，形状规则挡不住 ----
     kb2 = Path(tempfile.mkdtemp()) / "kb2"

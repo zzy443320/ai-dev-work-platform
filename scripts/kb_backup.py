@@ -16,6 +16,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 import re
 import zipfile
 from datetime import datetime
@@ -160,12 +161,16 @@ def _apply_rules(line: str) -> str:
 
 
 def mask_text(text: str, terms: Iterable[str] = (),
-              keep: Iterable[str] = ()) -> str:
+              keep: Iterable[str] = (),
+              tokens: Optional[Dict[str, str]] = None) -> str:
     """整份脱敏。
 
-    terms —— 内部标识词表，大小写不敏感地整体替换成 ``<内部标识>``；
-    keep   —— 白名单：这些串在任何规则之前先被保护起来（哨兵替换），全部规则跑完
-              再原样放回。用于捞回被「不透明 ID」形状规则误伤的代码线索。
+    terms   —— 内部标识词表，大小写不敏感地整体替换成 ``<内部标识>``；
+    keep    —— 白名单：这些串在任何规则之前先被保护起来，全部规则跑完再原样放回。
+               用于捞回被「不透明 ID」形状规则误伤的代码线索。
+    tokens  —— 真实 ID → 合成 token 的映射（见 id_tokens()）。走同一套「先保护后放回」
+               机制，所以既不会被别的规则二次改写，也不会残留原值。文件名与内容必须用
+               **同一份**映射，否则 INDEX.md 里的链接会指向不存在的路径。
     """
     keeps = sorted({k for k in (t.strip() for t in keep) if k}, key=len, reverse=True)
     protected = text
@@ -175,6 +180,11 @@ def mask_text(text: str, terms: Iterable[str] = (),
         if tok in protected:
             protected = protected.replace(tok, sentinel)
             sentinels[sentinel] = tok
+    for i, (real, fake) in enumerate(sorted((tokens or {}).items(), key=lambda kv: -len(kv[0]))):
+        sentinel = f"\x00TOK{i}\x00"
+        if real in protected:
+            protected = protected.replace(real, sentinel)
+            sentinels[sentinel] = fake
 
     lines = _mask_credentials(protected.split("\n"))
     out = "\n".join(_apply_rules(l) for l in lines)
@@ -186,6 +196,25 @@ def mask_text(text: str, terms: Iterable[str] = (),
     for sentinel, tok in sentinels.items():
         out = out.replace(sentinel, tok)
     return out
+
+
+def collect_ids(kb_dir: Path) -> Dict[str, str]:
+    """扫描**原始**知识库，给每个不透明 ID（工单记录号）分配一个确定性合成 token。
+
+    token 形如 rec-3fa1c02d：纯小写十六进制，不会被 opaque 形状规则二次命中，
+    而且是文件名安全的。用 sha1 而不是计数器，保证同一个 ID 跨多次导出得到同一个
+    token（可复现，diff 不会因导出顺序而抖）。
+
+    文件名也要扫 —— 卡片文件名本身就是工单号，只洗内容会把真实记录号原样留在路径里
+    （这是本模块一开始的盲点，导出提交前的自检才发现）。
+    """
+    found: set = set()
+    for md in sorted(Path(kb_dir).rglob("*.md")):
+        found |= set(_OPAQUE_CANDIDATE.findall(
+            md.read_text(encoding="utf-8", errors="replace")))
+        found.add(md.stem)
+    return {t: f"rec-{hashlib.sha1(t.encode('utf-8')).hexdigest()[:8]}"
+            for t in sorted(found) if len(t) >= 8}
 
 
 def load_terms(kb_dir: Path, name: str = TERM_FILE) -> List[str]:
@@ -278,16 +307,35 @@ def export_masked(kb_dir: str | Path, out_dir: str | Path,
     keep = list(keep)
 
     files = sorted(p for p in src.rglob("*.md") if p.is_file())
-    per_category: Dict[str, int] = {}
-    masked_files = 0
+    # 卡片文件名本身就是工单号 → 导出必须连文件名一起换成合成 token（collect_ids 与
+    # 导出用的是同一份映射，所以 INDEX 里的链接还能指得到）。
+    tokens = collect_ids(src)
+    written: List[Path] = []
     for md in files:
         rel = md.relative_to(src)
         raw = md.read_text(encoding="utf-8", errors="replace")
-        clean = mask_text(raw, terms, keep)
-        target = dst / rel
+        clean = mask_text(raw, terms, keep, tokens)
+        clean_rel = Path(mask_text(str(rel).replace("\\", "/"), tokens=tokens))
+        target = dst / clean_rel
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(clean, encoding="utf-8")
-        masked_files += 1
+        written.append(target)
+
+    # 清掉上一次导出留下的 .md：文件名换了 token 之后，旧名字的文件不会被覆盖，而是
+    # 和新的并存 —— 旧文件里带着**上一次的真实记录号命名**（实测就是这样把 13 个
+    # 工单号留在导出目录里的）。所以重导必须扫尾，否则「脱敏副本」反而是最脏的一份。
+    keep_set = {p.resolve() for p in written} | {dst / README_NAME}
+    stale = [p for p in dst.rglob("*.md") if p.resolve() not in keep_set]
+    for p in stale:
+        try:
+            p.unlink()
+        except OSError:
+            pass
+
+    per_category: Dict[str, int] = {}
+    masked_files = len(written)
+    for target in written:
+        rel = target.relative_to(dst)
         cat = rel.parts[0] if len(rel.parts) > 1 else "_root"
         per_category[cat] = per_category.get(cat, 0) + 1
 
@@ -301,6 +349,9 @@ def export_masked(kb_dir: str | Path, out_dir: str | Path,
         "- **不是**知识库本身。运行流水线读的是未脱敏的 `knowledge_base/`（它不入库）。\n"
         "- 作用是让「沉淀」这件事进版本控制：卡片误删、换机器、开源这份工具时，"
         "同类缺陷的现象/根因/修复/预防不会归零。\n"
+        "- **文件名也做了脱敏**：卡片文件名本身就是工单记录号，所以导出时按 sha1 换成 "
+        "`rec-xxxxxxxx` 形式的合成名（同一个工单号跨多次导出得到同一个 token，diff 稳定）。"
+        "INDEX.md 里的链接与正文中的引用同步换成同一个 token，链接仍然可点。\n"
         "- 脱敏规则见 `scripts/kb_backup.py`；词表在知识库目录下的 `mask_terms.txt`"
         "（要额外挡的内部标识）与 `keep_terms.txt`（被形状规则误伤、要捞回的代码线索）。"
         "回归用例见 `tests/check_kb_export.py`。\n\n"
@@ -413,12 +464,21 @@ def audit_masked(kb_dir: str | Path, out_dir: str | Path) -> Dict:
     if not dst.is_dir():
         raise FileNotFoundError(f"导出目录不存在，先跑导出：{dst}")
     keep = set(load_terms(src, KEEP_TERM_FILE))
-    copy_text = "\n".join(p.read_text(encoding="utf-8", errors="replace")
-                          for p in sorted(dst.rglob("*.md")))
+    exported = sorted(dst.rglob("*.md"))
+    copy_text = "\n".join(p.read_text(encoding="utf-8", errors="replace") for p in exported)
+    # 路径也要比 —— 卡片文件名就是工单号，只比内容会漏整批真实 ID（本模块最初的盲点）。
+    copy_paths = "\n".join(str(p.relative_to(dst)).replace("\\", "/") for p in exported)
     atoms = _sensitive_atoms(src)
-    leaked = [{"token": tok, "where": where}
-              for tok, where in sorted(atoms.items())
-              if tok in copy_text and tok not in keep]
+    leaked = []
+    for tok, where in sorted(atoms.items()):
+        if tok in keep:
+            continue
+        in_paths = tok in copy_paths
+        if tok in copy_text or in_paths:
+            entry = {"token": tok, "where": list(where)}
+            if in_paths:
+                entry["where"].append("⚠️ 出现在导出文件的**路径/文件名**里")
+            leaked.append(entry)
     return {"checked": len(atoms), "leaked": leaked, "kept": len(keep),
             "out_dir": str(dst)}
 
