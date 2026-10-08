@@ -31,6 +31,7 @@ export const AGENT_TEXT = {
   verified: '沙箱验证通过（基线红 → 补丁后绿）',
   checks_pass: '验收命令全绿（基线本就全绿，缺陷本身仍需页面确认）',
   unverified: '未经真实验证（仓库里没有可跑的验收命令）',
+  symptom_persists: '命令全绿，但页面现象仍在',
   not_converged: '未收敛，已认输转人工',
   budget_exhausted: '轮次/时间预算用尽，未跑绿',
   no_patch: '模型未给出可用补丁',
@@ -45,11 +46,28 @@ export const AGENT_TONE = {
   checks_pass: 'good',
   unverified: 'mid',
   agent_disabled: 'mid',
+  symptom_persists: 'bad',
   not_converged: 'bad',
   budget_exhausted: 'bad',
   no_patch: 'bad',
   sandbox_unavailable: 'bad',
   error: 'bad',
+}
+
+/** 沙箱页面复验的判读结论 */
+export const PAGE_VERDICT_TEXT = {
+  gone: '修复后现象已消失',
+  same: '修复后现象仍在',
+  unclear: '看不出来（不作通过依据）',
+  none: '未做视觉判读',
+}
+
+export const PAGE_STATUS_TEXT = {
+  ok: '已复验',
+  skipped: '未起服务（按配置或预算跳过）',
+  unusable: '沙箱页面没能正常渲染，复验不成立',
+  failed: '复验过程出错',
+  error: '复验过程出错',
 }
 
 export function agentLabel(c) {

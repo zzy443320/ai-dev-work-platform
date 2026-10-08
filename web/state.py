@@ -137,6 +137,13 @@ DEFAULT_SETTINGS = {
         "repro": "auto",             # auto|on|off —— 先写复现用例跑红，再动手修
         "repro_command": "",         # 探测不准时自定义复现命令（{file} 是用例路径）
         "repro_max_rewrite": 2,      # 复现失败允许重写几次，超过就放弃该环节
+        "sandbox_server": "auto",    # auto|on|off：在沙箱里起 dev server 复验页面
+        "sandbox_server_command": "",
+        "sandbox_server_cwd": "",
+        "sandbox_server_ready_timeout": 90,
+        "sandbox_server_max_checks": 2,
+        "precedents": 3,             # 同类历史缺陷先例注入条数（0=关）
+        "precedents_chars": 6000,
         "command_allow_text": "",    # 追加放行的命令正则，一行一条
     },
     "playwright": {

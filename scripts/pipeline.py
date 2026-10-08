@@ -407,7 +407,7 @@ class AIDefectFixerPipeline:
             # 唯一能拿到的运行时证据（循环本身只跑静态命令，不起 dev server）。
             verify, page = self._page_evidence(did, defect, skip_verify, on_delta, emit)
 
-            agent = self._run_agent(defect, analysis, page, did, emit)
+            agent = self._run_agent(defect, analysis, page, did, emit, verify)
             art_id = self._repro_artifact(defect, agent)
             if art_id:
                 agent.setdefault("repro", {})["artifact_id"] = art_id
@@ -516,7 +516,7 @@ class AIDefectFixerPipeline:
 
     # ------------------------------------------------------- agentic 修复循环
     def _run_agent(self, defect: Dict, analysis: Dict, page: Dict, did: str,
-                   emit) -> Dict:
+                   emit, verify: Optional[Dict] = None) -> Dict:
         """跑一次修复循环。任何意外都退回到「一次成型」的结果，而不是让整条流水线红。"""
         if not self.agent_enabled or str(self.ai.mode) == "mock":
             return {"enabled": False, "conclusion": "agent_disabled",
@@ -525,11 +525,33 @@ class AIDefectFixerPipeline:
         def _emit_agent(evt: Dict) -> None:
             _emit(emit, {**evt, "defect": did})
 
+        # 先例：把「同类问题当时怎么改的、后来人工认没认」接回回路。
+        # 不给的话，同一个模块反复出缺陷，模型每次都是从零猜一遍，被否决过的改法还会重演。
+        precedents = ""
+        prec_items: List[Dict] = []
+        try:
+            from .precedents import load_precedents, render_precedents
+
+            limit = _as_int(self.agent_cfg.get("precedents"), 3)
+            prec_items = load_precedents(str(self.proposals.base), defect, limit=limit)
+            precedents = render_precedents(
+                prec_items, _as_int(self.agent_cfg.get("precedents_chars"), 6000))
+            if prec_items:
+                _emit(emit, {"type": "stage", "stage": "repro", "status": "done",
+                             "defect": did,
+                             "detail": f"取到 {len(prec_items)} 条同类先例"
+                                       f"（其中人工拒绝 {sum(1 for i in prec_items if i['outcome'] == 'rejected')} 条）"})
+        except Exception as e:
+            print(f"  [precedents] 先例检索失败（不影响本次修复）: {e}")
+
         _emit(emit, {"type": "stage", "stage": "agent", "status": "start",
                      "defect": did,
                      "detail": "进入 agentic 修复循环：自己查代码、改、在沙箱里真跑验收…"})
         agent = FixAgent(self.repo_path, self.ai, agent_cfg=self.agent_cfg,
-                         gate_cfg=self.gate_cfg, emit=_emit_agent)
+                         gate_cfg=self.gate_cfg, emit=_emit_agent,
+                         precedents=precedents,
+                         page_after_hook=self._page_after_hook(
+                             defect, did, verify or page))
         try:
             with usage.step("fix_agent"):
                 result = agent.run(defect, seed={"analysis": analysis, "page": page,
@@ -546,6 +568,14 @@ class AIDefectFixerPipeline:
                                f"（{result.get('rounds')} 轮 / "
                                f"{len(result.get('attempts') or [])} 次补丁尝试 / "
                                f"{result.get('elapsed_seconds')}s）"})
+        # 透明化：注入了哪几条先例、当时结局如何，得能在提案里看到——
+        # 否则模型抄了个被否决过的改法，人却查不到它抄了什么
+        result["precedents_used"] = [
+            {"proposal_id": i.get("proposal_id"), "defect_id": i.get("defect_id"),
+             "title": i.get("title"), "outcome": i.get("outcome"),
+             "conclusion": i.get("conclusion"), "verified_via": i.get("verified_via"),
+             "same_defect": bool(i.get("same_defect")), "score": i.get("score")}
+            for i in prec_items]
         return result
 
     # ------------------------------------------------------- 复现用例 → 产出物
@@ -591,6 +621,85 @@ class AIDefectFixerPipeline:
             "repro", title, payload,
             ctx={"notes": f"defect={did}", "file_path": path})
         return str(created.get("id") or "")
+
+    # -------------------------------------------- 沙箱页面复验（修复后截图判读）
+    def _page_after_hook(self, defect: Dict, did: str, before: Dict):
+        """交给 FixAgent 的钩子：在**打了补丁的沙箱**里起 dev server，拍一张修复后的图。
+
+        这一步的结论只有一种用法：命令全绿而现象仍在，就不算修好。反过来，页面复验做不
+        成（起不来服务、白屏、缺后端接口）时**绝不降级成「通过」**，而是原样标成
+        unusable / skipped —— 看不等于没看。
+        """
+        mode = str(self.agent_cfg.get("sandbox_server") or "auto").strip().lower()
+        if mode not in ("auto", "on"):
+            return None
+
+        def hook(sandbox, budget_left: int = 0) -> Dict:
+            from .sandbox import default_server_command
+
+            command = str(self.agent_cfg.get("sandbox_server_command") or "").strip()
+            if not command:
+                command, _cwd = default_server_command(Path(self.repo_path))
+            if not command:
+                return {"status": "skipped",
+                        "reason": "没探出可用的 dev server 启动命令（package.json 里没有 "
+                                  "dev/start/serve，或技术栈不认识）。"
+                                  "可在配置里填 agent.sandbox_server_command"}
+            ready_timeout = _as_int(self.agent_cfg.get("sandbox_server_ready_timeout"), 90)
+            if int(budget_left or 0) < ready_timeout + 45:
+                return {"status": "skipped",
+                        "reason": f"剩余时间预算不足（{budget_left}s），不起 dev server 复验"}
+            handle = sandbox.spawn_server(
+                command, ready_timeout=ready_timeout,
+                cwd_rel=str(self.agent_cfg.get("sandbox_server_cwd") or ""))
+            if not handle.ready:
+                return {"status": "unusable", "reason": handle.note or "服务未就绪",
+                        "command": handle.command, "url": handle.url,
+                        "log_tail": handle.log_tail[-1200:]}
+            shot: Dict = {"status": "error", "command": handle.command,
+                          "url": handle.url, "server_seconds": handle.seconds}
+            try:
+                ver = ScreenshotVerifier(
+                    base_url=handle.url,
+                    headless=bool(self.config.get("playwright", {}).get("headless", True)),
+                    screenshot_dir=self.verifier.screenshot_dir,
+                    ai=self.ai,
+                    auth=self.config.get("playwright", {}).get("auth") or {})
+                route = (before or {}).get("route") or "/"
+                after = ver.capture(did, "sandbox-after", defect, route=route,
+                                    actions=(before or {}).get("replay_actions") or None)
+                shot.update({
+                    "screenshot": after.get("screenshot") or "",
+                    "route": after.get("route") or route,
+                    "page_status": after.get("status"),
+                    "console_errors": (after.get("console_errors") or [])
+                    + (after.get("page_errors") or []),
+                })
+                if after.get("status") in ("unreachable", "error", "blank"):
+                    # 白屏/连不上不是「没有报错所以修好了」
+                    shot["status"] = "unusable"
+                    shot["reason"] = (f"沙箱页面没能正常渲染（{after.get('status')}）："
+                                      + str(after.get("error") or "无更多细节")[:200])
+                    return shot
+                before_errs = set((before or {}).get("console_errors") or [])
+                after_errs = set(shot["console_errors"])
+                shot["new_errors"] = sorted(after_errs - before_errs)[:10]
+                shot["cleared_errors"] = sorted(before_errs - after_errs)[:10]
+                judged = ver.judge_fix(before or {}, after, defect)
+                shot["verdict"] = judged.get("verdict") or "unclear"
+                shot["evidence"] = judged.get("evidence") or ""
+                shot["status"] = "ok"
+                if shot["verdict"] not in ("gone", "same", "unclear"):
+                    shot["verdict"] = "unclear"
+                return shot
+            except Exception as e:
+                shot["status"] = "failed"
+                shot["reason"] = f"{type(e).__name__}: {e}"
+                return shot
+            finally:
+                handle.stop()
+
+        return hook
 
     # ------------------------------------------------------------ 闸门折算
     def _gate_of(self, agent: Dict, patch: Dict) -> Dict:
@@ -816,6 +925,13 @@ def _empty_patch(reason: str) -> Dict:
         "rejected": [], "warnings": [], "combined_diff": "", "files": [],
         "patched_contents": {}, "patch_text": "", "reason": reason,
     }
+
+
+def _as_int(v, default: int) -> int:
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return default
 
 
 def _now() -> str:

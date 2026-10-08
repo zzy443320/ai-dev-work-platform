@@ -261,6 +261,35 @@ function openAiModal() {
                              :min="0" :max="6" controls-position="right" />
           </label>
           <label class="field">
+            <span>页面复验（拿到绿后在沙箱里起服务再拍一张）</span>
+            <el-select id="cfg-agent-server" v-model="form.agent.sandbox_server">
+              <el-option label="auto（探得到 dev 脚本才起服务）" value="auto" />
+              <el-option label="on（必须起，起不来就标未复验）" value="on" />
+              <el-option label="off（只要命令级证据）" value="off" />
+            </el-select>
+          </label>
+          <label class="field">
+            <span>dev server 命令（{port} 换成空闲端口）</span>
+            <el-input id="cfg-agent-server-cmd" v-model="form.agent.sandbox_server_command"
+                      placeholder="pnpm --filter demo-app dev --port {port}" />
+          </label>
+          <label class="field">
+            <span>子包目录（monorepo 相对仓库根，可空）</span>
+            <el-input id="cfg-agent-server-cwd" v-model="form.agent.sandbox_server_cwd"
+                      placeholder="packages/demo-app" />
+          </label>
+          <label class="field">
+            <span>等服务就绪的秒数</span>
+            <el-input-number id="cfg-agent-server-timeout"
+                             v-model="form.agent.sandbox_server_ready_timeout"
+                             :min="20" :max="600" :step="10" controls-position="right" />
+          </label>
+          <label class="field">
+            <span>注入几条同类历史缺陷先例（0=关）</span>
+            <el-input-number id="cfg-agent-precedents" v-model="form.agent.precedents"
+                             :min="0" :max="8" controls-position="right" />
+          </label>
+          <label class="field">
             <span>单条命令超时（秒）</span>
             <el-input-number id="cfg-agent-cmd-timeout" v-model="form.agent.per_command_timeout"
                              :min="15" :max="1800" :step="15" controls-position="right" />

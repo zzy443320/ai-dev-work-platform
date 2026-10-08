@@ -89,10 +89,15 @@ class KnowledgeBase:
             f"proposal_id: {proposal.get('id', '')}\n"
             f"status: {status}\n"
             f"gate_level: {gate.get('level', '')}\n"
+            # 循环结论与人工结局进 frontmatter：派生的模式层与检索都按字段取，
+            # 散文留在正文（见 _agent_block 的说明）
+            f"fix_conclusion: {(proposal.get('agent') or {}).get('conclusion') or ''}\n"
+            f"evidence_via: {(proposal.get('agent') or {}).get('verified_via') or ''}\n"
+            f"human_decision: {_human_decision(proposal)}\n"
             f"commit: {apply_info.get('sha', '')}\n"
             f"created: {proposal.get('created') or datetime.now().isoformat(timespec='seconds')}\n"
             f"updated: {datetime.now().isoformat(timespec='seconds')}\n"
-            f"kb_version: 2\n"
+            f"kb_version: 3\n"
             "---\n\n"
             f"# {defect.get('title', slug)}\n\n"
             "## 现象\n"
@@ -108,6 +113,8 @@ class KnowledgeBase:
             f"{_fence('diff', patch.get('combined_diff') or '(未生成 diff)')}\n\n"
             "## 验收闸门\n"
             f"{_fence('json', json.dumps(gate, ensure_ascii=False, indent=2))}\n\n"
+            "## 修复循环结论\n"
+            f"{_agent_block(proposal)}\n\n"
             "## 页面验证\n"
             f"{_fence('json', json.dumps(_verify_slim(verify), ensure_ascii=False, indent=2))}\n\n"
             "## 复现步骤\n"
@@ -300,6 +307,50 @@ def _verify_slim(verify: Dict) -> Dict:
             "plan_note", "actions", "actions_log", "console_errors", "page_errors",
             "error", "reason")
     return {k: verify[k] for k in keys if k in verify}
+
+
+def _human_decision(proposal: Dict) -> str:
+    """人工结局一个词说清：采纳 / 采纳后撤销 / 拒绝 / 强制采纳 / 还没审。"""
+    dec = proposal.get("decision") or {}
+    apply_info = proposal.get("apply") or {}
+    status = str(proposal.get("status") or "")
+    if dec.get("approved") is False:
+        return "rejected"
+    if apply_info.get("undone_at"):
+        return "applied_then_undone"
+    if dec.get("forced"):
+        return "force_applied"
+    if status == "applied":
+        return "applied"
+    return "pending"
+
+
+def _agent_block(proposal: Dict) -> str:
+    """agentic 修复循环的结论 + 人工结局，一并沉淀进卡片。
+
+    刻意只写**枚举值与计数**，不把模型的自由文本搬进卡片：知识卡片的脱敏导出是按
+    「形状」识别敏感串（绝对路径、12 位以上混合 token、账号行…）的，新增大段模型散文
+    等于给脱敏流程挖一个静默漏洗的坑。要看原文去 proposals/<id>.json。
+    """
+    agent = proposal.get("agent") or {}
+    if not agent:
+        return "（本次提案来自旧的一次成型链路，没有修复循环记录）"
+    repro = agent.get("repro") or {}
+    page = agent.get("page_after") or {}
+    lines = [
+        f"- 循环结论: {agent.get('conclusion') or '—'}",
+        f"- 证据来源: {agent.get('verified_via') or '—'}",
+        f"- 轮次 / 补丁尝试: {agent.get('rounds', 0)} / {len(agent.get('attempts') or [])}",
+        f"- 复现用例: {repro.get('path') or '—'}"
+        f"（状态 {repro.get('status') or '—'}"
+        f"{'，跑器 ' + str((repro.get('harness') or {}).get('strength') or '—') if repro.get('harness') else ''}）",
+        f"- 沙箱页面复验: {page.get('verdict') or page.get('status') or '未做'}",
+        f"- 需人工介入: {'是' if agent.get('needs_human') else '否'}",
+        f"- 人工结局: {_human_decision(proposal)}",
+    ]
+    if (proposal.get("decision") or {}).get("note"):
+        lines.append("- 决策备注: " + str(proposal["decision"]["note"])[:200])
+    return "\n".join(lines)
 
 
 def _files_table(changes: List[Dict]) -> str:

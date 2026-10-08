@@ -34,6 +34,15 @@ _PLAN_SYSTEM = "你是前端 E2E 测试工程师，把缺陷复现步骤转成�
 _READ_SYSTEM = ("你是前端缺陷排查工程师，只看图与给定报错说话。判读页面截图时必须引用图里"
                 "真实可见的内容；图里看不到的就明确说看不到，**绝不按工单文字编造页面内容**。")
 
+_JUDGE_SYSTEM = ("你是前端缺陷验收员，只依据给到的截图与报错文本判断现象是否消失，"
+                 "只输出 JSON。空白页、未加载、看不出来都必须回答 unclear 或 same，"
+                 "绝不把「没看到报错」当成「现象消失」。")
+
+
+def _clip_lines(items, n=6):
+    rows = [str(x).strip()[:160] for x in (items or []) if str(x).strip()][:n]
+    return "\n".join(f"· {r}" for r in rows) or "（无）"
+
 # 白屏判定：body.innerText 几乎为空。SPA 路由打不开时 console 往往是安静的，
 # 文本量比 console 更可靠地回答「页面真的渲染出来了吗」。
 _BLANK_PROBE_JS = (
@@ -384,6 +393,61 @@ class ScreenshotVerifier:
         if res.get("error"):
             return f"（截图判读失败：{res['error']}）"
         return str(res.get("text") or "").strip()
+
+    def judge_fix(self, before: Dict, after: Dict, defect: Dict) -> Dict:
+        """把修复前/修复后两张图一起给模型，判「工单描述的现象消失了没有」。
+
+        刻意要求它只能给三种结论之一，并且**看不清就说不清**：这类视觉判读最容易
+        产生的不是错判而是假自信——一张白屏 + 一句「页面正常」比不看还糟。
+        返回 {"verdict": gone|same|unclear|none, "evidence": str}。
+        """
+        imgs = []
+        for tag, shot in (("修复前", before), ("修复后", after)):
+            path = str(shot.get("screenshot") or "")
+            if path and Path(path).is_file():
+                try:
+                    data = Path(path).read_bytes()
+                except OSError:
+                    continue
+                if 0 < len(data) <= 4_000_000:
+                    import base64
+
+                    imgs.append({"mime": "image/png", "tag": tag,
+                                 "data_uri": "data:image/png;base64,"
+                                             + base64.b64encode(data).decode()})
+        cfg = getattr(getattr(self, "ai", None), "cfg", None)
+        if self.ai is None or cfg is None or getattr(cfg, "is_mock", True):
+            return {"verdict": "none", "evidence": "未配置可用模型，不做视觉判读"}
+        if len(imgs) < 2:
+            return {"verdict": "none", "evidence": "缺少修复前或修复后的截图，无法对比"}
+        errors_b = (before.get("console_errors") or []) + (before.get("page_errors") or [])
+        errors_a = (after.get("console_errors") or []) + (after.get("page_errors") or [])
+        prompt = (
+            f"两张图按顺序给你：第 1 张是**修复前**，第 2 张是**打上候选补丁后**，"
+            f"同一个页面、同一套复现操作。\n"
+            f"缺陷标题：{str(defect.get('title') or '')[:200]}\n"
+            f"修复前报错：{_clip_lines(errors_b, 6)}\n"
+            f"修复后报错：{_clip_lines(errors_a, 6)}\n\n"
+            "只回答 JSON：{\"verdict\": \"gone|same|unclear\", \"evidence\": \"图里看到什么\"}\n"
+            "  · gone   = 第 2 张里工单描述的现象确实不见了，说清哪块区域变了；\n"
+            "  · same   = 第 2 张里现象仍然在（哪怕是别的新问题）；\n"
+            "  · unclear= 两张看不出差别 / 第 2 张是空白页 / 页面没加载出来 / 你根本看不清。\n"
+            "**拿不准一律 unclear**；第 2 张是白屏或报错页时必须 unclear 或 same，"
+            "绝不能因为「没有报错文字」就说 gone。"
+        )
+        try:
+            with usage.step("judge_fix"):
+                res = self.ai.complete(prompt, system=_JUDGE_SYSTEM, max_tokens=1200,
+                                       images=[{"mime": i["mime"],
+                                                "data_uri": i["data_uri"]} for i in imgs])
+        except Exception as e:
+            return {"verdict": "none", "evidence": f"判读异常：{e}"}
+        if res.get("error"):
+            return {"verdict": "none", "evidence": f"判读失败：{res['error']}"}
+        verdict = str(res.get("verdict") or "").strip().lower()
+        if verdict not in ("gone", "same", "unclear"):
+            verdict = "unclear"
+        return {"verdict": verdict, "evidence": str(res.get("evidence") or "")[:800]}
 
     def compare(self, before: Dict, after: Dict) -> Dict:
         b, a = before.get("screenshot", ""), after.get("screenshot", "")

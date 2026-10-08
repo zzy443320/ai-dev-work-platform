@@ -83,6 +83,20 @@ agent:
   repro_command: ""
   # 复现用例跑红失败时允许重写几次（超过就放弃复现环节并如实记录）
   repro_max_rewrite: 2
+  # 页面复验：第一次拿到绿之后，在**打了补丁的沙箱**里起一次 dev server，
+  # 按工单的复现操作再拍一张图，让模型对着修复前/后两张图判「现象消失了没有」。
+  #   auto = 探得到 dev 脚本才起；on = 必须起；off = 只要命令级证据
+  sandbox_server: auto
+  # 探不准就自己写（{port} 会被换成一个空闲端口）：
+  # sandbox_server_command: "pnpm --filter demo-app dev --port {port}"
+  sandbox_server_command: ""
+  sandbox_server_cwd: ""            # monorepo 里子包相对仓库根的路径
+  sandbox_server_ready_timeout: 90  # 等端口就绪的秒数；剩余预算不足会直接跳过
+  sandbox_server_max_checks: 2    # 一条缺陷最多起几次服务复验（判读说没修好时，下一版要重新看一次）
+  # 同类历史缺陷先例：注入几条到 prompt（0 = 关闭）。连被人工拒绝的改法一起给，
+  # 免得模型反复端上你们已经否掉的方案。
+  precedents: 3
+  precedents_chars: 6000
   # 沙箱默认只放行构建/测试/检查类命令（npm/npx/node/tsc/eslint/vitest/git diff…），
   # 删除、外发、发布、改 git 状态的命令一律拒绝。这里可以追加正则（谨慎）。
   # command_allow:

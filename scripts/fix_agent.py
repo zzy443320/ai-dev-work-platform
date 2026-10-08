@@ -57,10 +57,13 @@ CONCLUSION_NO_PATCH = "no_patch"            # 模型始终没给出可用补丁
 CONCLUSION_NO_SANDBOX = "sandbox_unavailable"
 CONCLUSION_DISABLED = "agent_disabled"      # Mock 模式 / 未开启 agentic 循环
 CONCLUSION_UNVERIFIED = "unverified"        # 补丁能构建，但这个仓库没有任何可跑的验收命令
+# 命令全绿，但沙箱里把页面跑起来一看，工单描述的现象还在 —— 这是最该单独标出来的一档，
+# 否则「验收通过」会把一个没修好的补丁抬进可采纳状态
+CONCLUSION_PERSISTS = "symptom_persists"
 
 # 结论 → 是否需要人工介入（写进提案，UI 直接读这个字段决定徽标颜色）
 NEEDS_HUMAN = {CONCLUSION_STALLED, CONCLUSION_BUDGET, CONCLUSION_NO_PATCH,
-               CONCLUSION_NO_SANDBOX, CONCLUSION_DISABLED}
+               CONCLUSION_NO_SANDBOX, CONCLUSION_DISABLED, CONCLUSION_PERSISTS}
 
 # verified 是**靠什么**验出来的，证据强度差一个量级，必须分开标：
 #   repro-test   针对工单现象写的单测，从不绿到绿 —— 最接近「缺陷被修好了」
@@ -223,10 +226,25 @@ class FixAgent:
 
     def __init__(self, repo_path: str, ai, *, agent_cfg: Optional[Dict] = None,
                  gate_cfg: Optional[Dict] = None,
-                 emit: Optional[Callable[[Dict], None]] = None):
+                 emit: Optional[Callable[[Dict], None]] = None,
+                 page_after_hook: Optional[Callable[..., Dict]] = None,
+                 precedents: str = ""):
+        """`page_after_hook(sandbox, budget_left) -> Dict`：补丁已落在沙箱、还没还原回
+        原始内容的那一刻回调一次，由上层起 dev server 拍「修复后」的页面。
+
+        只有命令级证据就说「修好了」是不诚实的：lint 全绿也可能页面照样白屏。所以给了
+        钩子就只跑一次（第一次拿到绿时）；判读为「现象仍在」时这次绿不算收敛，继续改。
+        `precedents` 是同类历史缺陷的先例文本（scripts/precedents.py 生成），只作参考。
+        """
         self.repo_root = Path(repo_path).resolve()
         self.ai = ai
+        self.page_after_hook = page_after_hook
+        self.precedents = str(precedents or "")
+        self._shots = 0
+        self.page_after: Dict = {}
         self.cfg = dict(agent_cfg or {})
+        # 页面复验最多跑几次：判读说「现象仍在」后，下一版的绿必须重新看一眼页面才算数
+        self.shot_max = _int(self.cfg.get("sandbox_server_max_checks"), 2, 1, 5)
         self.gate_cfg = dict(gate_cfg or {})
         self.emit = emit
         self.max_rounds = _int(self.cfg.get("max_rounds"), DEFAULT_MAX_ROUNDS, 1, 24)
@@ -299,6 +317,7 @@ class FixAgent:
             "final_summary": "",
             "sandbox": {},
             "repro": {},
+            "page_after": {},
             "verified_via": "",
             "suggested_commands": [],
             "elapsed_seconds": 0.0,
@@ -331,6 +350,7 @@ class FixAgent:
             return result
 
         deadline = _Deadline(self.deadline_seconds)
+        self._deadline = deadline
         try:
             commands = resolve_commands(str(self.repo_root), self.gate_cfg) or []
         except Exception as e:
@@ -454,10 +474,31 @@ class FixAgent:
             result["files"] = best.get("files", [])
             result["verification"] = best.get("verification", {})
             result["best_round"] = best.get("round")
+            result["page_after"] = best.get("page_after") or self.page_after or {}
+            # 命令全绿但页面复验说现象仍在：这条不算收敛，别让它冒充 verified
+            if best.get("page_still_wrong"):
+                conclusion = CONCLUSION_PERSISTS
+                result["notes"].append(
+                    "验收命令全绿，但沙箱里把页面跑起来后工单描述的现象仍然存在，"
+                    "已按「未修好」处理（判读见修复轨迹）。")
+            elif (best.get("page_after") or {}).get("verdict") == "gone":
+                conclusion = CONCLUSION_VERIFIED
+            pa = result["page_after"]
+            if pa and pa.get("status") not in (None, "", "ok"):
+                # 复验没做成也要在提案里说清楚：一路证据"缺席"和一路证据"通过"
+                # 是两回事，别让读者以为页面已经看过了
+                result["notes"].append(
+                    f"沙箱页面复验未完成（{pa.get('status')}）："
+                    f"{pa.get('reason') or pa.get('note') or '原因未记录'}；"
+                    "本次结论只有命令级证据。")
             # 最终结论以「历史最好的一次」为准：模型最后一轮崩了/超预算，都不能把
             # 之前已经跑绿的补丁说成失败，反过来也不能把没跑绿的补成 verified。
-            if best.get("conclusion") in (CONCLUSION_VERIFIED, CONCLUSION_GREEN,
-                                          CONCLUSION_UNVERIFIED):
+            # 但 symptom_persists 是**比命令结果更高一级**的证据（页面复验），不许被降级
+            # 前的结论覆盖回去。
+            if (conclusion != CONCLUSION_PERSISTS
+                    and best.get("conclusion") in (CONCLUSION_VERIFIED,
+                                                   CONCLUSION_GREEN,
+                                                   CONCLUSION_UNVERIFIED)):
                 conclusion = best["conclusion"]
                 if best["conclusion"] == CONCLUSION_UNVERIFIED:
                     result["notes"].append(
@@ -561,6 +602,12 @@ class FixAgent:
         if cand:
             lines.append("## 一次成型阶段留下的候选补丁（未经验证，可能带错）\n"
                          + _clip(cand, 4000))
+        if self.precedents.strip():
+            lines.append(
+                "## 同类历史缺陷的先例（**只作参考，不是标准答案**）\n"
+                "仓库可能已经变过：先例里的路径、行号、补丁内容都必须你自己用工具"
+                "重新确认一遍再用。历史结论标了「已采纳 / 被拒绝 / 未验证」，"
+                "被拒绝的那类要避开它当时的改法。\n" + self.precedents)
         page = seed.get("page") or {}
         if page:
             lines.append("## 页面现场（Playwright 复刻工单操作后观察到的）")
@@ -805,6 +852,29 @@ class FixAgent:
 
         checks, notes = self._run_commands(sandbox, commands, label=f"第 {rnd} 轮")
         attempt["notes"] = notes
+
+        # 页面级证据：只在**第一次拿到绿**的时候起一次 dev server 拍一次图。
+        # 放在还原文件之前，是因为这一刻沙箱里正好是「打了补丁的代码」。
+        pre_restore = (not attempt.get("verification")
+                       or attempt.get("conclusion") in (CONCLUSION_VERIFIED,
+                                                        CONCLUSION_GREEN))
+        if (self.page_after_hook is not None and self._shots < self.shot_max
+                and checks and pre_restore):
+            self._shots += 1
+            self._stage("在沙箱里起 dev server，看修复后的页面…", stage="页面复验")
+            try:
+                shot = self.page_after_hook(
+                    sandbox, int(max(0, self._deadline.left()))) or {}
+            except Exception as e:
+                shot = {"status": "failed", "reason": f"页面复验异常：{e}"}
+            attempt["page_after"] = shot
+            self.page_after = shot
+            verdict = str(shot.get("verdict") or "")
+            self._stage(f"页面复验：{shot.get('status')} / 判读 {verdict or '无'}"
+                        + (f"（{shot.get('reason')}）" if shot.get("reason") else ""),
+                        status="done" if verdict == "gone" else "warn",
+                        stage="页面复验")
+
         for rel, content in originals.items():
             try:
                 sandbox.write(rel, content)
@@ -834,6 +904,23 @@ class FixAgent:
             attempt["signature"] = checks_signature(checks)
             repro_green = bool(passed.get(REPRO_CHECK_NAME))
             attempt["verified_via"] = self._via_of(repro_green, bool(checks))
+            page = attempt.get("page_after") or {}
+            if page.get("verdict") == "same":
+                # 命令全绿而现象仍在：这不是收敛。降级成失败，让模型继续改，
+                # 而不是拿着一个「看起来通过了」的补丁去等人采纳。
+                attempt["conclusion"] = CONCLUSION_PERSISTS
+                attempt["rank"] = RANK_FAIL
+                attempt["page_still_wrong"] = True
+            elif not page and self.page_after.get("verdict") == "same"                     and concl in (CONCLUSION_VERIFIED, CONCLUSION_GREEN):
+                # 上一版页面复验说过「现象仍在」，这一版没再复验（次数用尽/预算不足）：
+                # 不许拿一次没看过的绿去覆盖看过的坏消息
+                attempt["conclusion"] = CONCLUSION_PERSISTS
+                attempt["rank"] = RANK_FAIL
+                attempt["page_still_wrong"] = True
+                attempt["page_after"] = dict(self.page_after, stale=True)
+            elif page.get("verdict") == "gone" and concl in (CONCLUSION_VERIFIED,
+                                                             CONCLUSION_GREEN):
+                attempt["rank"] = RANK_VERIFIED + 1     # 页面级证据 > 只有命令绿
             if concl in (CONCLUSION_VERIFIED, CONCLUSION_GREEN) and \
                     REPRO_CHECK_NAME in checks:
                 self.repro["status"] = "green" if repro_green else "red"
@@ -900,6 +987,23 @@ class FixAgent:
                              "别的命令全绿也不算修好。看上面的报错改你的补丁，"
                              "**不要改用例来凑绿**（那是把温度计砸了说退烧了）。")
         lines.append(f"本次改动的 diff：\n```diff\n{attempt.get('combined_diff', '')}\n```")
+        page = attempt.get("page_after") or {}
+        if page:
+            v = str(page.get("verdict") or "")
+            if v == "same":
+                lines.append(
+                    "⚠ **命令全绿，但把页面跑起来看，工单描述的现象仍然存在。**"
+                    f"判读依据：{page.get('evidence') or page.get('reason') or '（无原文）'}\n"
+                    "别再用「测试都过了」当理由：现象没消失就说明没修对。"
+                    "回去看工单里的复现步骤与修复前截图，找出还差在哪，再交一版补丁。")
+            elif v == "gone":
+                lines.append("✅ 沙箱页面复验：修复后现象已消失（有截图与判读为证）。"
+                             "可以收尾了，给最终说明。")
+            elif page.get("status") in ("unusable", "failed", "skipped"):
+                lines.append(
+                    f"（页面复验没做成：{page.get('status')} — "
+                    f"{page.get('reason') or '原因未记'}）。这一条只算命令级证据，"
+                    "最终说明里必须写清「页面未复验」，别让读者以为看过了。")
         if attempt.get("conclusion") in (CONCLUSION_VERIFIED, CONCLUSION_GREEN):
             lines.append("验证通过。请给出最终说明（根因 / 为什么这么改 / 验证结论 / "
                          "遗留风险与需人工确认的点），**不要再输出 SEARCH/REPLACE 块**。")
@@ -977,6 +1081,9 @@ def _auto_summary(conclusion: str, attempts: int) -> str:
         return "沙箱不可用，未获得任何真实运行结果；本次结论与旧的一次成型链路等价。"
     if conclusion == CONCLUSION_UNVERIFIED:
         return "补丁已生成，但该仓库没有可跑的验收命令，未经真实验证。"
+    if conclusion == CONCLUSION_PERSISTS:
+        return ("验收命令在沙箱里全绿，但把页面跑起来复验后，工单描述的现象仍然存在——"
+                "按未修好处理。判读与截图见「修复轨迹 → 页面复验」。")
     return "模型未能给出可用的补丁（工单信息不足，或根因不在前端仓库）。"
 
 

@@ -284,6 +284,254 @@ def t_artifact_and_dedupe():
           und.get("ok") and not target.exists(), str(und)[:150])
 
 
+def t_page_reverify_hook():
+    """页面复验的四种回法都必须按证据强度落到结论里，尤其不能把「没看成」当成通过。"""
+    repo0 = F.make_repo()
+
+    def run_with_hook(hook_reply, replies=None):
+        repo = F.make_repo()
+        before = F.snapshot(repo)
+        conf = {"max_rounds": 6, "deadline_seconds": 120, "max_stall": 9,
+                "per_command_timeout": 60, "repro": "off",
+                "sandbox_server_command": "npm run dev -- --port {port}"}
+        ai = F.FakeAI(replies or [F.patch_reply("OK"), F.patch_reply("OK")])
+        agent = FixAgent(str(repo), ai, agent_cfg=conf,
+                         gate_cfg={"commands": [{"name": "check", "cmd": F.CHECK_CMD}]},
+                         page_after_hook=lambda sb, budget_left=0: dict(hook_reply))
+        return agent.run({"id": "P1", "title": "x"}), repo, before, ai
+
+    print("\n[8] 页面复验：判读如何影响结论")
+    res, repo, before, _ai = run_with_hook(
+        {"status": "ok", "verdict": "gone", "evidence": "列表已渲染出数据",
+         "url": "http://127.0.0.1:1"})
+    check("命令绿 + 判读 gone → verified", res["conclusion"] == CONCLUSION_VERIFIED,
+          res["conclusion"])
+    check("页面复验结果存进了结论", res["page_after"]["verdict"] == "gone")
+    check("只复验一次（不起第二次服务）", res["rounds"] == 1, str(res["rounds"]))
+    check("仓库零写入", F.snapshot(repo) == before)
+
+    res2, repo2, before2, ai2 = run_with_hook(
+        {"status": "ok", "verdict": "same", "evidence": "页面仍然白屏"})
+    check("命令全绿但现象仍在 → symptom_persists",
+          res2["conclusion"] == "symptom_persists", res2["conclusion"])
+    check("symptom_persists 需要人工", res2["needs_human"] is True)
+    check("降级后循环没有提前收口", res2["rounds"] >= 2, str(res2["rounds"]))
+    check("判读原文回喂给了模型，并明确要求别拿「测试都过了」当理由",
+          "页面仍然白屏" in ai2.prompts[-1]["prompt"]
+          and "现象仍然存在" in ai2.prompts[-1]["prompt"],
+          ai2.prompts[-1]["prompt"][-400:][:180])
+    check("仓库零写入（复验也不写）", F.snapshot(repo2) == before2)
+
+    res3, _r3, _b3, _ai3 = run_with_hook(
+        {"status": "unusable", "reason": "服务在 90s 内没有监听 51234"})
+    check("沙箱页面起不来 → 不算复验也不谎称看过",
+          res3["conclusion"] in (CONCLUSION_VERIFIED, "checks_pass")
+          and res3["page_after"]["status"] == "unusable",
+          f"{res3['conclusion']} / {res3['page_after']}")
+    check("unusable 不降级为需人工（只是少一路证据）", res3["needs_human"] is False)
+
+    res4, _r4, _b4, _ai4 = run_with_hook({"status": "skipped", "reason": "剩余预算不足"})
+    check("预算不足跳过复验时，结论仍是命令级", res4["conclusion"] == CONCLUSION_VERIFIED,
+          res4["conclusion"])
+    check("跳过被原样记进结论（不当作看过）",
+          res4["page_after"]["status"] == "skipped", str(res4["page_after"])[:120])
+    check("证据缺席要在 notes 里说明，别让人以为页面看过了",
+          any("页面复验未完成" in n for n in res4["notes"]), str(res4["notes"])[:200])
+
+
+def t_precedents():
+    """先例检索：相关度、自我回声、被拒绝的也带上、注入必须封顶。"""
+    print("\n[9] 同类历史缺陷先例检索与注入封顶")
+    from scripts.precedents import DEFAULT_MAX_CHARS, load_precedents, render_precedents
+
+    d = F._tempdir("prec-dir-")
+
+    def write_proposal(pid, *, defect_id, title, files, keywords, status,
+                       decision=None, conclusion="", via="", repro_path="",
+                       patch_text=""):
+        import datetime
+
+        (d / f"{pid}.json").write_text(json.dumps({
+            "id": pid, "created": datetime.datetime.now().isoformat(timespec="seconds"),
+            "status": status,
+            "defect": {"id": defect_id, "title": title},
+            "analysis": {"category": "逻辑", "root_cause": "缺了可选链",
+                         "keywords": keywords, "patch_canonical": patch_text},
+            "patch": {"changes": [{"file_path": f, "stats": {"added": 1, "removed": 1}}
+                                  for f in files], "files": files},
+            "decision": decision or {},
+            "agent": {"conclusion": conclusion, "verified_via": via,
+                      "repro": {"path": repro_path, "status": "green"}},
+        }), encoding="utf-8")
+
+    write_proposal("p-applied", defect_id="100001", title="流程列表 processItem 报 TypeError",
+                   files=["packages/app/src/views/process-list.vue"],
+                   keywords=["processItem", "TypeError"], status="applied",
+                   decision={"approved": True, "note": "改法可以"},
+                   conclusion="verified", via="repro-test",
+                   repro_path="src/process-list.spec.ts",
+                   patch_text="<<<<<<< SEARCH a\nb\n=======\nc\n>>>>>>> REPLACE")
+    write_proposal("p-rejected", defect_id="100002", title="列表 startTime 显示异常",
+                   files=["packages/app/src/views/process-list.vue"],
+                   keywords=["startTime"], status="rejected",
+                   decision={"approved": False, "note": "应该在 formatter 里改"})
+    write_proposal("p-unrelated", defect_id="100003", title="登录页图标错位",
+                   files=["packages/app/src/login/icon.css"], keywords=["icon"],
+                   status="applied", patch_text="icon.png -> icon.svg")
+    write_proposal("p-self", defect_id="900001", title="processItem 相关新问题",
+                   files=["packages/app/src/views/process-list.vue"],
+                   keywords=["processItem"], status="pending")
+
+    defect = {"id": "900001", "title": "processItem 为 undefined 时列表崩溃",
+              "description": "打开列表页 TypeError: Cannot read properties of undefined "
+                             "(reading 'processItem')，startTime 也不对"}
+    got = load_precedents(str(d), defect, limit=3)
+    ids = [g["proposal_id"] for g in got]
+    check("相关先例被挑中，无关的不进", "p-applied" in ids and "p-unrelated" not in ids,
+          str(ids))
+    check("被人工拒绝过的改法也一起给（避免重演）", "p-rejected" in ids, str(ids))
+    check("本工单自己那份未采纳的提案不算先例（回声）", "p-self" not in ids, str(ids))
+    check("先例带上结局与证据来源",
+          got[0]["outcome"] == "applied" and got[0]["verified_via"] == "repro-test"
+          and got[0]["repro_path"], str(got[0])[:200])
+    check("人工备注被带上", any("formatter" in (g.get("decision_note") or "")
+                            for g in got), str([g.get("decision_note") for g in got]))
+
+    text = render_precedents(got)
+    check("渲染出的先例文本含补丁原文", "SEARCH" in text, text[:120])
+    big = [dict(g, patch_text=("x" * 4000)) for g in got]
+    capped = render_precedents(big, max_chars=2500)
+    check("注入文本严格封顶", len(capped) <= 2500, f"{len(capped)} vs 2500")
+    check("超预算时先砍补丁正文而不是整条先例",
+          "补丁原文因长度上限已省略" in capped and "人工拒绝" in capped, capped[:200])
+    check("默认上限是个明确常量", DEFAULT_MAX_CHARS == 6000)
+    check("目录不存在时返回空而不是抛", load_precedents(str(d / "nope"), defect) == [])
+    check("limit=0 视为关闭", load_precedents(str(d), defect, limit=0) == [])
+
+
+def t_sandbox_server():
+    """沙箱里起服务：真起真停、端口不抢、起不来时如实报告、内联代码仍然拦得住。"""
+    print("\n[10] 沙箱 dev server 起停与失败上报")
+    from scripts.sandbox import default_server_command, port_open
+
+    repo = F.make_repo()
+    (repo / "package.json").write_text(json.dumps(
+        {"name": "x", "scripts": {"dev": "vite"}}), encoding="utf-8")
+    cmd, _cwd = default_server_command(repo)
+    check("vite 项目能探出 dev 命令且带 {port}", "vite" not in cmd and "{port}" in cmd
+          and cmd.startswith("npm run dev"), cmd)
+    (repo / "package.json").write_text(json.dumps(
+        {"name": "x", "scripts": {"dev": "some-weird-runner"}}), encoding="utf-8")
+    check("不认识的技术栈不瞎猜命令", default_server_command(repo)[0] == "")
+
+    sb = F.Sandbox(repo, cfg={"mode": "copy"}).open()
+    try:
+        ok_cmd = f'"{Path(sys.executable).as_posix()}" -m http.server {{port}}'
+        h = sb.spawn_server(ok_cmd, ready_timeout=45)
+        check("服务起得来并监听在空闲端口", h.ready and h.port > 0, h.note[:120])
+        if h.ready:
+            check("端口能真的连上", port_open("127.0.0.1", h.port))
+            check("URL 指向 127.0.0.1", h.url.startswith("http://127.0.0.1:"), h.url)
+        h.stop()
+        check("stop 之后端口被释放", not port_open("127.0.0.1", h.port, 0.6))
+        dead = sb.spawn_server(
+            f'"{Path(sys.executable).as_posix()}" definitely-missing-script.js',
+            ready_timeout=12)
+        check("进程秒退时 ready=False 且带上退出原因",
+              not dead.ready and "退出码" in dead.note, dead.note[:160])
+        inline = sb.spawn_server(f'"{Path(sys.executable).as_posix()}" -c "print(1)"')
+        check("起服务也过白名单（内联代码照样拒）",
+              not inline.ready and "内联" in inline.note, inline.note[:120])
+    finally:
+        sb.close()
+
+
+def t_pipeline_end_to_end():
+    """②③接到流水线上：先例进了 prompt、页面复验走的是真沙箱、卡片把结论沉淀下来。"""
+    print("\n[11] pipeline 端到端：先例注入 + 页面复验 + 卡片沉淀")
+    import scripts.pipeline as _pl
+    from fixture_defect import TEST_DEFECT
+
+    repo = F.make_repo()
+    (repo / "package.json").write_text(json.dumps(
+        {"name": "app", "scripts": {"dev": "vite", "check": "x"}}), encoding="utf-8")
+    before = F.snapshot(repo)
+    props = F._tempdir("prec-props-")
+    kb_dir = F._tempdir("prec-kb-")
+    # 先例库：一条同样改 process-list 的历史提案，已被人工采纳
+    (props / "seed.json").write_text(json.dumps({
+        "id": "seed", "created": "2026-09-01T10:00:00", "status": "applied",
+        "defect": {"id": "700001", "title": "processList 里 processItem 未判空崩溃"},
+        "analysis": {"category": "数据", "root_cause": "缺可选链",
+                     "keywords": ["processItem", "processList"],
+                     "patch_canonical": "<<<<<<< SEARCH src/a.js\nold\n=======\nnew\n>>>>>>> REPLACE"},
+        "patch": {"changes": [{"file_path": "src/a.js"}], "files": ["src/a.js"]},
+        "decision": {"approved": True, "note": "改法认可"},
+        "agent": {"conclusion": "verified", "verified_via": "repro-test"},
+    }), encoding="utf-8")
+
+    cfg = {
+        "ones": {"base_url": "", "token": "", "project_uuid": ""},
+        "ai": {"model": "x", "api_key": ""},
+        "repo": {"path": str(repo), "branch": "main"},
+        "gate": {"commands": [{"name": "check", "cmd": F.CHECK_CMD}]},
+        "agent": {"max_rounds": 5, "deadline_seconds": 150, "max_stall": 2,
+                  "repro": "off", "precedents": 3,
+                  "sandbox_server": "auto", "sandbox_server_command": "npm run dev",
+                  "sandbox_server_ready_timeout": 20},
+        "playwright": {"base_url": "http://127.0.0.1:1",
+                       "screenshot_dir": str(F._tempdir("prec-shots-"))},
+        "knowledge_base": {"output_dir": str(kb_dir)},
+        "proposals": {"output_dir": str(props)},
+        "artifacts": {"output_dir": str(F._tempdir("prec-arts-"))},
+    }
+    _pl.SAMPLE_DEFECTS[:] = [TEST_DEFECT]
+    pipe = _pl.AIDefectFixerPipeline(cfg)
+    ai = F.FakeAI([F.patch_reply("OK")])
+    pipe.ai = ai
+    pipe.analyzer = type("Stub", (), {"ai": ai, "analyze": lambda self, d, on_delta=None: {
+        "keywords": ["processItem"], "suspect_files": ["src/a.js"], "read_files": [],
+        "truncation": [], "root_cause": "桩", "category": "数据", "explanation": "",
+        "prevention": "", "non_frontend": False, "patch_text": "", "patch_blocks": [],
+        "patch_canonical": "", "parse_errors": [], "block_count": 0,
+        "ai_mode": "fake", "ai_error": "", "locate_empty": False,
+        "defect_id": d.get("id"), "title": d.get("title")}})()
+    results = pipe.run(defects=[TEST_DEFECT], skip_verify=True)
+    prop = results[0]["proposal"]
+    agent = prop["agent"]
+
+    check("先例进了 prompt", "同类历史缺陷的先例" in ai.prompts[0]["prompt"],
+          ai.prompts[0]["prompt"][:120])
+    check("先例带上了当时的人工备注与结局", "改法认可" in ai.prompts[0]["prompt"])
+    check("注入的先例被记进提案（可追溯）",
+          len(agent.get("precedents_used") or []) >= 1
+          and agent["precedents_used"][0]["outcome"] == "applied",
+          str(agent.get("precedents_used"))[:160])
+    pa = agent.get("page_after") or {}
+    check("页面复验真的试过并留下状态", pa.get("status") in
+          ("unusable", "skipped", "failed", "ok"), str(pa)[:160])
+    if pa.get("status") != "ok":
+        check("复验没做成时明确说「只有命令级证据」",
+              any("页面复验未完成" in n for n in agent.get("notes") or []),
+              str(agent.get("notes"))[:200])
+    check("复验失败不会把结论抬成 verified-by-page",
+          agent["conclusion"] in (CONCLUSION_VERIFIED, "checks_pass", "symptom_persists"),
+          agent["conclusion"])
+    check("跑完仓库仍零写入", F.snapshot(repo) == before)
+
+    cards = [p for p in kb_dir.rglob("*.md")
+             if p.name != "INDEX.md" and "_patterns" not in p.parts]
+    check("知识卡片已生成", bool(cards), str([c.name for c in cards])[:120])
+    body = cards[0].read_text(encoding="utf-8")
+    check("卡片新增「修复循环结论」分区", "## 修复循环结论" in body)
+    check("卡片记录了人工结局", "human_decision:" in body, body[:300])
+    check("卡片记录了证据来源", "evidence_via:" in body)
+    check("卡片原有的现象/根因分区没被动过", "## 现象" in body and "## 根因" in body)
+    check("卡片不搬模型散文，只记枚举值与计数",
+          "未经任何真实验证" not in body.split("## 修复循环结论")[1][:600],
+          body.split("## 修复循环结论")[1][:200])
+
+
 def main():
     print("== 复现环节（先跑红再修）行为用例 ==")
     t_detect()
@@ -293,6 +541,10 @@ def main():
     t_no_cheating()
     t_assert_strength_labelled()
     t_artifact_and_dedupe()
+    t_page_reverify_hook()
+    t_precedents()
+    t_sandbox_server()
+    t_pipeline_end_to_end()
     print("\n" + ("ALL PASS" if not FAIL else f"{len(FAIL)} FAIL: {FAIL}"))
     sys.exit(1 if FAIL else 0)
 

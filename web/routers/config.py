@@ -93,7 +93,9 @@ async def update_settings(req: Request):
         if "link_node_modules" in ag:
             cur["link_node_modules"] = _as_bool(ag["link_node_modules"], True)
         for key, lo, hi in (("max_rounds", 1, 24), ("deadline_seconds", 60, 1800),
-                            ("max_stall", 1, 8), ("per_command_timeout", 15, 1800)):
+                            ("max_stall", 1, 8), ("per_command_timeout", 15, 1800),
+                            ("sandbox_server_ready_timeout", 20, 600),
+                            ("sandbox_server_max_checks", 1, 5)):
             if key in ag:
                 n = _as_num(ag[key], None)
                 if n is not None:
@@ -110,6 +112,20 @@ async def update_settings(req: Request):
             n = _as_num(ag["repro_max_rewrite"], None)
             if n is not None:
                 cur["repro_max_rewrite"] = int(min(max(n, 0), 6))
+        if "sandbox_server" in ag:
+            ss = str(ag["sandbox_server"]).strip().lower()
+            cur["sandbox_server"] = ss if ss in ("auto", "on", "off") else "auto"
+        for key, cap in (("sandbox_server_command", 500), ("sandbox_server_cwd", 200)):
+            if key in ag:
+                cur[key] = str(ag[key]).strip()[:cap]
+        if "precedents" in ag:
+            n = _as_num(ag["precedents"], None)
+            if n is not None:
+                cur["precedents"] = int(min(max(n, 0), 8))
+        if "precedents_chars" in ag:
+            n = _as_num(ag["precedents_chars"], None)
+            if n is not None:
+                cur["precedents_chars"] = int(min(max(n, 800), 30000))
         if "sandbox_dir" in ag:
             cur["sandbox_dir"] = str(ag["sandbox_dir"]).strip().strip('"')
         if "command_allow_text" in ag:

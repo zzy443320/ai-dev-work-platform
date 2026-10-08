@@ -34,6 +34,8 @@ const form = reactive({
     sandbox: 'auto', sandbox_dir: '', link_node_modules: true,
     per_command_timeout: 240, page_read: true, command_allow_text: '',
     repro: 'auto', repro_command: '', repro_max_rewrite: 2,
+    sandbox_server: 'auto', sandbox_server_command: '', sandbox_server_cwd: '',
+    sandbox_server_ready_timeout: 90, precedents: 3, precedents_chars: 6000,
   },
   playwright: { base_url: '', headless: true },
 })
@@ -141,6 +143,12 @@ async function loadSettings() {
     form.agent.repro = ag.repro || 'auto'
     form.agent.repro_command = ag.repro_command || ''
     form.agent.repro_max_rewrite = ag.repro_max_rewrite ?? 2
+    form.agent.sandbox_server = ag.sandbox_server || 'auto'
+    form.agent.sandbox_server_command = ag.sandbox_server_command || ''
+    form.agent.sandbox_server_cwd = ag.sandbox_server_cwd || ''
+    form.agent.sandbox_server_ready_timeout = ag.sandbox_server_ready_timeout ?? 90
+    form.agent.precedents = ag.precedents ?? 3
+    form.agent.precedents_chars = ag.precedents_chars ?? 6000
     form.agent.command_allow_text = ag.command_allow_text || ''
     const pw = s.playwright || {}
     form.playwright.base_url = pw.base_url || ''
@@ -362,6 +370,12 @@ async function saveSettings() {
       repro: form.agent.repro,
       repro_command: String(form.agent.repro_command || '').trim(),
       repro_max_rewrite: Number(form.agent.repro_max_rewrite) || 0,
+      sandbox_server: form.agent.sandbox_server,
+      sandbox_server_command: String(form.agent.sandbox_server_command || '').trim(),
+      sandbox_server_cwd: String(form.agent.sandbox_server_cwd || '').trim(),
+      sandbox_server_ready_timeout: Number(form.agent.sandbox_server_ready_timeout) || 90,
+      precedents: Number(form.agent.precedents) || 0,
+      precedents_chars: Number(form.agent.precedents_chars) || 6000,
       command_allow_text: form.agent.command_allow_text,
     },
     playwright: {

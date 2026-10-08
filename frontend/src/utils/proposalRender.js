@@ -3,8 +3,18 @@
 // pmShots/pmConsole/pmBlocks）的逐行移植 —— 输出的 HTML 与旧版逐字节一致，
 // 既有用例与 style.css 的选择器都按它写的。
 import { escapeHtml } from './format.js'
-import { GATE_TEXT, STATUS_TEXT, agentLabel, agentTone, looksNonFrontend, mdBold } from './labels.js'
+import { GATE_TEXT, PAGE_STATUS_TEXT, PAGE_VERDICT_TEXT, STATUS_TEXT, agentLabel, agentTone, looksNonFrontend, mdBold } from './labels.js'
 import { relTime } from './format.js'
+
+/** 先例的「人工结局」中文（与后端 _human_decision 的取值一一对应） */
+export const OUTCOME_TEXT = {
+  applied: '人工采纳',
+  rejected: '人工拒绝',
+  force_applied: '强制采纳',
+  applied_then_undone: '采纳后已撤销',
+  pending: '未采纳/待审',
+  unknown: '未知',
+}
 
 /** 闸门徽标（HTML 串版）。旧版 app.js:79 —— labels.js 里那个是结构化版，供组件用 */
 export function gateBadgeHtml(level, ok) {
@@ -179,6 +189,35 @@ function pmAgent(p) {
     }[a.verified_via] || ''
     if (via) html += `<div class="pm-line"><b>verified 靠什么</b><span>${escapeHtml(via)}</span></div>`
   }
+  const pg = a.page_after || {}
+  if (Object.keys(pg).length) {
+    const v = pg.verdict || ''
+    const cls = v === 'gone' ? '' : (v === 'same' || pg.status === 'unusable' ? ' bad' : '')
+    html += `<div class="pm-line${cls}"><b>页面复验</b><span>`
+      + `${escapeHtml(PAGE_STATUS_TEXT[pg.status] || pg.status || '—')}`
+      + (v ? ` · 判读 ${escapeHtml(PAGE_VERDICT_TEXT[v] || v)}` : '') + '</span></div>'
+    if (pg.command) html += `<div class="pm-line"><b>起的服务</b><span><code>${escapeHtml(pg.command)}</code> → ${escapeHtml(pg.url || '')}</span></div>`
+    if (pg.evidence) html += kv('判读依据', pg.evidence)
+    if (pg.reason) html += kv('没做成的原因', pg.reason, 'bad')
+    if ((pg.new_errors || []).length) {
+      html += `<div class="pm-line bad"><b>新出现的报错</b><span>${escapeHtml(pg.new_errors.join(' / ').slice(0, 400))}</span></div>`
+    }
+    if ((pg.cleared_errors || []).length) {
+      html += `<div class="pm-line"><b>消失的报错</b><span>${escapeHtml(pg.cleared_errors.join(' / ').slice(0, 400))}</span></div>`
+    }
+    if (pg.log_tail) {
+      html += `<details class="fold"><summary>服务启动日志尾部</summary><pre class="check-out">${escapeHtml(pg.log_tail)}</pre></details>`
+    }
+  }
+  const prec = a.precedents_used || []
+  if (prec.length) {
+    html += `<div class="pm-line"><b>注入的先例</b><span>${prec.length} 条同类历史缺陷的改法与结局`
+      + '（被人工拒绝的也在里面，用来避免重演）</span></div>'
+    html += `<ul class="iss-list warn">${prec.map((x) => `<li>${escapeHtml(x.title || x.defect_id || '')}`
+      + ` · ${escapeHtml(OUTCOME_TEXT[x.outcome] || x.outcome || '—')}`
+      + (x.conclusion ? ` · 循环结论 ${escapeHtml(x.conclusion)}` : '')
+      + (x.same_defect ? ' · 本工单上一次尝试' : '') + '</li>').join('')}</ul>`
+  }
   const attempts = a.attempts || []
   if (attempts.length) {
     html += `<ul class="check-list">${attempts.map((at) => {
@@ -315,7 +354,17 @@ function pmShotOps(v) {
 function pmShots(p) {
   const before = p.verify || {}
   const after = ((p.apply || {}).verify || {}).after || p.verify_after || {}
-  const cells = [['修复前（提案生成时）', before], ['修复后（采纳写入后）', after]].map(([label, v]) => {
+  const cells = [['修复前（提案生成时）', before]]
+  // 中间那张是 agentic 循环在**打了补丁的沙箱**里拍的：还没采纳、工作区没动过，
+  // 但已经能看到修复后的页面。没有它，用户只能在「采纳之后」才第一次看到效果。
+  const sandboxShot = ((p.agent || {}).page_after) || {}
+  if (sandboxShot.screenshot) {
+    cells.push(['补丁后（沙箱里，未写入你的仓库）',
+      { screenshot: sandboxShot.screenshot, route: sandboxShot.route,
+        status: sandboxShot.page_status || sandboxShot.status }])
+  }
+  cells.push(['修复后（采纳写入后）', after])
+  const body = cells.map(([label, v]) => {
     const src = shotSrc(v.screenshot)
     const st = v.status || 'none'
     const missing = escapeHtml(v.error || v.reason || '未生成截图')
@@ -327,8 +376,8 @@ function pmShots(p) {
       + pmShotOps(v)
       + '</div>'
   }).join('')
-  return `<h4>页面截图</h4><div class="shots">${cells}</div>`
-    + '<p class="muted">截图会打开工单对应路由并复刻复现步骤（无步骤时仅打开页面）。<br>空白页会被标为「页面空白」——它不是通过。<br>截图不能替代闸门命令与人工审查 diff。</p>'
+  return `<h4>页面截图</h4><div class="shots">${body}</div>`
+    + '<p class="muted">截图会打开工单对应路由并复刻复现步骤（无步骤时仅打开页面）。<br>空白页会被标为「页面空白」——它不是通过。<br>中间那张来自**打了补丁的临时沙箱**（你的仓库还没被写入），它只证明沙箱里这个页面好了，不能替代真机联调。<br>截图不能替代闸门命令与人工审查 diff。</p>'
 }
 
 function pmConsole(p) {

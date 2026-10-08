@@ -63,6 +63,13 @@
     "repro": "auto",
     "repro_command": "",
     "repro_max_rewrite": 2,
+    "sandbox_server": "auto",
+    "sandbox_server_command": "",
+    "sandbox_server_cwd": "",
+    "sandbox_server_ready_timeout": 90,
+    "sandbox_server_max_checks": 2,
+    "precedents": 3,
+    "precedents_chars": 6000,
     "command_allow_text": ""
   },
   "extensions": {

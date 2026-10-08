@@ -29,6 +29,7 @@ notes 里，让上层知道「依赖型命令的失败可能不可信」。
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -37,7 +38,7 @@ import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from .repo_paths import UnsafePath, resolve_in_repo
 
@@ -136,6 +137,72 @@ class CmdResult:
         body = re.sub(r"/+", "/", body)
         lines = [x.strip() for x in body.splitlines() if x.strip()]
         return f"{self.name}:fail:" + "|".join(lines[:25])[:1500]
+
+
+@dataclass
+class ServerHandle:
+    """沙箱里起起来的常驻进程（dev server）。`ready=False` 时调用方**不能**拿它当证据。"""
+
+    command: str = ""
+    url: str = ""
+    port: int = 0
+    ready: bool = False
+    seconds: float = 0.0
+    note: str = ""
+    log_tail: str = ""
+    # 句柄不参与相等比较，也绝不进 to_dict()（进程对象序列化不了）
+    _proc: Optional[Any] = field(default=None, compare=False, repr=False)
+    _log_file: Optional[Any] = field(default=None, compare=False, repr=False)
+
+    def to_dict(self) -> Dict:
+        return {"command": self.command, "url": self.url, "port": self.port,
+                "ready": self.ready, "seconds": self.seconds, "note": self.note,
+                "log_tail": self.log_tail[-1500:]}
+
+    def stop(self, wait_seconds: float = 5.0) -> None:
+        """杀掉服务进程树，并**等端口真的释放**再返回。
+
+        不等就会出现两种坏事：同一批缺陷里下一次起服务抢到半死的端口，或者用户仓库外
+        留着一个还在监听 127.0.0.1 的 dev server 而没人知道。
+        """
+        if self._proc is not None:
+            _kill_tree(self._proc)
+            try:
+                self._proc.wait(timeout=30)
+            except Exception:
+                pass
+            self._proc = None
+        if self._log_file is not None:
+            try:
+                self._log_file.close()
+            except OSError:
+                pass
+            self._log_file = None
+        if self.port:
+            end = time.time() + max(0.0, wait_seconds)
+            while time.time() < end and port_open("127.0.0.1", self.port, 0.4):
+                time.sleep(0.2)
+            if port_open("127.0.0.1", self.port, 0.4):
+                self.note = (self.note + "；" if self.note else "") + \
+                    f"端口 {self.port} 停服后仍被占用，请手工确认残留进程"
+
+
+def free_port() -> int:
+    import socket
+
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return int(s.getsockname()[1])
+
+
+def port_open(host: str, port: int, seconds: float = 1.0) -> bool:
+    import socket
+
+    try:
+        with socket.create_connection((host, port), timeout=seconds):
+            return True
+    except OSError:
+        return False
 
 
 @dataclass
@@ -478,6 +545,84 @@ class Sandbox:
         except OSError:
             return False
 
+    def spawn_server(self, cmd: str, port: Optional[int] = None,
+                     ready_timeout: int = 90, cwd_rel: str = "",
+                     env_extra: Optional[Dict[str, str]] = None) -> ServerHandle:
+        """在沙箱里起一个常驻 dev server，等端口通。
+
+        与 `run()` 的区别就一件事：它**不等命令结束**。一次性检查用 run()，
+        要看修复后的页面就必须有个还活着的 server。日志同样写文件不写管道（同样的
+        孙进程握管道问题），环境变量里给出 PORT 并把 vite/next 常用端口指到它，
+        免得跟用户自己开着的 dev server 抢 3000/5173。
+        """
+        if self.root is None:
+            return ServerHandle(command=cmd, note="沙箱不可用，未启动服务")
+        allowed, why = self.check_command(cmd)
+        if not allowed:
+            return ServerHandle(command=cmd, note=f"命令被沙箱白名单拒绝：{why}")
+        port = int(port or free_port())
+        # 命令行里的 {port} 由我们填：vite 用 --port、next 用 -p、脚本各有各的写法，
+        # 与其猜，不如让配置里写 `npm run dev -- --port {port}` 这种明确形式。
+        cmd = str(cmd or "").replace("{port}", str(port))
+        cwd = self.root
+        if str(cwd_rel or "").strip():
+            try:
+                sub = resolve_in_repo(self.root, cwd_rel)
+                if sub.is_dir():
+                    cwd = sub
+            except UnsafePath:
+                pass
+        env = dict(os.environ)
+        env.update({"CI": "true", "NO_COLOR": "1", "FORCE_COLOR": "0",
+                    "BROWSER": "none", "PORT": str(port)})
+        for k, v in (env_extra or {}).items():
+            if v:
+                env[str(k)] = str(v)
+        url = f"http://127.0.0.1:{port}"
+        log_file = tempfile.TemporaryFile(mode="w+b")
+        start = time.time()
+        try:
+            popen_kw = dict(cwd=str(cwd), stdout=log_file, stderr=subprocess.STDOUT,
+                            env=env, stdin=subprocess.DEVNULL)
+            if IS_WINDOWS:
+                proc = subprocess.Popen(cmd, shell=True,
+                                        creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
+                                        **popen_kw)
+            else:
+                proc = subprocess.Popen(cmd, shell=True, start_new_session=True,
+                                        **popen_kw)
+        except Exception as e:
+            log_file.close()
+            return ServerHandle(command=cmd, url=url, port=port,
+                                note=f"启动失败：{type(e).__name__}: {e}")
+
+        ready = False
+        deadline = start + max(10, int(ready_timeout))
+        while time.time() < deadline:
+            if proc.poll() is not None:
+                break                       # 进程已经退了，再等也没有意义
+            if port_open("127.0.0.1", port):
+                ready = True
+                break
+            time.sleep(0.7)
+        # 端口通了不等于首屏渲染好了：多等 2s，拿不到内容也别把「没等到」说成「没问题」
+        if ready:
+            time.sleep(2.0)
+        log_file.flush()
+        log_file.seek(0)
+        tail = _tail(_decode_output(log_file.read()), 2500)
+        note = ""
+        if not ready:
+            code = proc.poll()
+            note = (f"服务进程已退出（退出码 {code}），没有监听 {port}" if code is not None
+                    else f"服务在 {ready_timeout}s 内没有监听 {port}")
+        handle = ServerHandle(command=cmd, url=url, port=port, ready=ready,
+                              seconds=round(time.time() - start, 1), note=note,
+                              log_tail=tail, _proc=proc, _log_file=log_file)
+        if not ready:
+            handle.stop()
+        return handle
+
     # ---------------------------------------------------------------- 读写接口
     def _resolve(self, rel: str) -> Path:
         if self.root is None:
@@ -678,6 +823,39 @@ def _tail(s: str, n: int = OUTPUT_TAIL_CHARS) -> str:
     return s if len(s) <= n else "…(前文省略)…\n" + s[-n:]
 
 
+def default_server_command(repo_root: Path) -> Tuple[str, str]:
+    """从 package.json 里猜一条能起 dev server 的命令，返回 (命令, 工作目录相对路径)。
+
+    猜不出来就返回空串——**起不来就说起不来**，不要拿一张空白页当「修复后截图」。
+    命令里统一带 `{port}`，由 spawn_server 填成实际空闲端口，避免抢用户自己开着的
+    3000/5173。monorepo 请在配置里显式写 sandbox_server_command / _cwd。
+    """
+    pkg = Path(repo_root) / "package.json"
+    if not pkg.is_file():
+        return "", ""
+    try:
+        scripts = (json.loads(pkg.read_text(encoding="utf-8")).get("scripts") or {})
+    except Exception:
+        return "", ""
+    manager = "npm"
+    if (Path(repo_root) / "pnpm-lock.yaml").exists():
+        manager = "pnpm"
+    elif (Path(repo_root) / "yarn.lock").exists():
+        manager = "yarn"
+    for name in ("dev", "start", "serve"):
+        if name not in scripts:
+            continue
+        body = str(scripts.get(name) or "").lower()
+        if "next" in body:
+            return f"{manager} run {name} -p {{port}}", ""
+        if any(k in body for k in ("vite", "rsbuild", "webpack", "nuxt", "astro",
+                                   "react-scripts", "craco", "vue-cli-service")):
+            return f"{manager} run {name} -- --port {{port}}", ""
+        # 不认识的技术栈就不猜参数：起歪了拿一张空白页当「修复后截图」比不看更糟
+        return "", ""
+    return "", ""
+
+
 def resolve_sandbox_cfg(raw: Optional[Dict]) -> Dict:
     """把 config/Settings 里的 `agent` 段洗成沙箱能吃的字典（全部有安全默认值）。"""
     raw = dict(raw or {})
@@ -698,7 +876,14 @@ def resolve_sandbox_cfg(raw: Optional[Dict]) -> Dict:
         "copy_extra": list(raw.get("copy_extra") or DEFAULT_COPY_EXTRA),
         "per_command_timeout": _int(raw.get("per_command_timeout"), DEFAULT_CMD_TIMEOUT),
         "enabled": _bool("enabled", True),
+        # 修复后页面验证用的常驻 dev server（默认 auto：能探到 vite/next 等才起）
+        "server": str(raw.get("sandbox_server") or "auto").strip().lower(),
+        "server_command": str(raw.get("sandbox_server_command") or "").strip(),
+        "server_cwd": str(raw.get("sandbox_server_cwd") or "").strip(),
+        "server_ready_timeout": _int(raw.get("sandbox_server_ready_timeout"), 90),
     }
+    if out["server"] not in ("auto", "on", "off"):
+        out["server"] = "auto"
     allow = raw.get("command_allow")
     if isinstance(allow, str):
         allow = [x.strip() for x in allow.splitlines() if x.strip()]
