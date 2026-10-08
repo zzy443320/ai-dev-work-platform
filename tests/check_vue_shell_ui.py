@@ -3,8 +3,8 @@
 
 界面已收口：旧版原生 HTML/JS 与 `/v2` 路由都已删除，`GET /` 直接返回 Vue 版。
 
-只做冒烟：起临时实例 → 打开 `/` → 断言八个页签、默认页签、switchTab 可用、
-切页签后对应 pane 可见、控制台无报错。不碰仓库、不调模型。
+只做冒烟：起临时实例 → 打开 `/` → 断言九个页签、默认页签、switchTab 可用、
+两种布局下 el-tabs 自带页签头都隐藏、切页签后对应 pane 可见、控制台无报错。不碰仓库、不调模型。
 """
 import os
 import sys
@@ -45,10 +45,14 @@ def main() -> int:
                   page.eval_on_selector("#app", "el => el.children.length") > 0)
             # 页签栏已换成 Element 的 el-tabs：选项节点是 .el-tabs__item（文案在内部）。
             # 页签**容器**的契约没变：每个 pane 仍是 #pane-<name> 且活动页带 active 类。
-            check("页签渲染出 8 个",
-                  page.eval_on_selector_all("#tabs .el-tabs__item", "els => els.length") == 8,
+            # 9 个：2026-09-30 配置独立成模块（末尾新增「配置」页签）
+            # ⚠️ 用 textContent 而不是 innerText：两种布局（侧边工作台 / 顶部导航）都把
+            # .el-tabs__header 用 CSS 藏了（导航在左侧或顶栏），而 innerText 只给**渲染后**
+            # 的文本 —— 藏起来的页签头会读成空串，断言就变成「拿文案去匹配空」永远失败。
+            check("页签渲染出 9 个",
+                  page.eval_on_selector_all("#tabs .el-tabs__item", "els => els.length") == 9,
                   str(page.eval_on_selector_all(
-                      "#tabs .el-tabs__item", "els => els.map(e => e.innerText.trim())")))
+                      "#tabs .el-tabs__item", "els => els.map(e => e.textContent.trim())")))
             check("默认停在 stats",
                   page.eval_on_selector("#pane-stats", "el => el.classList.contains('active')"))
             check("switchTab 全局可用（界面用例依赖）",
@@ -64,10 +68,28 @@ def main() -> int:
             # 高亮态由 el-tabs 自己维护（.el-tabs__item.is-active）。
             # 用 eval_on_selector_all 而不是 eval_on_selector：后者在找不到元素时会抛错，
             # 那样断言失败会变成异常，看不出真正的差异。
+            # 同样必须 textContent（页签头被 CSS 藏起来了，见上面那条注释）。
             active_items = page.eval_on_selector_all(
-                "#tabs .el-tabs__item.is-active", "els => els.map(e => e.innerText.trim())")
+                "#tabs .el-tabs__item.is-active",
+                "els => els.map(e => e.textContent.trim())")
             check("切页签会同步高亮对应 tab 按钮",
                   any("问答" in t for t in active_items), str(active_items))
+
+            # 两种布局都靠自己的导航（左侧分组导航 / 顶栏页签条），el-tabs 自带页签头
+            # 必须一直是隐藏的 —— 这里锁住这条，别哪天改 CSS 改出两套导航同时出现。
+            head = page.eval_on_selector(
+                "#tabs > .el-tabs__header", "el => getComputedStyle(el).display")
+            check("默认（侧边工作台）隐藏 el-tabs 自带页签头", head == "none", head)
+            page.locator(".layout-switch .ls-btn").nth(1).click()   # 切顶部导航
+            page.wait_for_timeout(500)
+            head2 = page.eval_on_selector(
+                "#tabs > .el-tabs__header", "el => getComputedStyle(el).display")
+            strip = page.eval_on_selector(
+                ".topbar-tabs", "el => el.classList.contains('hidden')")
+            check("顶部导航下页签头仍隐藏、顶栏页签条可见",
+                  head2 == "none" and strip is False, f"head={head2} stripHidden={strip}")
+            page.locator(".layout-switch .ls-btn").nth(0).click()   # 切回侧边工作台
+            page.wait_for_timeout(500)
 
             # 流程条只属于缺陷修复页签
             page.evaluate("() => switchTab('stats')")

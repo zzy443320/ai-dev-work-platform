@@ -1,5 +1,10 @@
 <script setup>
-// 应用外壳：顶栏 + 页签 + 页签容器 + 右侧面板 + 弹窗 + 提示。
+// 应用外壳：顶栏 + 导航（左侧分组 / 顶栏页签二选一）+ 页签容器 + 配置抽屉 + 弹窗 + 提示。
+//
+// 两种整体布局（useLayout，localStorage 记忆）：side 侧边工作台（默认）/ top 顶部导航。
+// 两种布局下右侧配置栏都是浮层抽屉（齿轮开合，见 useConfigDrawer），主列独占整宽；
+// 原来第三种「三栏经典」（常驻右栏 + 主列页签头）已于 2026-09-30 删除 —— 常驻右栏要给
+// 它单独限高内滚才能不把页面顶出滚动条，跟其他模块的整页自然流是两套高度语言。
 //
 // 组件化收口后的状态：外壳自身的原语已全部换成 Element Plus ——
 //   自绘按钮 → el-button / 自绘页签 → el-tabs / 自绘步骤条 → el-steps /
@@ -7,12 +12,13 @@
 //
 // **保留的两处契约**（刻意，别当成遗留垃圾删掉）：
 //   1. `#tabs` / `#pane-<name>` / `window.switchTab` —— tests/ 下 12 个界面用例
-//      直接调 `switchTab('chat')` 并按 id 找 pane；
+//      直接调 `switchTab('chat')` 并按 id 找 pane；`#tabs > .el-tabs__header` 虽然
+//      两种布局下都被 CSS 藏起来了（导航在左侧或顶栏），DOM 仍在，用例照旧读它；
 //   2. 步骤条的每一步仍带 `class="stage"` 与状态类 —— 用例断言
 //      `#stage-flow .stage` 恰好 5 个、且第 1 步带 done。
 // 这两处换成纯 Element 选择器也能测，但改成 `.el-*` 要同时改 12 个用例，
 // 收益不抵风险，所以用「Element 结构 + 稳定 id/class」的方式并存。
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { Clock, Sunny, Moon, Setting } from '@element-plus/icons-vue'
 import zhCn from 'element-plus/es/locale/lang/zh-cn'
 import StatsPane from './views/StatsPane.vue'
@@ -23,6 +29,8 @@ import ReqdevPane from './views/ReqdevPane.vue'
 import ApiDebugPane from './views/ApiDebugPane.vue'
 import CodeTestPane from './views/CodeTestPane.vue'
 import ExtensionsPane from './views/ExtensionsPane.vue'
+// 配置：2026-09-30 独立成「配置」页签（ConfigPane）；SettingsPanel 只剩只读摘要 + 入口
+import ConfigPane from './views/ConfigPane.vue'
 import SettingsPanel from './views/SettingsPanel.vue'
 import ArtifactsPanel from './components/ArtifactsPanel.vue'
 import ArtifactModal from './components/ArtifactModal.vue'
@@ -31,9 +39,10 @@ import KbModal from './components/KbModal.vue'
 import RunModal from './components/RunModal.vue'
 import AiModal from './components/AiModal.vue'
 import ChangelogModal from './components/ChangelogModal.vue'
-import { TABS, DEFAULT_TAB, ARTIFACT_TAB_LABEL, STAGE_FLOW_TAB, ICON_PATHS } from './components/tabs.js'
+import { TABS, DEFAULT_TAB, ARTIFACT_TAB_LABEL, STAGE_FLOW_TAB, FILL_TABS, ICON_PATHS } from './components/tabs.js'
 import { useTheme } from './composables/useTheme.js'
-import { useSidebar } from './composables/useSidebar.js'
+import { useConfigDrawer } from './composables/useConfigDrawer.js'
+import { useModuleParams } from './composables/useModuleParams.js'
 import { useLayout } from './composables/useLayout.js'
 import { useRunStatus } from './composables/useRunStatus.js'
 import { useHealth } from './composables/useHealth.js'
@@ -46,22 +55,16 @@ import { useRunModal } from './composables/useRunModal.js'
 import { useChangelog } from './composables/useChangelog.js'
 
 const { theme, style, styles, toggle: toggleTheme, setStyle } = useTheme()
-// 右侧配置侧栏的收起状态（顶栏开关与面板内收起按钮共用，localStorage 记忆）
-const { collapsed: sideCollapsed, toggle: toggleSidebar } = useSidebar()
-// 整体布局模式：tri(默认三栏) / top(顶部导航+配置抽屉) / side(侧边工作台+配置抽屉)。
-// top/side 下右侧配置栏脱离文档流变抽屉，齿轮按钮改为控制抽屉开合。
+// 整体布局模式：side(默认侧边工作台) / top(顶部导航)。两种布局下右侧配置栏都是抽屉。
 const { mode: layoutMode, setMode: setLayoutMode, layouts: layoutOptions } = useLayout()
-const configOpen = ref(false)
+// 配置抽屉的开合（顶栏齿轮与抽屉内收起按钮共用同一份状态，见 useConfigDrawer）
+const { open: configOpen, toggle: toggleConfigDrawer } = useConfigDrawer()
+// 六个任务型模块的参数抽屉开合（Esc 在外壳统一收，见下面 onEsc）
+const { anyOpenFor, closeFor: closeParamsFor } = useModuleParams()
+// 换布局时关掉抽屉：抽屉是浮层，跨布局保持开合状态只会让人找不到内容在哪
 watch(layoutMode, () => { configOpen.value = false })
-/** 齿轮按钮：tri 模式收起/展开右栏（原行为），抽屉模式开合抽屉 */
-function onSettingsToggle() {
-  if (layoutMode.value === 'tri') toggleSidebar()
-  else configOpen.value = !configOpen.value
-}
-const settingsTooltip = computed(() => {
-  if (layoutMode.value === 'tri') return sideCollapsed.value ? '展开配置栏' : '收起配置栏'
-  return configOpen.value ? '关闭配置抽屉' : '打开配置抽屉'
-})
+const settingsTooltip = computed(() =>
+  (configOpen.value ? '关闭配置抽屉' : '打开配置抽屉'))
 const { text: runStatusText, kind: runStatusKind } = useRunStatus()
 // 健康检查是模块级单例 —— 顶栏读它，三个任务页签和产出物面板写它
 const { health, healthError, loadHealth } = useHealth()
@@ -89,7 +92,18 @@ window.openAiModal = openAiModal
 // 切页签的副作用，从旧版 switchTab 的散落判断收拢成两处响应式派生
 const showStageFlow = computed(() => activeTab.value === STAGE_FLOW_TAB)
 const artifactLabel = computed(() => ARTIFACT_TAB_LABEL[activeTab.value] || '')
-const showArtifactPanel = computed(() => !!artifactLabel.value)
+// 问答页签**不挂**这份全局产出物面板：它自己把面板收进了右侧栏（见 ChatPane），
+// 两边同时挂会出现两个 #artifact-panel（同 id 重复），点击/断言都会串。
+const showArtifactPanel = computed(
+  () => !!artifactLabel.value && activeTab.value !== 'chat')
+// 只有 FILL_TABS（问答）让主列的 #tabs 行走 1fr 吃满剩余高度；其余页签按内容自然流。
+// 名单化是刻意的：产出物面板在 .col-main 里是 #tabs 的兄弟节点，#tabs 一被拉满，
+// 模块面板和产出物面板中间就空出一整块（大屏上几百像素），像模块间距失控。
+const paneFill = computed(() => FILL_TABS.includes(activeTab.value))
+// 当前模块的参数抽屉开着 → 主列让出右侧空间（非模态，见 style.css 的 .params-open）。
+// 用 anyOpenFor 而不是按页签名直接查：一个页签里可能有多个抽屉（扩展能力 = 技能 / MCP），
+// key 形如 `页签名:槽位`，归属关系由 useModuleParams 统一判。
+const paramsOpen = computed(() => anyOpenFor(activeTab.value))
 
 function switchTab(name) {
   if (!TABS.some((t) => t.name === name)) return
@@ -101,6 +115,83 @@ window.switchTab = switchTab
 window.toggleTheme = toggleTheme
 window.setThemeStyle = setStyle
 
+// ── 顶部导航布局（top）的页签条 ────────────────────────────────────
+// 切到「顶部导航」后，页签从主列搬到顶栏、紧跟品牌右侧（模板里的 .topbar-tabs）；
+// 9 个页签在 1440 及以下视口装不下，所以容器横向滚动、两端各浮一枚箭头。
+//
+// 三个刻意的实现选择，改之前先读：
+//   1. 箭头是 **absolute 浮层**，不占布局宽度。若让它占位，「箭头出现 → 条变窄 →
+//      更该出现」是单向自锁，而反向又会在阈值附近来回翻，ResizeObserver 直接自激；
+//      浮层化之后显隐不改变任何盒模型，回路从根上没了。
+//   2. 箭头只在**真的还能往那个方向滚**时出现（停在左端就没有左箭头）——
+//      比「禁用态的灰箭头」语义清楚，也少两个常驻控件。
+//   3. 切页签后把活动页签滚进可视区，并按箭头宽度内缩，否则点最靠右的页签时
+//      它会被右箭头压住一半。
+const tabStripEl = ref(null)
+const tabScrollable = ref(false)
+const tabAtStart = ref(true)
+const tabAtEnd = ref(true)   // 初始按「到头」处理：量之前不闪箭头
+
+function syncTabScroll() {
+  const el = tabStripEl.value
+  if (!el) return
+  const max = el.scrollWidth - el.clientWidth
+  tabScrollable.value = max > 2
+  tabAtStart.value = el.scrollLeft <= 2
+  tabAtEnd.value = el.scrollLeft >= max - 2
+}
+
+/** 一屏的 70%（至少 200px）：点一下保证换一批页签，而不是挪一格 */
+function scrollTabs(dir) {
+  const el = tabStripEl.value
+  if (!el) return
+  const step = Math.max(200, Math.round(el.clientWidth * 0.7))
+  el.scrollBy({ left: dir * step, behavior: 'smooth' })
+}
+
+/** 浮动箭头会盖住条的两端，所以判定「可见」时两边各内缩这些像素 */
+const TAB_ARROW_INSET = 30
+
+function revealActiveTab() {
+  const el = tabStripEl.value
+  if (!el || layoutMode.value !== 'top') return
+  const cur = el.querySelector('.tt-tab.active')
+  if (!cur) return
+  const view = el.getBoundingClientRect()
+  const box = cur.getBoundingClientRect()
+  // 只对**真会显示箭头的那一侧**内缩：停在左端时左边没有箭头，没必要白留 30px
+  const left = tabScrollable.value && !tabAtStart.value ? TAB_ARROW_INSET : 0
+  const right = tabScrollable.value && !tabAtEnd.value ? TAB_ARROW_INSET : 0
+  if (box.left < view.left + left) {
+    el.scrollBy({ left: box.left - view.left - left, behavior: 'smooth' })
+  } else if (box.right > view.right - right) {
+    el.scrollBy({ left: box.right - view.right + right, behavior: 'smooth' })
+  }
+}
+
+// 切页签 / 换布局后重新量一次：不仅要更新箭头显隐，还要把活动页签带回可视区
+watch([activeTab, layoutMode], async () => {
+  await nextTick()
+  syncTabScroll()
+  revealActiveTab()
+})
+
+let tabResizeObs = null
+onMounted(async () => {
+  await nextTick()
+  syncTabScroll()
+  if (typeof ResizeObserver === 'undefined' || !tabStripEl.value) return
+  // 窗口变宽变窄（或风格切换改了字号）都会改 clientWidth —— 只有这条能兜住
+  tabResizeObs = new ResizeObserver(() => {
+    syncTabScroll()
+    revealActiveTab()
+  })
+  tabResizeObs.observe(tabStripEl.value)
+})
+onBeforeUnmount(() => {
+  if (tabResizeObs) tabResizeObs.disconnect()
+})
+
 // ── 侧边工作台（side 布局）的分组导航 ──────────────────────────────
 // 页签名/图标仍以 TABS 为唯一事实来源，这里只做分组投影；点项走同一个
 // switchTab（window.switchTab 契约不受影响）。
@@ -109,6 +200,7 @@ const NAV_GROUPS = [
   { label: '协作', items: ['chat'] },
   { label: '交付', items: ['defect', 'team'] },
   { label: '工具箱', items: ['reqdev', 'apidebug', 'codetest', 'extensions'] },
+  { label: '系统', items: ['config'] },
 ]
 const tabBy = Object.fromEntries(TABS.map((t) => [t.name, t]))
 
@@ -143,11 +235,24 @@ function stageStatus(i) {
   return STEP_STATUS[stageState(i)] || 'wait'
 }
 
+// 配置抽屉与模块参数抽屉的 Esc 关闭：两类都是浮层，键盘用户也得能关掉
+// （与问答两个浮层同一约定）。只绑外壳一处，不放进各组件 —— 它们不该关心键盘事件。
+// 顺序：配置抽屉优先，其次当前页签那个模块的参数抽屉（切页签时只有活动 pane 可见，
+// 但状态是全局的，所以按 activeTab 精确关一个，避免误关别的模块的开合状态）。
+function onEsc(e) {
+  if (e.key !== 'Escape') return
+  if (configOpen.value) { configOpen.value = false; return }
+  if (anyOpenFor(activeTab.value)) closeParamsFor(activeTab.value)
+}
+
 onMounted(() => {
   loadHealth()
   loadSettings()
   initChangelog()
+  window.addEventListener('keydown', onEsc)
 })
+
+onBeforeUnmount(() => window.removeEventListener('keydown', onEsc))
 
 // 页签切换后按需拉数据（旧版是在 switchTab 里直接调 loadArtifacts / ensure 等）。
 // 产出物面板按当前页签的类型拉列表；缺陷修复页签旧版会直接 return，不动列表。
@@ -201,7 +306,7 @@ const healthText = computed(() => {
   <el-config-provider :locale="zhCn">
     <div class="bg-glow" />
 
-    <header class="topbar">
+    <header class="topbar" :class="`topbar-${layoutMode}`">
       <div class="brand">
         <div class="logo" aria-hidden="true">
           <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor"
@@ -215,11 +320,61 @@ const healthText = computed(() => {
           <div class="subtitle" id="health">{{ healthText }}</div>
         </div>
       </div>
+
+      <!-- 顶部导航布局（top）专用：页签搬到顶栏、紧贴品牌右侧（主列里的页签头
+           由 .layout-top 的样式隐藏，pane 内容留在原位不动）。文字型导航形态：
+           等宽均分整条空间，活动项用「文字宽度下划线」表示（下划线挂在 .tt-label
+           上，所以宽度自然跟着字走，不是整格宽）。装不下时横向滚动，两端浮出箭头。
+           hidden 契约：始终渲染 + .hidden，切布局不重建 DOM —— 滚动位置和用例
+           选择器都是稳的。 -->
+      <nav
+        class="topbar-tabs"
+        :class="[
+          { hidden: layoutMode !== 'top' },
+          { 'has-prev': tabScrollable && !tabAtStart, 'has-next': tabScrollable && !tabAtEnd },
+        ]"
+        aria-label="模块导航"
+      >
+        <div class="tt-strip" ref="tabStripEl" @scroll.passive="syncTabScroll">
+          <button
+            v-for="t in TABS"
+            :key="t.name"
+            type="button"
+            class="tt-tab"
+            :class="{ active: activeTab === t.name }"
+            :aria-current="activeTab === t.name ? 'page' : 'false'"
+            @click="switchTab(t.name)"
+          >
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor"
+                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                 v-html="ICON_PATHS[t.icon]" />
+            <span class="tt-label">{{ t.label }}</span>
+          </button>
+        </div>
+
+        <button type="button" class="tt-arrow prev"
+                :class="{ hidden: !tabScrollable || tabAtStart }"
+                aria-label="向左滚动页签" @click="scrollTabs(-1)">
+          <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor"
+               stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M9.8 3.6 5.4 8l4.4 4.4" />
+          </svg>
+        </button>
+        <button type="button" class="tt-arrow next"
+                :class="{ hidden: !tabScrollable || tabAtEnd }"
+                aria-label="向右滚动页签" @click="scrollTabs(1)">
+          <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor"
+               stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M6.2 3.6 10.6 8l-4.4 4.4" />
+          </svg>
+        </button>
+      </nav>
+
       <div class="top-actions">
         <el-tag id="status" class="status-tag" :type="statusType" effect="light" round
                 :class="{ 'is-pulsing': statusClass === 'running' }">{{ statusText }}</el-tag>
 
-        <!-- 整体布局切换：三栏 / 顶部 / 侧边，选中态高亮，localStorage 记忆（useLayout） -->
+        <!-- 整体布局切换：侧边工作台 / 顶部导航，选中态高亮，localStorage 记忆（useLayout） -->
         <div class="layout-switch" role="group" aria-label="整体布局切换">
           <el-tooltip v-for="l in layoutOptions" :key="l.key" :content="l.label" placement="bottom">
             <button type="button" class="ls-btn" :class="{ active: layoutMode === l.key }"
@@ -227,8 +382,7 @@ const healthText = computed(() => {
               <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor"
                    stroke-width="1.6" stroke-linecap="round">
                 <rect x="1.5" y="2.5" width="13" height="11" rx="1.5" />
-                <line v-if="l.key === 'tri'" x1="10" y1="2.5" x2="10" y2="13.5" />
-                <line v-else-if="l.key === 'top'" x1="1.5" y1="6" x2="14.5" y2="6" />
+                <line v-if="l.key === 'top'" x1="1.5" y1="6" x2="14.5" y2="6" />
                 <line v-else x1="5.5" y1="2.5" x2="5.5" y2="13.5" />
               </svg>
             </button>
@@ -249,7 +403,7 @@ const healthText = computed(() => {
         </el-select>
 
         <el-tooltip :content="settingsTooltip" placement="bottom">
-          <el-button id="sidebar-toggle" class="icon-btn" text circle @click="onSettingsToggle">
+          <el-button id="sidebar-toggle" class="icon-btn" text circle @click="toggleConfigDrawer">
             <el-icon><Setting /></el-icon>
           </el-button>
         </el-tooltip>
@@ -269,30 +423,12 @@ const healthText = computed(() => {
       </div>
     </header>
 
-    <!-- 步骤条：5 步的状态由 useDefect 的 stageStates 驱动（active/done/warn/fail/off，
-         见 useDefect.js 的 stagesRunning/stagesFromRunResults/stagesFromProbeResults）。
-         每步额外挂 `class="stage"` 与原始状态词，界面用例按这两个断言（见文件头注释）。 -->
-    <el-steps v-show="showStageFlow" id="stage-flow" class="stage-flow" align-center>
-      <el-step
-        v-for="(s, i) in STAGES"
-        :key="s.name"
-        class="stage"
-        :class="stageState(i)"
-        :title="s.name"
-        :description="s.desc"
-        :status="stageStatus(i)"
-      />
-    </el-steps>
+    <!-- 配置抽屉遮罩（点击空白关闭抽屉）。id 与 #chat-float-mask 对齐：界面用例要点它 -->
+    <div class="config-mask" id="config-mask" v-show="configOpen" @click="configOpen = false" />
 
-    <!-- 配置抽屉遮罩（仅 top/side 布局出现，点击空白关闭抽屉） -->
-    <div class="config-mask" v-show="configOpen && layoutMode !== 'tri'" @click="configOpen = false" />
-
-    <main class="layout" :class="[
-      { 'side-collapsed': sideCollapsed, 'config-open': configOpen },
-      layoutMode === 'tri' ? '' : `layout-${layoutMode}`,
-    ]">
-      <!-- 侧边工作台（side 布局）：分组导航替代顶部页签；
-           顶部页签与右栏配置由 .layout-side 样式接管（隐藏/抽屉化） -->
+    <main class="layout" :class="[`layout-${layoutMode}`, { 'config-open': configOpen }]">
+      <!-- 侧边工作台（side 布局）的分组导航：替代主列页签头。
+           top 布局下整条 v-show 收掉，导航改由顶栏里的 .topbar-tabs 承担。 -->
       <nav class="side-nav" v-show="layoutMode === 'side'" aria-label="模块导航">
         <div v-for="g in NAV_GROUPS" :key="g.label" class="nav-group">
           <div class="nav-group-label">{{ g.label }}</div>
@@ -306,14 +442,14 @@ const healthText = computed(() => {
         </div>
       </nav>
 
-      <div class="col-main">
+      <div class="col-main" :class="{ 'pane-fill': paneFill, 'params-open': paramsOpen }">
         <!-- 页签容器：id 沿用 #pane-<name>，与旧版一致。el-tab-pane 自己会用
              v-show 隐藏非活动页，这里额外挂 `active` 类是为了让既有断言
              （`el.classList.contains('active')`）与 style.css 的
              `.tabpane.active { display:grid; gap:18px }` 继续成立 ——
-             面板间距有用例断言为 ≥12px，不能丢。 -->
-        <!-- side 布局下只藏页签头（.layout-side #tabs .el-tabs__header{display:none}），
-              内容体必须保留 —— pane 全在这个容器里，整表 v-show 会把内容藏空 -->
+             面板间距有用例断言为 ≥12px，不能丢。
+             两种布局都把 .el-tabs__header 藏了（导航在左侧或顶栏），但只藏头部：
+             pane 全在 .el-tabs__content 里，整表 v-show 会把内容一起藏空。 -->
         <el-tabs id="tabs" v-model="activeTab">
           <el-tab-pane
             v-for="t in TABS"
@@ -333,7 +469,9 @@ const healthText = computed(() => {
             </template>
 
             <StatsPane v-if="t.name === 'stats'" />
-            <ChatPane v-else-if="t.name === 'chat'" />
+            <!-- ⚠️ @open-artifact 必须绑：问答消息卡里的「查看 / 采纳」靠它开弹窗。
+                 漏绑的表现是点了没反应、控制台也没有任何报错（emit 进了虚空）。 -->
+            <ChatPane v-else-if="t.name === 'chat'" @open-artifact="onOpenArtifact" />
             <DefectPane
               v-else-if="t.name === 'defect'"
               @open-proposal="openProposal"
@@ -341,12 +479,36 @@ const healthText = computed(() => {
               @open-kb-pattern="openPattern"
               @open-artifact="onOpenArtifact"
               @expand-log="expandRunLog"
-            />
+            >
+              <!-- 步骤条：5 步的状态由 useDefect 的 stageStates 驱动（active/done/warn/
+                   fail/off，见 useDefect.js 的 stagesRunning/stagesFromRunResults/
+                   stagesFromProbeResults）。每步额外挂 `class="stage"` 与原始状态词，
+                   界面用例按这两个断言（见文件头注释）。
+                   位置：2026-09-30 从「顶栏下方」移进缺陷修复模块内部（DefectPane 的
+                   #stage-flow 插槽）。原先它挂在 header 与 main.layout 之间、横跨整页
+                   宽度（1600 视口下 1544px），把整块版面往下推 —— side 布局下左侧导航
+                   也跟着被挤下去。v-show 留在 el-steps 自己身上（不是外层包一层），
+                   因为 check_vue_shell_ui 读的就是 #stage-flow 自身的 computed display。 -->
+              <template #stage-flow>
+                <el-steps v-show="showStageFlow" id="stage-flow" class="stage-flow" align-center>
+                  <el-step
+                    v-for="(s, i) in STAGES"
+                    :key="s.name"
+                    class="stage"
+                    :class="stageState(i)"
+                    :title="s.name"
+                    :description="s.desc"
+                    :status="stageStatus(i)"
+                  />
+                </el-steps>
+              </template>
+            </DefectPane>
             <TeamPane v-else-if="t.name === 'team'" />
             <ReqdevPane v-else-if="t.name === 'reqdev'" />
             <ApiDebugPane v-else-if="t.name === 'apidebug'" />
             <CodeTestPane v-else-if="t.name === 'codetest'" />
             <ExtensionsPane v-else-if="t.name === 'extensions'" />
+            <ConfigPane v-else-if="t.name === 'config'" />
             <el-empty v-else description="内容迁移中" />
           </el-tab-pane>
         </el-tabs>

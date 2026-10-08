@@ -408,10 +408,13 @@ def run(base: str, seeded: bool) -> None:
               "active" in (page.get_attribute('#usage-gran .seg-btn[data-g="week"]', "class") or "")
               and "active" in (page.get_attribute('#usage-range .seg-btn[data-d="7"]', "class") or ""))
 
-        # 切到别的页签再回来，不应该报错/丢数据
-        page.click('#tab-defect')
+        # 切到别的页签再回来，不应该报错/丢数据。
+        # ⚠️ 走 window.switchTab 而不是点 `#tab-defect`：两种布局（侧边工作台 / 顶部导航）
+        # 都把 el-tabs 自带页签头用 CSS 藏了（导航在左侧或顶栏），Playwright 点它必然
+        # 等不到可见而超时。切页签的稳定契约一直是 window.switchTab（见 App.vue 文件头）。
+        page.evaluate("() => switchTab('defect')")
         page.wait_for_timeout(400)
-        page.click('#tab-stats')
+        page.evaluate("() => switchTab('stats')")
         page.wait_for_timeout(900)
         check("来回切页签后统计面板仍正常渲染",
               page.eval_on_selector_all("#usage-cards .usage-card", "els => els.length") == 5)

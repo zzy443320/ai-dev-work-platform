@@ -1,9 +1,15 @@
 # -*- coding: utf-8 -*-
-"""配置侧栏（#settings-panel）与四个弹窗（#aimodal/#pmodal/#runmodal/#modal/#chmodal）自检。
+"""配置模块（#pane-config）+ 只读配置栏（#settings-panel）与四个弹窗自检。
+
+2026-09-30 改版：配置从「右栏侧栏里塞全部 cfg-* 编辑控件」拆成两个东西 ——
+  · 配置栏（#settings-panel）= 只读摘要（仓库路径/分支、模型与模式、ONES/Figma
+    接入状态）+ 「打开配置模块」入口，**不含任何可编辑控件**；
+  · 配置模块（#pane-config，新增页签）= 原来的全部 cfg-* 编辑控件。
 
 界面已收口为唯一实现：`GET /` 直接返回 Vue 3 产物（旧版原生页与 `/v2` 都已删除），
 所以只跑一遍。断言：
-  - 侧栏配置面板：全部 cfg-* 控件在；ONES/Figma/页面登录三段的 id 齐全
+  - 配置栏：摘要 id 齐全、没有可编辑控件、入口按钮能跳到配置页签
+  - 配置模块：全部 cfg-* 控件在；ONES/Figma/页面登录三段的 id 齐全
   - 闸门预览：#gate-preview 渲染真实命令清单（显式命令 / package.json / 降级三态）
   - #ai-summary 摘要卡：Mock/真实调用徽标 + 模型 + 地址（短路径）
   - 大模型弹窗：#aimodal 开关；接入协议/鉴权方式切换；鉴权字段名随鉴权方式显隐；
@@ -128,9 +134,17 @@ def start_server(tmp: Path):
     raise RuntimeError("临时服务 30s 内未就绪")
 
 
-# 侧栏配置面板的全部控件（id 与旧版 index.html:815-939 逐个对应）
+# 配置栏（右栏 #settings-panel）的只读摘要 id（2026-09-30 改版后新增）
+SIDEBAR_IDS = [
+    "settings-panel", "settings-fold",
+    "cfg-sum-repo-path", "cfg-sum-branch", "cfg-sum-repo-hint",
+    "cfg-sum-ai", "cfg-sum-ones", "cfg-sum-figma",
+    "btn-open-config",
+]
+
+# 配置模块（#pane-config）的全部控件（id 与旧版 index.html:815-939 逐个对应）
 CFG_IDS = [
-    "settings-panel",
+    "config-panel",
     "cfg-repo-path", "repo-hint", "cfg-repo-branch",
     "ai-summary-group", "ai-summary",
     "cfg-ones-url", "cfg-ones-uuid", "cfg-ones-team", "cfg-ones-email",
@@ -176,10 +190,60 @@ def run(base: str, *, errors: list, consoles: list) -> None:
         page.goto(base + "/", wait_until="networkidle")
         page.wait_for_timeout(900)
 
-        # ── 1. 侧栏配置面板控件齐全 ──
+        # ── 1. 配置抽屉 = 只读摘要（不再有任何可编辑控件） ──
+        # 三栏经典删掉之后配置栏只剩**抽屉**一种形态，默认关着（不盖内容）。
+        # 摘要项在抽屉里，所以先把抽屉点开再读 —— 关着的抽屉是 visibility:hidden，
+        # innerText 读不出东西、click 也会被 Playwright 判定不可见。
+        page.click("#sidebar-toggle")
+        page.wait_for_timeout(450)
+        check("顶栏齿轮能打开配置抽屉", page.evaluate(
+            "() => getComputedStyle(document.querySelector('.col-side')).visibility"
+            " === 'visible'"))
+        missing = page.evaluate(
+            "ids => ids.filter(id => !document.getElementById(id))", SIDEBAR_IDS)
+        check(f"配置栏摘要控件齐全（{len(SIDEBAR_IDS)} 个）", not missing, str(missing))
+        editable = page.evaluate(
+            """() => [...document.querySelectorAll('#settings-panel input,'
+             + ' #settings-panel textarea')].map(e => e.id || e.tagName)""")
+        check("配置栏不再有可编辑控件", not editable, str(editable))
+        check("配置栏展示了仓库路径",
+              "repo" in page.inner_text("#cfg-sum-repo-path"),
+              repr(page.inner_text("#cfg-sum-repo-path")))
+        check("配置栏展示了分支",
+              page.inner_text("#cfg-sum-branch").strip() == "main",
+              repr(page.inner_text("#cfg-sum-branch")))
+        check("配置栏展示了接入状态",
+              ("未配置" in page.inner_text("#cfg-sum-ones"))
+              or ("已配置" in page.inner_text("#cfg-sum-ones")),
+              repr(page.inner_text("#cfg-sum-ones")))
+
+        # ── 1b. 入口按钮跳到「配置」页签（编辑区不再在侧栏里） ──
+        page.click("#btn-open-config")
+        page.wait_for_function(
+            "() => { const p = document.getElementById('pane-config');"
+            " return p && p.classList.contains('active') }", timeout=10000)
+        check("点「打开配置模块」切到配置页签", page.evaluate(
+            "() => document.getElementById('pane-config').classList.contains('active')"))
+
         missing = page.evaluate(
             "ids => ids.filter(id => !document.getElementById(id))", CFG_IDS)
-        check(f"配置面板控件齐全（{len(CFG_IDS)} 个）", not missing, str(missing))
+        check(f"配置模块控件齐全（{len(CFG_IDS)} 个）", not missing, str(missing))
+
+        # ── 1c. 配置模块的高度：跟其它模块一样整页自然流，不再自己套限高内滚 ──
+        # 旧版给它 `max-height: clamp(360px, 100vh - 常量, 2200px)` + .config-grid 内滚，
+        # 是为了配合已删除的三栏经典。现在只允许**页面这一条滚动条**。
+        fit = page.evaluate("""() => {
+          const g = document.querySelector('#config-panel .config-grid');
+          const p = document.getElementById('config-panel');
+          const de = document.documentElement;
+          return {inner: g.scrollHeight - g.clientHeight,
+                  panelH: Math.round(p.getBoundingClientRect().height),
+                  pageOver: de.scrollHeight - innerHeight,
+                  panelBottom: Math.round(p.getBoundingClientRect().bottom)};
+        }""")
+        check("配置面板内没有第二条滚动条", abs(fit["inner"]) <= 2, str(fit))
+        check("配置模块按内容自然流、由页面整体滚动",
+              fit["pageOver"] > 0 and fit["panelH"] > 900, str(fit))
 
         # 值已由 /api/settings 回填（仓库路径用真实 mock 仓路径）
         check(f"仓库路径已回填",
@@ -409,8 +473,10 @@ def run(base: str, *, errors: list, consoles: list) -> None:
         check(f"Esc 关闭提案详情弹窗", hidden(page, "#pmodal"))
 
         # ── 9. 没有把 undefined / NaN 渲染出来 ──
+        # 抽屉此时是关着的（第 1b 步点了「打开配置模块」会自动收抽屉），
+        # 所以读 textContent 而不是 innerText：后者只给渲染后的文本，关着的抽屉读成空。
         for sel in ("#settings-panel", "#aimodal"):
-            txt = page.inner_text(sel)
+            txt = page.text_content(sel) or ""
             bad = [b for b in ("undefined", "NaN", "[object Object]") if b in txt]
             check(f"{sel} 无 undefined/NaN", not bad, str(bad))
 

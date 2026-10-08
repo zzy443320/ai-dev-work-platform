@@ -31,7 +31,9 @@ def check(name, cond, detail=""):
     return cond
 
 
-EXPECTED_TABS = ['stats', 'chat', 'defect', 'team', 'reqdev', 'apidebug', 'codetest', 'extensions']
+# 2026-09-30：配置独立成模块，末尾新增 config 页签（原有 8 个顺序不变）
+EXPECTED_TABS = ['stats', 'chat', 'defect', 'team', 'reqdev', 'apidebug', 'codetest',
+                 'extensions', 'config']
 
 
 def main() -> int:
@@ -116,9 +118,13 @@ def main() -> int:
     check("流程条仍是 #stage-flow", 'id="stage-flow"' in app_vue)
     # 产出物面板已拆成组件（ArtifactsPanel.vue），id 跟着组件走；
     # App.vue 里应当以 <ArtifactsPanel 的形式挂载。
+    # id 允许两种形态：字面量 id="artifact-panel"，或经 pid() 参数化
+    # （问答页签的右栏实例带 -chat 后缀避免与全局面板同 id 重复）。
     artifacts_panel = (src / "components" / "ArtifactsPanel.vue")
+    panel_src = artifacts_panel.read_text(encoding="utf-8") if artifacts_panel.is_file() else ""
     check("产出物面板仍是 #artifact-panel（在 ArtifactsPanel.vue 里）",
-          artifacts_panel.is_file() and 'id="artifact-panel"' in artifacts_panel.read_text(encoding="utf-8")
+          artifacts_panel.is_file()
+          and ("pid('artifact-panel')" in panel_src or 'id="artifact-panel"' in panel_src)
           and "<ArtifactsPanel" in app_vue)
     # 提示已从自绘 #toast 换成 Element Plus 的 ElMessage（见 composables/useToast.js）。
     # 断言随之从「页面上有 #toast 节点」改成「提示走 ElMessage、旧节点已退场」。

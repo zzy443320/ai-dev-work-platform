@@ -53,6 +53,8 @@ LEGACY = [
 SELF_CONTAINED = [
     "check_vue_migration.py",
     "check_vue_shell_ui.py",
+    # 顶部导航布局的页签条：几何 / 溢出箭头 / 切页签自动滚动 / 换布局复原
+    "check_vue_topbar_tabs.py",
     "check_vue_stats_ui.py",
     "check_vue_chat_ui.py",
     "check_vue_defect_ui.py",

@@ -15,6 +15,9 @@ export const TABS = [
   { name: 'apidebug', label: '接口联调', icon: 'code' },
   { name: 'codetest', label: '代码测试', icon: 'check' },
   { name: 'extensions', label: '扩展能力', icon: 'grid' },
+  // 配置：2026-09-30 从右栏侧栏（#settings-panel）独立成模块 —— 侧栏只留
+  // 「重要配置只读摘要 + 入口按钮」，全部编辑控件搬到这里。
+  { name: 'config', label: '配置', icon: 'settings' },
 ]
 
 export const DEFAULT_TAB = 'stats'
@@ -31,6 +34,16 @@ export const ARTIFACT_TAB_LABEL = {
 // 只有缺陷修复页签显示顶部 5 步流程条（旧版 switchTab 里的判断）
 export const STAGE_FLOW_TAB = 'defect'
 
+/**
+ * 「占满型」页签：内容区要吃掉主列的剩余高度（问答这种对话式工作台）。
+ *
+ * 只有这些页签会让 `.col-main` 的 #tabs 行走 `1fr`。其余页签一律按内容自然流、
+ * 整页滚动 —— 这一点必须写死成名单而不是「所有页签都拉满」：产出物面板是 #tabs 的
+ * **兄弟节点**（在 .col-main 里），#tabs 被拉到一屏高时，模块面板和产出物面板之间
+ * 会出现一整块空洞（2560×1400 实测 603px），看着就像「模块内间距特别大」。
+ */
+export const FILL_TABS = ['chat']
+
 /** 图标路径表。用 24x24 viewBox 的 stroke path，与旧版一致。 */
 export const ICON_PATHS = {
   chart: '<path d="M3 3v18h18"/><rect x="7" y="12" width="3" height="6"/><rect x="12" y="8" width="3" height="10"/><rect x="17" y="5" width="3" height="13"/>',
@@ -41,4 +54,5 @@ export const ICON_PATHS = {
   code: '<polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>',
   check: '<path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>',
   grid: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M17.5 14v7M14 17.5h7"/>',
+  settings: '<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/>',
 }
