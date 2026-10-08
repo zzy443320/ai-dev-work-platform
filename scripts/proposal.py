@@ -5,11 +5,11 @@ Nothing touches the target repo until someone approves a proposal, which is the
 only code path allowed to call CodeFixer.apply().
 """
 import json
-import re
 from datetime import datetime
 from typing import Dict, List, Optional
 
 from .json_store import JsonRecordStore
+from .textutil import slug
 
 STATUS_PENDING = "pending"
 STATUS_GATE_FAILED = "gate_failed"
@@ -23,7 +23,7 @@ TERMINAL_STATUSES = (STATUS_APPLIED, STATUS_APPLY_FAILED, STATUS_REJECTED)
 
 
 def _slug(s: str) -> str:
-    return re.sub(r"[^0-9A-Za-z._-]+", "-", str(s or "local")).strip("-")[:60] or "local"
+    return slug(s, maxlen=60, default="local")
 
 
 class ProposalStore(JsonRecordStore):

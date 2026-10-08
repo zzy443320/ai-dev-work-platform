@@ -18,6 +18,7 @@ from urllib.parse import urlsplit
 import requests
 
 from .usage import estimate_call as _estimate_call
+from .textutil import mask_secret
 
 ANTHROPIC_VERSION = "2023-06-01"
 DEFAULT_BASE = {
@@ -711,10 +712,7 @@ def describe(cfg: AIConfig) -> Dict:
 
 
 def _mask_value(v: str) -> str:
-    v = str(v)
-    if len(v) <= 10:
-        return "*" * len(v)
-    return f"{v[:6]}…{v[-4:]} ({len(v)} chars)"
+    return mask_secret(v)
 
 
 def _as_float(v, default):

@@ -14,11 +14,11 @@
 from __future__ import annotations
 
 import json
-import re
 from datetime import datetime
 from typing import Dict, List, Optional
 
 from .json_store import JsonRecordStore
+from .textutil import slug
 
 # 只落盘这些类型的事件（ai_delta 这类高频增量刻意排除）
 PERSIST_TYPES = (
@@ -31,7 +31,7 @@ MAX_RUNS_KEPT = 200
 
 
 def _slug(s: str) -> str:
-    return re.sub(r"[^0-9A-Za-z._-]+", "-", str(s or "run")).strip("-")[:40] or "run"
+    return slug(s, maxlen=40, default="run")
 
 
 class TeamRunStore(JsonRecordStore):

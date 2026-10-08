@@ -32,6 +32,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 from .artifact import safe_rel_path
 from .json_store import JsonRecordStore
 from .task_modules import _files, _str_list  # 复用产出的文件归一化（与其它任务同口径）
+from .textutil import slug
 
 MAX_TITLE_CHARS = 40
 MAX_SESSIONS = 300
@@ -76,7 +77,7 @@ def _now() -> str:
 
 
 def _slug(s: str) -> str:
-    return re.sub(r"[^0-9A-Za-z._-]+", "-", str(s or "")).strip("-")[:40] or "chat"
+    return slug(s, maxlen=40, default="chat")
 
 
 def _clip(s: str, n: int) -> str:

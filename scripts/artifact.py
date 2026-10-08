@@ -8,12 +8,12 @@ auto-restores on failure. No commit, no push.
 """
 import difflib
 import json
-import re
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from .json_store import JsonRecordStore
+from .textutil import slug
 
 STATUS_PENDING = "pending"
 STATUS_APPLIED = "applied"
@@ -34,7 +34,7 @@ TYPE_LABELS = {
 
 
 def _slug(s: str) -> str:
-    return re.sub(r"[^0-9A-Za-z._-]+", "-", str(s or "task")).strip("-")[:40] or "task"
+    return slug(s, maxlen=40, default="task")
 
 
 class ArtifactStore(JsonRecordStore):

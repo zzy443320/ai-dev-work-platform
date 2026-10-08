@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from .analyzer import strip_html
+from .textutil import parse_frontmatter
 
 _META_CATEGORIES = {"_stats.json", "INDEX.md"}
 
@@ -337,15 +338,4 @@ def _steps(defect: Dict) -> str:
 
 
 def _parse_front(text: str) -> Dict[str, str]:
-    if not text.startswith("---"):
-        return {}
-    end = text.find("\n---", 3)
-    if end == -1:
-        return {}
-    out: Dict[str, str] = {}
-    for line in text[3:end].splitlines():
-        if ":" not in line:
-            continue
-        k, _, v = line.partition(":")
-        out[k.strip()] = v.strip().strip('"').strip("'")
-    return out
+    return parse_frontmatter(text)

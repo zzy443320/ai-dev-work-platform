@@ -16,6 +16,7 @@ from scripts import usage  # noqa: E402
 from scripts.mock_data import SAMPLE_DEFECTS  # noqa: E402
 from scripts.ones_fetcher import OnesClient  # noqa: E402
 from scripts.usage import KIND_LABELS as USAGE_KIND_LABELS  # noqa: E402
+from scripts.textutil import parse_frontmatter as _parse_frontmatter
 
 router = APIRouter()
 
@@ -220,16 +221,4 @@ async def list_defects(mock: bool = False, limit: int = 10):
 
 
 # ------------------------------------------------------------------ helpers
-def _parse_frontmatter(text: str) -> dict:
-    if not text.startswith("---"):
-        return {}
-    end = text.find("\n---", 3)
-    if end == -1:
-        return {}
-    out = {}
-    for line in text[3:end].splitlines():
-        if ":" not in line:
-            continue
-        k, _, v = line.partition(":")
-        out[k.strip()] = v.strip().strip('"').strip("'")
-    return out
+

@@ -23,6 +23,7 @@ from scripts import mcp_client  # noqa: E402
 from scripts.pipeline import AIDefectFixerPipeline  # noqa: E402
 from scripts.proposal import ProposalStore  # noqa: E402
 from scripts.team_store import TeamRunStore  # noqa: E402
+from scripts.textutil import mask_secret
 
 WEB_DIR = Path(__file__).resolve().parent
 STATIC_DIR = WEB_DIR / "static"
@@ -123,10 +124,7 @@ DEFAULT_SETTINGS = {
 
 # --------------------------------------------------------------- settings io
 def _mask(s: str) -> str:
-    s = s or ""
-    if len(s) <= 8:
-        return "*" * len(s)
-    return f"{s[:3]}…{s[-4:]} ({len(s)} chars)"
+    return mask_secret(s)
 
 
 async def _body_json(req: Request) -> dict:
