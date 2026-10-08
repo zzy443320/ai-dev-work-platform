@@ -19,6 +19,8 @@ from .mcp_client import MAX_TOOL_TEXT  # noqa: F401 —— 工具结果截断上
 
 MAX_FILE_CHARS = 20000
 MAX_FILES = 8
+# 单个文件里允许带多少条 find/replace（局部改动的粒度上限）
+MAX_EDITS = 20
 
 TASK_LABELS = {
     "reqdev": "需求开发（设计稿转代码）",
@@ -290,6 +292,35 @@ def _cases(v) -> List[Dict]:
     return out
 
 
+def _edits(v) -> List[Dict]:
+    """问答提案里的「局部改动」：[{"find": 原文片段, "replace": 新片段}]。
+
+    为什么需要它：语言包/大组件动辄几千行，让模型在回答里吐出「改完后的完整文件」
+    既不现实（输出预算不够，会截断成半个文件）也不安全（截断的内容被采纳就写坏了）。
+    find/replace 只描述改动点，采纳时由服务端对真实文件做匹配替换——匹配不上或多处
+    命中都会整单拒绝，不会写坏文件。
+    """
+    out: List[Dict] = []
+    for e in (v or [])[:MAX_EDITS] if isinstance(v, list) else []:
+        if not isinstance(e, dict):
+            continue
+        find = e.get("find")
+        if find is None:
+            find = e.get("search")
+        repl = e.get("replace")
+        if repl is None:
+            repl = e.get("new")
+        find = str(find or "")
+        if not find.strip():
+            continue  # 空 find 等于无条件插入，直接丢
+        out.append({
+            "find": find[:MAX_FILE_CHARS],
+            "replace": str(repl or "")[:MAX_FILE_CHARS],
+            "description": str(e.get("description") or ""),
+        })
+    return out
+
+
 def _files(v) -> List[Dict]:
     out: List[Dict] = []
     for f in (v or [])[:MAX_FILES] if isinstance(v, list) else []:
@@ -297,12 +328,25 @@ def _files(v) -> List[Dict]:
             continue
         path = str(f.get("path") or f.get("file_path") or "").strip().replace("\\", "/")
         content = str(f.get("content") or "")
+        act = str(f.get("action", "create") or "create").strip().lower()
+        edits = _edits(f.get("edits"))
+        # 显式 edit / 只给了 edits 都算局部改动；局部改动不需要 content
+        if act in ("edit", "patch", "replace") or (edits and not content.strip()):
+            if not path or not edits:
+                continue
+            out.append({
+                "path": path.lstrip("/"),
+                "action": "edit",
+                "description": str(f.get("description") or ""),
+                "content": "",
+                "edits": edits,
+            })
+            continue
         if not path or not content.strip():
             continue
         out.append({
             "path": path.lstrip("/"),
-            "action": "overwrite" if str(f.get("action", "create")).lower() == "overwrite"
-                      else "create",
+            "action": "overwrite" if act == "overwrite" else "create",
             "description": str(f.get("description") or ""),
             "content": content[:MAX_FILE_CHARS],
         })

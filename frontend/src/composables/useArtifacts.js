@@ -55,6 +55,40 @@ const detail = ref(null)
 const diffData = ref(null)
 /** 文件区视图：false=改动高亮 diff，true=完整文件 */
 const fileFullView = ref(false)
+
+// diff 视图只展示「改动附近的上下文」，不是整份文件 —— 几千行的语言包里改一句
+// 话，把 1800 行未变代码全铺出来根本没法看。改动块前后各保留 CTX 行；两块改动
+// 之间隔得很近（≤ MIN_GAP 行未变）就整段保留，不折叠。想看全文走「查看完整文件」。
+const DIFF_CTX = 3
+const DIFF_MIN_GAP = DIFF_CTX * 2 + 1
+
+/**
+ * 把服务端的全量对齐行折叠成「改动 + 上下文」视图。
+ * @param {Array<{t:string,s:string}>} raw d.lines（t: same|add|del）
+ */
+function collapseSameLines(raw) {
+  const n = raw.length
+  const keep = new Array(n).fill(false)
+  for (let i = 0; i < n; i++) {
+    if (raw[i].t === 'same') continue
+    for (let j = Math.max(0, i - DIFF_CTX); j <= Math.min(n - 1, i + DIFF_CTX); j++) keep[j] = true
+  }
+  const out = []
+  let i = 0
+  while (i < n) {
+    if (keep[i]) { out.push(raw[i]); i++; continue }
+    let j = i
+    while (j < n && !keep[j]) j++
+    const gap = j - i
+    if (gap <= DIFF_MIN_GAP) {
+      for (let k = i; k < j; k++) out.push(raw[k])
+    } else {
+      out.push({ t: 'fold', s: `⋯ 已折叠 ${gap} 行未变代码，点「查看完整文件」看全部 ⋯` })
+    }
+    i = j
+  }
+  return out
+}
 /** 后端拒绝操作时的错误（显示在弹窗里的红条） */
 const pendingError = ref('')
 const note = ref('')
@@ -85,16 +119,21 @@ const fileViews = computed(() => {
       const usable = d && !d.stale
       const isNew = !usable || !d.exists
       const lines = showDiff && usable && (d.lines || []).length
-        ? d.lines.map((l) => ({ cls: l.t === 'same' ? 'ctx' : l.t, s: String(l.s ?? '') }))
+        ? collapseSameLines(d.lines).map((l) => ({ cls: l.t === 'same' ? 'ctx' : l.t, s: String(l.s ?? '') }))
         : null
+      // edit（局部替换）文件的 files[].content 是空的——完整内容由服务端做 diff 时
+      // 现算出来放在 diff 条目里，这里接住它，否则「查看完整文件」会是一片空白。
+      const full = f.content || (usable && d.content) || ''
       return {
         path: f.path || '',
         desc: f.description || '',
-        content: f.content || '',
+        content: full,
+        // edit = 只改一两处的局部替换（find/replace），不是整份覆盖
+        mode: f.action === 'edit' ? 'edit' : (isNew ? 'create' : 'overwrite'),
         isNew,
         added: usable ? (d.added || 0) : 0,
         removed: usable ? (d.removed || 0) : 0,
-        lineCount: String(f.content || '').split('\n').length,
+        lineCount: String(full).split('\n').length,
         lines,
       }
     }),

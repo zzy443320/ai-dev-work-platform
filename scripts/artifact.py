@@ -209,13 +209,19 @@ def diff_against_repo(artifact: Dict, repo_root) -> Dict:
     Read-only, never writes. Files missing from the repo come back as all-add
     (treated as new). Large or unreadable files degrade to exists=True with an
     empty diff so the UI falls back to the plain full-file view.
+
+    `action == "edit"` 的文件（问答产生的局部改动提案）在**这里**把 edits 应用到
+    当前工作区内容，算出改完后的文本再 diff——产出物里只存 find/replace，不存整份
+    文件（几千行的语言包让模型吐全量内容必然被截断，截断的内容被采纳就写坏了）。
+    匹配不上 / 多处命中时返回 stale=True 并带 reason，界面会退回纯文本视图。
     """
+    from .patch_engine import apply_edits  # 局部替换的匹配实现与缺陷修复链路共用
+
     root = Path(repo_root)
     files_out: List[Dict] = []
     for f in artifact.get("files") or []:
         rel = str(f.get("path", ""))
         target = safe_rel_path(root, rel)
-        new_text = str(f.get("content") or "")
         exists = bool(target and target.is_file())
         old_text = ""
         if exists:
@@ -223,8 +229,28 @@ def diff_against_repo(artifact: Dict, repo_root) -> Dict:
                 old_text = target.read_text(encoding="utf-8", errors="replace")
             except Exception:
                 files_out.append({"path": rel, "exists": True, "added": 0,
-                                  "removed": 0, "lines": [], "stale": True})
+                                  "removed": 0, "lines": [], "stale": True,
+                                  "reason": "文件读取失败"})
                 continue
+        if str(f.get("action") or "") == "edit":
+            edits = f.get("edits") or []
+            if not exists:
+                files_out.append({"path": rel, "exists": False, "added": 0,
+                                  "removed": 0, "lines": [], "stale": True,
+                                  "reason": "仓库里没有这个文件，无法做局部替换"})
+                continue
+            new_text, errs, _warns = apply_edits(old_text, edits, rel)
+            if errs:
+                files_out.append({"path": rel, "exists": True, "added": 0,
+                                  "removed": 0, "lines": [], "stale": True,
+                                  "reason": "；".join(errs)})
+                continue
+            lines, added, removed = diff_lines(old_text, new_text)
+            files_out.append({"path": rel, "exists": True, "added": added,
+                              "removed": removed, "lines": lines,
+                              "content": new_text})
+            continue
+        new_text = str(f.get("content") or "")
         lines, added, removed = diff_lines(old_text, new_text)
         files_out.append({"path": rel, "exists": exists,
                           "added": added, "removed": removed, "lines": lines})
@@ -243,6 +269,31 @@ class ArtifactApplier:
     def preflight(self) -> Dict:
         return self.fixer.preflight()
 
+    def _file_content(self, f: Dict, target: Optional[Path]) -> Tuple[str, str]:
+        """算出这个文件最终要写的内容（纯计算，不落盘）。
+
+        action=edit 的条目只带 find/replace：读当前文件 → 匹配替换 → 得到新内容。
+        匹配不到或匹配到多处一律返回错误，交给 apply 回滚——宁可什么都不写，
+        也不能把「没替换成功」的原文件当成功写回去。
+        """
+        from .patch_engine import apply_edits
+
+        if str(f.get("action") or "") != "edit":
+            return str(f.get("content") or ""), ""
+        rel = str(f.get("path", ""))
+        if target is None or not target.is_file():
+            return "", f"文件不存在，无法做局部替换: {rel}"
+        try:
+            old = target.read_text(encoding="utf-8")
+        except Exception as e:
+            return "", f"读取失败 {rel}: {e}"
+        new_text, errs, _warns = apply_edits(old, f.get("edits") or [], rel)
+        if errs:
+            return "", "；".join(errs)
+        if new_text == old:
+            return "", f"{rel}: 局部替换没有产生任何实际改动（find 与 replace 相同？）"
+        return new_text, ""
+
     def apply(self, artifact: Dict, force_gate: bool = False) -> Dict:
         files = artifact.get("files") or []
         if not files:
@@ -259,9 +310,14 @@ class ArtifactApplier:
                 target = safe_rel_path(self.repo_path, f.get("path", ""))
                 if target is None:
                     raise ValueError(f"非法文件路径: {f.get('path', '')}（必须相对仓库根且不能越界）")
+                content, err = self._file_content(f, target)
+                if err:
+                    self._restore(written)
+                    return {"ok": False, "status": "failed",
+                            "error": f"文件内容不可用，已回滚: {err}"}
                 backup = target.read_text(encoding="utf-8") if target.exists() else ""
                 target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_text(f.get("content", ""), encoding="utf-8")
+                target.write_text(content, encoding="utf-8")
                 written.append({"file": str(f.get("path", "")), "backup": backup})
         except Exception as e:
             self._restore(written)

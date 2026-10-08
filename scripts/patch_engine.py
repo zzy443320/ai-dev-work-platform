@@ -383,6 +383,59 @@ def _reindent(text: str, delta: int) -> str:
     return text
 
 
+def apply_edits(content: str, edits: List[Dict], label: str = "") -> Tuple[str, List[str], List[str]]:
+    """把一组 {"find"/"replace"} 顺序应用到原文，返回 (新文本, errors, warnings)。
+
+    和 build_patch 同一套安全口径（复用 _find_exact / _find_fuzzy）：
+      * find 为空 → 拒绝（等于无条件插入）
+      * find 在文中出现多次 → 拒绝（定位不了，必须让模型补上下文）
+      * 精确匹配不上才退到空白容错匹配，并记一条 warning 让人复核
+
+    为什么单开一个函数：`build_patch` 只认 SEARCH/REPLACE 文本块（缺陷修复链路在
+    用），而问答的改动提案是 JSON（`edits: [{find, replace}]`），两者要共用同一份
+    匹配实现——否则「问答改出来的补丁」和「修缺陷的补丁」会有一边松一边紧。
+    纯文本变换，不落盘。
+    """
+    errors: List[str] = []
+    warnings: List[str] = []
+    working = str(content or "")
+    if not isinstance(edits, list) or not edits:
+        return working, ["edits 为空"], warnings
+
+    for idx, ed in enumerate(edits, 1):
+        if not isinstance(ed, dict):
+            errors.append(f"{label}#{idx}: 不是对象，已跳过")
+            continue
+        find = str(ed.get("find") or ed.get("search") or "")
+        repl = str(ed.get("replace") or ed.get("new") or "")
+        if not find.strip():
+            errors.append(f"{label}#{idx}: find 为空，拒绝（会导致无条件插入）")
+            continue
+
+        offset = _find_exact(working, find)
+        if offset == -2:
+            errors.append(
+                f"{label}#{idx}: find 在文件里匹配到多次，无法定位"
+                f"（前 40 字符: {find.strip()[:40]!r}）——请在 find 里多带几行上下文")
+            continue
+        if offset >= 0:
+            working = working[:offset] + repl + working[offset + len(find):]
+            continue
+
+        start, end, delta = _find_fuzzy(working, find)
+        if start == -1:
+            errors.append(
+                f"{label}#{idx}: find 未匹配到文件内容"
+                f"（前 40 字符: {find.strip()[:40]!r}）")
+            continue
+        if delta:
+            repl = _reindent(repl, delta)
+        working = working[:start] + repl + working[end:]
+        warnings.append(f"{label}#{idx}: 采用空白容错匹配（indent_delta={delta}），请复核")
+
+    return working, errors, warnings
+
+
 def render_block_prompt(blocks: List[Block]) -> str:
     """Echo parsed blocks back in canonical form — used in the KB card."""
     if not blocks:

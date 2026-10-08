@@ -296,6 +296,85 @@ def main() -> int:
         check("没有可用文件时如实报错",
               "没有可用的文件" in chat_mod.proposal_payload({"files": []})["error"])
 
+        # ── 5b. 局部改动提案（edit / find-replace）：大文件改一两处不必吐全量 ──
+        # 真实案例（2026-09-30）：改语言包里一条文案，模型只读到 grep 片段、又吐不出
+        # 1800 行的完整文件，于是「这次不生成提案」并反过来问用户要内容 —— 用户要的不是
+        # 提问，是提案。局部替换就是为了让「改一两处」不再依赖全量内容。
+        print("\n[5b] 局部改动提案 edit / find-replace")
+        from scripts import patch_engine as pe
+
+        src = "a\nb\nc\n"
+        new, errs, warns = pe.apply_edits(src, [{"find": "b", "replace": "B"}], "x.ts")
+        check("唯一命中被替换", new == "a\nB\nc\n" and not errs, repr(new))
+        _, errs2, _ = pe.apply_edits("b\nb\n", [{"find": "b", "replace": "X"}], "x.ts")
+        check("多处命中被拒绝（不猜该改哪一处）", bool(errs2) and "多次" in errs2[0], str(errs2))
+        _, errs3, _ = pe.apply_edits(src, [{"find": "zzz", "replace": "X"}], "x.ts")
+        check("没命中被拒绝", bool(errs3) and "未匹配" in errs3[0], str(errs3))
+        _, errs4, _ = pe.apply_edits(src, [{"find": "  ", "replace": "X"}], "x.ts")
+        check("空 find 被拒绝（不允许无条件插入）", bool(errs4) and "为空" in errs4[0], str(errs4))
+        new2, e5, _ = pe.apply_edits(src, [{"find": "b\nc", "replace": "B\nC"}], "x.ts")
+        check("多行片段整体替换", new2 == "a\nB\nC\n" and not e5, repr(new2))
+        # 缩进对不上（模型按自己的缩进抄了一段）→ 精确匹配失败，退到空白容错并提示复核
+        fuzzy_src = "if (x) {\n  foo();\n}\n"
+        new3, e6, w6 = pe.apply_edits(fuzzy_src, [{"find": "    foo();",
+                                                   "replace": "    bar();"}], "x.ts")
+        check("缩进不一致走空白容错，并按文件原缩进写入",
+              new3 == "if (x) {\n  bar();\n}\n" and not e6
+              and any("容错" in w for w in w6), f"{new3!r} {w6}")
+
+        ebody = {"summary": "改一条中文文案", "files": [
+            {"path": "locales/zh-CN.ts", "action": "edit",
+             "description": "改 personalizationSaved",
+             "edits": [{"find": "personalizationSaved: '保存成功'",
+                        "replace": "personalizationSaved: '已保存'"}]}]}
+        epay = chat_mod.proposal_payload(ebody, "openai")
+        check("edit 提案不要求 content（几千行的文件也能提案）",
+              len(epay["files"]) == 1 and epay["files"][0]["action"] == "edit"
+              and epay["files"][0]["edits"], json.dumps(epay["files"], ensure_ascii=False)[:200])
+        check("edit 提案不会被当成空文件丢掉", epay.get("error") == "", str(epay.get("error")))
+        check("没有 edits 的 edit 条目被丢弃",
+              chat_mod.proposal_payload({"files": [{"path": "a.ts", "action": "edit"}]})["files"] == [])
+        check("空 find 的 edit 条目被丢弃",
+              chat_mod.proposal_payload({"files": [
+                  {"path": "a.ts", "action": "edit",
+                   "edits": [{"find": " ", "replace": "x"}]}]})["files"] == [])
+        check("只给 edits 也没写 action 时同样算局部改动",
+              chat_mod.proposal_payload({"files": [
+                  {"path": "a.ts", "edits": [{"find": "b", "replace": "B"}]}]}
+              )["files"][0]["action"] == "edit")
+
+        # 采纳链路：在**临时仓库**里验证（不动用户仓库）
+        repo2 = tmp / "repo2"
+        (repo2 / "locales").mkdir(parents=True, exist_ok=True)
+        subprocess.run(["git", "init", "-q"], cwd=str(repo2), check=True)
+        zh = repo2 / "locales" / "zh-CN.ts"
+        zh.write_text("export default {\n  personalizationSaved: '保存成功',\n};\n",
+                      encoding="utf-8")
+        d = artifact_mod.diff_against_repo({"files": epay["files"]}, repo2)
+        f0 = d["files"][0]
+        check("edit 条目的 diff 由服务端现算（不依赖模型给全量内容）",
+              f0.get("added") == 1 and f0.get("removed") == 1,
+              json.dumps({k: v for k, v in f0.items() if k != "lines"}, ensure_ascii=False)[:200])
+        check("diff 带算出的完整新内容（界面「查看完整文件」要用）",
+              "已保存" in (f0.get("content") or ""), str(f0.get("content"))[:60])
+        bad_art = {"files": [{"path": "locales/zh-CN.ts", "action": "edit",
+                              "edits": [{"find": "不存在的原文", "replace": "x"}]}]}
+        bd = artifact_mod.diff_against_repo(bad_art, repo2)["files"][0]
+        check("匹配不上时标 stale 并说清原因（不是假装没变化）",
+              bd.get("stale") and "未匹配" in (bd.get("reason") or ""), str(bd.get("reason"))[:80])
+
+        applier = artifact_mod.ArtifactApplier(str(repo2), {})
+        ap = applier.apply({"id": "chat-x", "files": epay["files"]})
+        check("采纳 edit 产出物真的写进工作区",
+              ap.get("ok") and "已保存" in zh.read_text(encoding="utf-8"), str(ap.get("error"))[:120])
+        check("文件其余部分原样保留（不是整份覆盖）",
+              "export default {" in zh.read_text(encoding="utf-8")
+              and "};" in zh.read_text(encoding="utf-8"))
+        ap_bad = applier.apply(dict(bad_art, id="chat-bad"))
+        check("匹配不上的 edit 被整单拒绝且不动文件",
+              not ap_bad.get("ok") and "已保存" in zh.read_text(encoding="utf-8"),
+              str(ap_bad.get("error"))[:120])
+
         # ── 8. run_chat 多轮循环 ──
         print("\n[6] run_chat 多轮循环")
         plan = ('{"action": "call", "tool": "repo_grep", "arguments": {"pattern": "WEEK_TOKEN"}}')
