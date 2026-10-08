@@ -116,11 +116,14 @@ export function renderMarkdown(md, onLocalLink) {
       i += 2
       const rows = []
       while (i < lines.length && isTableLine(lines[i])) { rows.push(parseRow(lines[i])); i++ }
-      out.push('<table><thead><tr>'
+      // 表格套一层 .md-scroll：宽表（比如 AI 输出的文件清单/对比表）不再把整条
+      // 消息流撑出横向滚动 —— `.chat-stream` 的 overflow-y:auto 会让 overflow-x
+      // 也算成 auto，没有这层容器的话气泡会跟着整列左右晃。滚动只发生在表格自身。
+      out.push('<div class="md-scroll"><table><thead><tr>'
         + head.map((h) => `<th>${inline(h)}</th>`).join('')
         + '</tr></thead><tbody>'
         + rows.map((r) => '<tr>' + head.map((_, ci) => `<td>${inline(r[ci] ?? '')}</td>`).join('') + '</tr>').join('')
-        + '</tbody></table>')
+        + '</tbody></table></div>')
       continue
     }
     const h = line.match(/^(#{1,4})\s+(.*)$/)

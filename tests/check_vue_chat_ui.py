@@ -135,6 +135,164 @@ def run(base: str, dirs, *, errors: list) -> None:
               page.eval_on_selector("#pane-chat .info-note",
                                     "el => el.querySelectorAll('br').length") >= 2)
 
+        # ── 浮层入口：产出物抽屉 / 使用说明浮窗 ──
+        # 2026-09-30 改版：这两块原来占着右栏（320px），内容挤、还把对话区压窄，
+        # 现在都由标题栏按钮打开浮层。断言锁住「默认关着 + 按钮能开 + 遮罩能关」，
+        # 免得哪天又退化成常驻右栏（那种改法下 .chat-grid 只剩两栏会直接崩版）。
+        check("两个浮层默认都是关着的",
+              page.eval_on_selector("#chat-art-drawer", "el => el.classList.contains('hidden')")
+              and page.eval_on_selector("#chat-help-pop", "el => el.classList.contains('hidden')"))
+        page.click("#btn-chat-artifacts")
+        page.wait_for_timeout(300)
+        check("点「产出物」打开右侧抽屉（真的占到宽度）",
+              page.eval_on_selector("#chat-art-drawer",
+                                    "el => !el.classList.contains('hidden')")
+              and page.eval_on_selector("#chat-art-drawer", "el => el.getBoundingClientRect().width") > 300)
+        page.keyboard.press("Escape")
+        page.wait_for_timeout(300)
+        check("Esc 收起产出物浮窗",
+              page.eval_on_selector("#chat-art-drawer", "el => el.classList.contains('hidden')"))
+        page.click("#btn-chat-help")
+        page.wait_for_timeout(300)
+        check("点「使用说明」打开浮窗（含只读边界说明）",
+              page.eval_on_selector("#chat-help-pop", "el => !el.classList.contains('hidden')")
+              and "只读" in page.inner_text("#chat-help-pop"))
+        # 点遮罩左上角关掉（点中心会落在居中浮窗上，被浮窗吃掉）
+        page.click("#chat-float-mask", position={"x": 12, "y": 12})
+        page.wait_for_timeout(300)
+        check("点遮罩收起使用说明浮窗",
+              page.eval_on_selector("#chat-help-pop", "el => el.classList.contains('hidden')"))
+
+        # ── 一屏高度 / 吸顶 / 浮层内边距（2026-09-30）──
+        # ① 问答页必须「一屏装下、页面不滚」。旧实现是 `100vh - 实测常量`（--fit-chat
+        #    176px / side 121px），换布局常量就对不上（顶部导航把页签条藏了却仍按 176 减，
+        #    白留 55px 死带）。现在改成从 #app 一路传到 pane 的高度链：内容矮就占满剩余
+        #    视口，内容高才整页滚 —— 所以这条断言对两种布局、对顶栏高度变化都成立。
+        # ② 侧边工作台的左导航吸顶位置必须在顶栏「下面」（旧 top:20 会滚进顶栏里）。
+        # ③ 产出物浮窗的内容要与边框留出内边距（旧版内容距边框只有 1px = 边框本身）。
+        # ④ 配置栏只剩抽屉一种形态（三栏经典已删）：开合由顶栏齿轮控制，遮罩/Esc 能关，
+        #    内容超长时在抽屉自己框内滚，不把页面顶出滚动条。
+
+        def scroll_overflow():
+            return page.evaluate(
+                "() => document.documentElement.scrollHeight - window.innerHeight")
+
+        def set_layout(idx):
+            """0=侧边工作台 / 1=顶部导航（LAYOUTS 的顺序）。"""
+            page.locator(".layout-switch .ls-btn").nth(idx).click()
+            page.wait_for_timeout(400)
+
+        for name, idx in (("侧边", 0), ("顶部", 1)):
+            set_layout(idx)
+            page.evaluate("() => switchTab('chat')")
+            page.wait_for_timeout(350)
+            over = scroll_overflow()
+            check(f"{name}布局：问答页一屏装下、页面不滚", over == 0, f"overflow={over}px")
+            # 网格底边要贴到内容区底边（= 视口高 − #app 下留白 18 − 面板下内边距 15）：
+            # 只断「不滚」不够，占不满就是下方一条死白，正是这次要修掉的症状。
+            bottom = page.evaluate(
+                "() => document.querySelector('#pane-chat .chat-grid')"
+                ".getBoundingClientRect().bottom")
+            vh = page.evaluate("() => innerHeight")
+            check(f"{name}布局：问答网格占满剩余高度",
+                  abs((vh - 33) - bottom) <= 2, f"gridBottom={bottom:.1f} 期望≈{vh - 33}")
+        set_layout(0)          # 后面都按侧边工作台量
+
+        # 产出物浮窗的内边距（此时还没产出物，量的是面板自身的内容左沿 + 标题）
+        page.click("#btn-chat-artifacts")
+        page.wait_for_timeout(350)
+        pads = page.evaluate(
+            """() => {
+              const d = document.querySelector('#chat-art-drawer');
+              const dr = d.getBoundingClientRect();
+              const body = d.querySelector('.chat-drawer-body > .panel > *');
+              const title = d.querySelector('.chat-float-title').getBoundingClientRect();
+              return {body: body.getBoundingClientRect().left - dr.left,
+                      title: title.left - dr.left};
+            }""")
+        check("产出物浮窗内容与边框有内边距（≥12px）",
+              pads["body"] >= 12 and pads["title"] >= 12, str(pads))
+        page.keyboard.press("Escape")
+        page.wait_for_timeout(300)
+
+        # 吸顶：临时塞一个高占位把主列撑长（问答页本身正好一屏，滚不动）。
+        # 占位必须放进 .col-main —— 左导航的 sticky 活动范围就是自己所在的 grid 行，
+        # 行高由主列决定：塞 body 的话行高不变，它根本滚不动。
+        SPACER = """(h) => {
+          const s = document.createElement('div');
+          s.id = 'tmp-tall'; s.style.height = h + 'px';
+          document.querySelector('main.layout .col-main').appendChild(s);
+        }"""
+        DROP_SPACER = """() => {
+          const s = document.getElementById('tmp-tall');
+          if (s) s.remove();
+          window.scrollTo(0, 0);
+        }"""
+        STICKY = """() => {
+          const pick = (sel) => {
+            const el = document.querySelector(sel);
+            if (!el) return null;
+            const r = el.getBoundingClientRect();
+            return {top: r.top, bottom: r.bottom, h: r.height,
+                    pos: getComputedStyle(el).position,
+                    scrollable: el.scrollHeight > el.clientHeight + 2};
+          };
+          return {topbar: pick('.topbar'), nav: pick('.side-nav'), col: pick('.col-side')};
+        }"""
+
+        page.evaluate("() => switchTab('chat')")
+        page.evaluate(SPACER, 1400)
+        page.evaluate("() => window.scrollTo(0, 600)")
+        page.wait_for_timeout(350)
+        geo = page.evaluate(STICKY)
+        check("侧边布局：左导航吸顶停在顶栏下方（没被顶栏盖住）",
+              geo["nav"] is not None and geo["nav"]["top"] >= geo["topbar"]["bottom"] + 4
+              and geo["nav"]["h"] > 100,
+              f"navTop={geo['nav'] and geo['nav']['top']} topbarBottom={geo['topbar']['bottom']}")
+        page.evaluate(DROP_SPACER)
+
+        # 配置抽屉：默认关着（不盖内容）→ 齿轮开 → 超长内容在自己框内滚、
+        # 且抽屉是 fixed 不参与页面高度 → 点遮罩关。
+        drawer = """() => {
+          const c = document.querySelector('.col-side');
+          const r = c.getBoundingClientRect();
+          return {pos: getComputedStyle(c).position, vis: getComputedStyle(c).visibility,
+                  left: r.left, vw: innerWidth,
+                  scrollable: c.scrollHeight > c.clientHeight + 2,
+                  over: document.documentElement.scrollHeight - innerHeight};
+        }"""
+        check("抽屉默认关闭", page.evaluate(drawer)["vis"] == "hidden",
+              str(page.evaluate(drawer)))
+        page.click("#sidebar-toggle")
+        page.wait_for_timeout(450)
+        opened = page.evaluate(drawer)
+        check("点齿轮打开配置抽屉（浮到内容之上、贴右边缘）",
+              opened["pos"] == "fixed" and opened["vis"] == "visible"
+              and opened["left"] > opened["vw"] - 400, str(opened))
+        page.evaluate("""(h) => {
+          const s = document.createElement('div');
+          s.id = 'tmp-tall-side'; s.style.height = h + 'px';
+          document.querySelector('.col-side #settings-panel').appendChild(s);
+        }""", 1400)
+        page.wait_for_timeout(250)
+        tall = page.evaluate(drawer)
+        check("抽屉内容超长时在自己框内滚、不把页面顶出滚动条",
+              tall["scrollable"] and tall["over"] <= 0, str(tall))
+        page.evaluate("""() => {
+          const s = document.getElementById('tmp-tall-side');
+          if (s) s.remove();
+        }""")
+        page.click("#config-mask", position={"x": 12, "y": 300})
+        page.wait_for_timeout(400)
+        check("点遮罩关闭配置抽屉", page.evaluate(drawer)["vis"] == "hidden")
+        # 键盘路径：抽屉是浮层，Esc 也得能关（与问答两个浮层同一约定）
+        page.click("#sidebar-toggle")
+        page.wait_for_timeout(400)
+        page.keyboard.press("Escape")
+        page.wait_for_timeout(400)
+        check("Esc 关闭配置抽屉", page.evaluate(drawer)["vis"] == "hidden")
+        page.wait_for_timeout(200)
+
         # ── 一问一答 ──
         page.fill("#chat-text", "这个项目的路由是怎么配的？")
         page.click("#btn-chat-send")
@@ -300,6 +458,11 @@ def run(base: str, dirs, *, errors: list) -> None:
               "dropped.txt" in page.inner_text("#chat-attach"))
         page.click("#chat-attach .chat-att-chip .chat-att-del")
         page.wait_for_timeout(300)
+
+        # 消息攒多之后页面也不能被撑出滚动条（该滚的是 #chat-stream，不是页面）
+        over = page.evaluate(
+            "() => document.documentElement.scrollHeight - window.innerHeight")
+        check("多轮消息后页面仍不滚（消息流自己滚）", over == 0, f"overflow={over}px")
 
         browser.close()
 
