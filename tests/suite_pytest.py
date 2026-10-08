@@ -18,8 +18,10 @@
     .venv/Scripts/python.exe -m pytest tests/suite_pytest.py -k origin
 """
 import os
+import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -47,21 +49,38 @@ ALL = SECURITY + PIPELINE
 
 
 def _run_script(name: str) -> None:
-    """跑一个脚本式用例，断言退出码为 0。"""
+    """跑一个脚本式用例，断言退出码为 0。
+
+    输出**重定向到临时文件而不是管道**。这是踩过的坑：这些脚本内部还会派生
+    uvicorn 孙进程（temp_server.serve()），一旦超时只杀直接子进程，孙进程仍握着
+    stdout 管道，communicate() 就永远等不到 EOF —— 整套会在某个晚上挂住 80 分钟，
+    而单独跑同一个脚本只要 8 秒。改成写文件，杀完就是杀完。
+    """
     env = dict(os.environ)
     # Windows 控制台默认 GBK：不加这两个，子进程打印中文会炸 UnicodeEncodeError，
     # 或者把断言里的中文比对搞成乱码。
     env["PYTHONUTF8"] = "1"
     env["PYTHONIOENCODING"] = "utf-8"
-    proc = subprocess.run(
-        [sys.executable, str(ROOT / "tests" / name)],
-        cwd=str(ROOT), env=env,
-        capture_output=True, text=True, encoding="utf-8", errors="replace",
-        timeout=900,
-    )
+    with tempfile.TemporaryFile(mode="w+b") as out:
+        try:
+            proc = subprocess.run(
+                [sys.executable, str(ROOT / "tests" / name)],
+                cwd=str(ROOT), env=env,
+                stdout=out, stderr=subprocess.STDOUT,
+                timeout=600,
+            )
+        except subprocess.TimeoutExpired:
+            out.seek(0)
+            tail = out.read().decode("utf-8", "replace")[-3000:]
+            pytest.fail(f"{name} 超过 600s 未结束（已杀死）。最后输出：\n{tail}")
+        out.seek(0)
+        captured = out.read().decode("utf-8", "replace")
     if proc.returncode != 0:
-        tail = (proc.stdout or "")[-4000:] + "\n--- stderr ---\n" + (proc.stderr or "")[-1500:]
-        pytest.fail(f"{name} 退出码 {proc.returncode}\n{tail}")
+        pytest.fail(f"{name} 退出码 {proc.returncode}\n{captured[-4000:]}")
+    # 兜底：脚本自己打了失败行却给了 0 退出码的情况。三种历史写法都覆盖：
+    # [FAIL] xxx（界面用例）、"  FAIL xxx"（check_* 的 check()）、"N FAILED: [...]"。
+    if re.search(r"^\s*(\[FAIL\]|FAIL |FAILED |!!)", captured, re.M):
+        pytest.fail(f"{name} 退出码 0 但输出里有失败标记：\n{captured[-2500:]}")
 
 
 @pytest.mark.parametrize("name", SECURITY, ids=SECURITY)
