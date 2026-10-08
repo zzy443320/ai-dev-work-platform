@@ -11,8 +11,16 @@ Five modules share one safety contract:
 - 代码测试   /api/tasks/run codetest→ artifacts
 （长任务作业 /api/team/stream 同样产出 artifacts）
 
-Only /api/proposals/{id}/approve and /api/artifacts/{id}/approve may touch the
-target repository, and neither ever commits — write to the working tree only.
+Four endpoints touch the target repository -- approve and undo, on both
+/api/proposals/{id}/* and /api/artifacts/{id}/*. None of them ever commits; they
+only write the working tree (backups are taken first, undo restores from them).
+Every other endpoint is read-only.
+
+The UI is served by this same process and all frontend requests use relative
+URLs, so the browser never needs a cross-origin caller. Because the write path
+ends up executing user-configured gate commands through a shell, the server
+refuses any request that looks like it came from another website -- see
+local_only_guard.
 
 数据目录都可用环境变量改写（USAGE_DIR / CHAT_DIR / ARTIFACT_DIR / SETTINGS_FILE），
 自检用例靠它们把临时实例指向临时目录，从而不碰真实配置与真实数据。
@@ -25,9 +33,9 @@ import sys
 import threading
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
@@ -509,9 +517,82 @@ def _fresh_pipeline() -> AIDefectFixerPipeline:
 
 
 app = FastAPI(title="ONES 前端研发助手 UI (Frontend Dev Copilot)")
-app.add_middleware(
-    CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]
-)
+
+# ---------------------------------------------------------- 本机访问边界
+#
+# 这里原先挂的是 CORSMiddleware(allow_origins=["*"])，而那是一个实打实的漏洞。
+# 界面和 API 同源（前端所有请求都写相对 URL，见 frontend/src/api/client.js），
+# 根本不需要 CORS；通配反而让浏览器里打开的**任意网页**都能对
+# http://127.0.0.1:8765 发 POST 并被照常接受（跨源 POST 里 text/plain 与
+# application/json 都不触发预检，预检也拦不住"只写不读回"的攻击）。链条是：
+#   POST /api/settings 改 gate.commands_text → 采纳提案 → scripts/gate.py
+# 以 shell=True 执行它。等价于"访问某个恶意页面 = 在你机器上跑任意命令"。
+#
+# 换成本机工具的标准 CSRF 闸门，三层，逐条对应真实攻击面：
+#   1. Host 必须是回环地址 —— 挡 DNS rebinding（evil.com 解析到 127.0.0.1 时
+#      Host 头就是 evil.com，请求会在这里被拒）。
+#   2. 带 Origin / Referer 的请求必须同源 —— 挡任意网页发起的跨源读写（浏览器
+#      发跨源请求时一定会带 Origin，且伪造不了）。
+#   3. Sec-Fetch-Site 存在时必须不是跨源 —— 兜住不发 Origin 的老式表单提交。
+#   4. 三个头都不带时放行 —— 本机 curl / requests / 自检用例本来就不发这些头，
+#      行为不变（这也是不给"本机进程"再加 token 的原因：能起本地进程的攻击者
+#      已经能直接读配置文件里的密钥，加一层只会被测试和脚本绕过去）。
+_LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
+_DEFAULT_PORTS = {"http": "80", "https": "443"}
+
+
+def _origin_tuple(raw: str) -> str:
+    """把 Origin / Referer / URL 归一成 scheme://host[:port]，省略默认端口。
+
+    解析不出来源时返回 ""（调用方据此判断"这个请求没带来源信息"）。
+    """
+    try:
+        parts = urlsplit(str(raw).strip().lower())
+        if not parts.scheme or not parts.hostname:
+            return ""
+        host = f"[{parts.hostname}]" if ":" in parts.hostname else parts.hostname
+        port = parts.port  # 端口非法时（如 host:abc）会抛 ValueError
+        if port is None or str(port) == _DEFAULT_PORTS.get(parts.scheme):
+            return f"{parts.scheme}://{host}"
+        return f"{parts.scheme}://{host}:{port}"
+    except ValueError:
+        return ""
+
+
+def _rejected(request: Request, why: str) -> JSONResponse:
+    """拒绝原因同时打到控制台——本机工具没有日志框架，print 就是审计日志。"""
+    print(f"[web] 403 {request.method} {request.url.path} —— {why}")
+    return JSONResponse(
+        {"error": f"拒绝访问：{why}。本服务只接受来自本机界面的同源请求，"
+                  f"请在浏览器打开 http://127.0.0.1:{request.url.port or 8765}"},
+        status_code=403,
+    )
+
+
+@app.middleware("http")
+async def local_only_guard(request: Request, call_next):
+    """只放行本机来源的请求；细节见 _LOOPBACK_HOSTS 上方的注释。"""
+    url = request.url
+    host = (url.hostname or "").lower()
+    if host not in _LOOPBACK_HOSTS:
+        return _rejected(request, f"Host 不是本机地址：{host or '(空)'}")
+
+    headers = request.headers
+    requester = _origin_tuple(headers.get("origin") or "")
+    if not requester and headers.get("referer"):
+        # Referer 只在部分场景发（比如从别的页面跳过来），按同一套规则比。
+        requester = _origin_tuple(headers["referer"])
+    if requester:
+        mine = _origin_tuple(f"{url.scheme}://{url.netloc}")
+        if requester != mine:
+            return _rejected(request, f"跨源请求：{requester}")
+
+    site = (headers.get("sec-fetch-site") or "").lower()
+    # none = 地址栏直接访问/书签，same-origin/same-site = 自己人；其余一律拒。
+    if site and site not in ("none", "same-origin", "same-site"):
+        return _rejected(request, f"Sec-Fetch-Site：{site}")
+
+    return await call_next(request)
 
 
 @app.middleware("http")
