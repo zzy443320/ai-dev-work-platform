@@ -180,7 +180,10 @@ def main() -> int:
     try:
         from fastapi.testclient import TestClient
         import web.server as server
-        client = TestClient(server.app)
+        # base_url 必须给一个回环地址：TestClient 默认用 http://testserver/，
+        # 而 web/server.py 的 local_only_guard 只接受本机来源（Host 非回环直接 403）。
+        # 是这里的假主机名不合实情，不是守卫该让路——别改成放宽守卫。
+        client = TestClient(server.app, base_url="http://127.0.0.1:8765")
         r = client.get("/api/changelog")
         body = r.json()
         ok = (r.status_code == 200 and body.get("total", 0) >= 29

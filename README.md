@@ -57,14 +57,35 @@ cp config.yaml.example config.yaml
 
 ## 测试
 
+`tests/` 下的用例是**脚本式**的（`check()` 打印结果 + `sys.exit(1)`），本身不是 pytest 用例。
+pytest 只当收编器：`tests/suite_pytest.py` 用子进程跑筛过的安全子集并按退出码判定，
+收集范围由 `pyproject.toml` 的 `python_files` 收窄到一个文件（不这么做的话，默认收集会把
+`test_*.py` 在导入阶段全部跑完并抛 SystemExit）。
+
 ```bash
-.venv/Scripts/python.exe tests/test_safety.py   # 后端安全场景（纯离线）
-.venv/Scripts/python.exe tests/check_team.py    # 长任务作业离线逻辑
-.venv/Scripts/python.exe tests/check_chat.py    # 问答离线逻辑
-.venv/Scripts/python.exe tests/check_vue_all.py # 界面总入口（Vue 系列 + 既有界面用例）
+.venv/Scripts/python.exe -m pip install -r requirements-dev.txt
+.venv/Scripts/python.exe -m pytest                 # 安全子集，约 1 分钟，纯离线
+.venv/Scripts/python.exe -m pytest -k origin       # 只跑同源闸门
 ```
 
-`tests/` 自包含：纯离线用例什么都不用准备；界面类用例自带临时实例与脱敏夹具，不依赖私有数据。
+想手工跑单个用例也完全可以（不依赖 pytest）：
+
+```bash
+.venv/Scripts/python.exe tests/test_safety.py      # 采纳/撤销/闸门/漂移 六场景
+.venv/Scripts/python.exe tests/check_origin_guard.py  # 本机同源闸门
+.venv/Scripts/python.exe tests/check_write_guard.py   # 写盘护栏
+.venv/Scripts/python.exe tests/check_kb_export.py     # 知识库脱敏与泄密自检
+.venv/Scripts/python.exe tests/check_vue_all.py       # 界面总入口（见下方前置条件）
+```
+
+**`pytest` 子集不含界面用例**：`check_vue_*.py` / `test_browser_*.py` 需要 Playwright 与
+真实浏览器，整套 5–10 分钟，所以没并进去。跑它们的前置条件是三条：
+`playwright install chromium`、先 `npm run build`（否则 `GET /` 返回 503）、
+以及 `test_browser_*.py` 还需要服务已起在 8765 并准备好 mock 仓库。
+这些用例自包含：纯离线的什么都不用准备，界面类自带临时实例与脱敏夹具。
+会真写目标仓库的浏览器用例，第一行先过 `tests/server_guard.py` 的 `require_repo()`
+（比对 `/api/health` 报的仓库，不符就在任何写操作之前中止）；
+`tests/repo_guard.py` 是另一件事，只服务 `check_locate_regression*.py` 的私有仓依赖跳过。
 
 ## 前端（Vite + Vue 3）
 
@@ -95,7 +116,25 @@ npm run dev          # 开发模式（接口自动转发到 127.0.0.1:8765）
    提示条 `useToast` —— 与旧版**同键同格式**。
 4. 格式化函数统一放 `frontend/src/utils/format.js`。
 5. 图表继续手绘 SVG（内网离线可用），不引图表库。
-6. 会写目标仓库的界面用例，第一行先过 `tests/repo_guard.py` 闸门，跳过路径零副作用。
+6. 会写目标仓库的浏览器用例，第一行先过 `tests/server_guard.py` 的 `require_repo()`
+   闸门，跳过路径零副作用（见上文「测试」）。
+
+## 知识库的备份与分享
+
+`knowledge_base/` 是这条流水线唯一会随时间增值的资产，但它含真实工单数据、**不入库**
+（见 .gitignore）——误删或换机器就归零。三条命令兜底：
+
+```bash
+.venv/Scripts/python.exe run.py --backup-kb    # 整份打成带时间戳的 zip 放 kb_backups/（也不入库）
+.venv/Scripts/python.exe run.py --export-kb    # 脱敏导出到 knowledge_base_masked/（可提交）
+.venv/Scripts/python.exe run.py --audit-kb     # 比对原件确认副本零残留（有残留退出码 1）
+```
+
+脱敏按规则洗内网链接与裸域名、工单记录号、绝对路径、账号凭据、邮箱与迭代号；两类词表放在
+`knowledge_base/` 下（都不入库）：`mask_terms.txt` 点名要额外挡的内部标识，`keep_terms.txt`
+捞回被形状规则误伤的代码线索。**导出后一定要跑 `--audit-kb`**：规则是启发式的，
+「≥12 位大小写+数字混合」这种形状分不开工单号与 `getUserItems2`，所以默认保守多洗、
+由白名单回捞，漏没漏只能靠比对原件知道。
 
 ## 已知限制
 

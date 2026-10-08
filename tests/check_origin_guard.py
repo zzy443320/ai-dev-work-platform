@@ -84,6 +84,23 @@ with temp_server.serve() as srv:
     code, _, body = hit(port, "/api/health", headers={"Host": f"evil.example:{port}"})
     check("拒：Host 指向外域（rebinding）", code == 403, f"code={code} {body[:70]}")
 
+    # ---- 4b. vite dev 代理的转发形状必须放行 ----
+    # `npm run dev` 下浏览器请求打到 http://127.0.0.1:5173/api/...，vite 的 proxy 默认
+    # 不改写 Host（changeOrigin:false），所以后端看到的是「Host 与 Origin 都是
+    # 127.0.0.1:5173」。这条用例钉住这个组合：如果哪天把 changeOrigin 打开，Host 会变成
+    # 127.0.0.1:8765 而 Origin 仍是 5173 → 判定跨源 → 开发模式整片 403。
+    code, _, body = hit(port, "/api/health", headers={
+        "Host": "127.0.0.1:5173", "Origin": "http://127.0.0.1:5173",
+        "Sec-Fetch-Site": "same-origin"})
+    check("放行：vite dev 代理转发的请求（Host/Origin 同为 5173）",
+          code == 200, f"code={code} {body[:70]}")
+    # 反向：只改 Host 不改 Origin（等价于 changeOrigin:true 的后果）应当被拒，
+    # 说明上面那条 200 不是「守卫没生效」造成的。
+    code, _, _ = hit(port, "/api/health", headers={
+        "Host": f"127.0.0.1:{port}", "Origin": "http://127.0.0.1:5173"})
+    check("拒：Host 与 Origin 不一致（changeOrigin 打开后的形状）", code == 403,
+          f"code={code}")
+
     # ---- 5. localhost 与 127.0.0.1 是两个不同 origin，不互相放行 ----
     code, _, _ = hit(port, "/api/health", headers={"Origin": f"http://localhost:{port}"})
     check("localhost 冒充 127.0.0.1 → 拒", code == 403, f"code={code}")

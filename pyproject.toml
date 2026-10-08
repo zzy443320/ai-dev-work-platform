@@ -1,0 +1,13 @@
+# 只承载两件事：pytest 的行为，以及开发期依赖的说明。
+# 本项目仍以 requirements.txt + `python run.py` 运行，不是可安装的包，
+# 所以这里刻意不写 [build-system] / [project]。
+
+[tool.pytest.ini_options]
+# 关键一行：只收集 suite_pytest.py 这一个模块。
+# tests/ 下 40 多个 check_*.py / test_*.py 是**脚本式**用例（靠 print + sys.exit(1)
+# 报结果，导入即执行、还会起临时服务）。默认收集规则会把 test_*.py 全部 import 一遍，
+# 于是一次 `pytest` 会在收集阶段就跑完整套并抛 SystemExit。用 python_files 收窄，
+# 让 pytest 只通过子进程按退出码收编它们（见 tests/suite_pytest.py）。
+python_files = ["suite_pytest.py"]
+testpaths = ["tests"]
+addopts = "-q -ra"

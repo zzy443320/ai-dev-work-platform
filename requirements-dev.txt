@@ -1,0 +1,8 @@
+# 开发期依赖（运行程序不需要，只装 requirements.txt 就能跑）
+#
+# 装法： .venv/Scripts/python.exe -m pip install -r requirements-dev.txt
+
+# pytest 只作为**收编器**用：tests/ 下的用例是脚本式的（print + sys.exit），
+# 由 tests/suite_pytest.py 通过子进程按退出码收进 pytest。收集范围由
+# pyproject.toml 的 python_files 收窄到一个文件——详见那里的注释。
+pytest>=8.0
