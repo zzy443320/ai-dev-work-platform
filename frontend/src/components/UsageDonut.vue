@@ -24,20 +24,22 @@ const CHART_H = 220
 
 const wrap = ref(null)
 const colors = ref(null)
-/** 调色板解析结果（ECharts 只吃具体色值，var(--primary) 要先解析） */
-const palette = ref([])
+/** 调色板解析结果（ECharts 只吃具体色值，var(--primary) 要先解析）。
+ *  不能叫 palette：`<script setup>` 里同名顶层绑定会**遮蔽同名 prop**，
+ *  模板里将来写 palette 就悄悄拿到解析后的色值数组而不是父组件传的词表。 */
+const resolvedPalette = ref([])
 
 function readColors() {
   if (!wrap.value) return
   colors.value = readChartColors(wrap.value)
-  palette.value = props.palette.map((c) => resolveColor(wrap.value, c))
+  resolvedPalette.value = props.palette.map((c) => resolveColor(wrap.value, c))
 }
 onMounted(readColors)
 watch(theme, readColors)
 // 调色板来自 props，父组件不变就不变；跟着主题一起重算最省心
 watch(() => props.palette, readColors, { deep: true })
 
-const colorAt = (i) => palette.value[i] || props.palette[i] || ''
+const colorAt = (i) => resolvedPalette.value[i] || props.palette[i] || ''
 
 const total = computed(() => props.rows.reduce((s, r) => s + r.total, 0))
 
