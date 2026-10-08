@@ -145,7 +145,7 @@ def patch_reply(replace="OK", path="src/a.js",
 
 def agent_for(repo: Path, ai, **cfg) -> FixAgent:
     conf = {"max_rounds": 5, "deadline_seconds": 120, "max_stall": 2,
-            "per_command_timeout": 60}
+            "per_command_timeout": 60, "repro": "off"}
     conf.update(cfg)
     return FixAgent(str(repo), ai, agent_cfg=conf,
                     gate_cfg={"commands": [{"name": "check", "cmd": CHECK_CMD}]})
@@ -311,7 +311,9 @@ def t_no_commands_repo():
     print("\n[6] 仓库没有可跑验收命令 → 明确「未经验证」，且给出可配命令建议")
     repo = make_repo(with_check_script=False)   # 没有可跑命令的仓库形态
     ai = FakeAI([patch_reply("OK")])
-    agent = FixAgent(str(repo), ai, agent_cfg={"max_rounds": 3, "deadline_seconds": 120},
+    agent = FixAgent(str(repo), ai,
+                     agent_cfg={"max_rounds": 3, "deadline_seconds": 120,
+                                "repro": "off"},
                      gate_cfg={})
     res = agent.run({"id": "T6", "title": "x"})
     check("补丁仍可用", res["patch_text"].startswith("这次把"), res["patch_text"][:60])
@@ -392,7 +394,8 @@ def t_sandbox_unavailable():
     print("\n[9] 沙箱建不出来时必须如实降级，不能假称验证过")
     ai = FakeAI([patch_reply("OK")])
     agent = FixAgent("Z:/no/such/repo-at-here", ai,
-                     agent_cfg={"max_rounds": 2, "deadline_seconds": 60},
+                     agent_cfg={"max_rounds": 2, "deadline_seconds": 60,
+                                "repro": "off"},
                      gate_cfg={})
     res = agent.run({"id": "T9", "title": "x"})
     check("结论 sandbox_unavailable", res["conclusion"] == CONCLUSION_NO_SANDBOX,
@@ -452,7 +455,8 @@ def t_pipeline_wiring():
         "ai": {"model": "x", "api_key": ""},
         "repo": {"path": str(repo), "branch": "main"},
         "gate": {"commands": [{"name": "check", "cmd": CHECK_CMD}]},
-        "agent": {"max_rounds": 4, "deadline_seconds": 120, "max_stall": 2},
+        "agent": {"max_rounds": 4, "deadline_seconds": 120, "max_stall": 2,
+                  "repro": "off"},
         "playwright": {"base_url": "http://127.0.0.1:1",
                        "screenshot_dir": str(_tempdir("agent-shots-"))},
         "knowledge_base": {"output_dir": str(_tempdir("agent-kb-"))},

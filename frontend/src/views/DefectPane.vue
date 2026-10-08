@@ -12,6 +12,7 @@
 // 自动解包，写 `const d = useDefect()` 再在模板里用 `d.mineOnly` 会拿到 ref 对象。
 import { computed, onMounted, ref } from 'vue'
 import { useDefect, PROP_PAGE_SIZE } from '../composables/useDefect.js'
+import { useArtifacts } from '../composables/useArtifacts.js'
 import { useFold } from '../composables/useFold.js'
 import { useRunModal } from '../composables/useRunModal.js'
 import { useModuleParams } from '../composables/useModuleParams.js'
@@ -19,6 +20,7 @@ import { api } from '../api/client.js'
 import ParamBar from '../components/ParamBar.vue'
 import ParamDrawer from '../components/ParamDrawer.vue'
 import RunLog from '../components/RunLog.vue'
+import ArtifactsPanel from '../components/ArtifactsPanel.vue'
 import ProposalCard from '../components/ProposalCard.vue'
 import ProposalPager from '../components/ProposalPager.vue'
 import KbCard from '../components/KbCard.vue'
@@ -44,6 +46,10 @@ const {
 const { isCollapsed, toggleFold } = useFold()
 const { openRunModal } = useRunModal()
 const { close: closeParams } = useModuleParams()
+// 复现用例面板：修复循环在沙箱里跑红→绿的那份用例会挂成 type=repro 的产出物等人采纳。
+// useArtifacts 是单例，本页签内只此一个面板实例（App.vue 的全局面板在 defect 页签是隐藏的，
+// 因为 ARTIFACT_TAB_LABEL 不含 defect），所以必须自己带 id-suffix 防止与其它页签串 id。
+const { openArtifact, loadArtifacts } = useArtifacts()
 
 /** 摘要条：跑之前一眼看清「这次要处理哪些工单、会不会截图」 */
 const summary = computed(() => [
@@ -54,9 +60,12 @@ const summary = computed(() => [
 ])
 
 /** 运行 / 试运行都会往主区写日志，先收抽屉再跑，主区整宽看过程 */
-function onStart(kind) {
+async function onStart(kind) {
   closeParams('defect')
-  start(kind)
+  await start(kind)
+  // 跑完再拉一次复现用例：新产生的 repro 产出物要立刻出现在面板里，
+  // 不能等用户切页签（App.vue 的按需加载不含 defect）
+  if (kind === 'run') await loadArtifacts('repro')
 }
 
 /**
@@ -114,6 +123,7 @@ const badgeAlert = computed(() => openCount.value > 0)
 onMounted(async () => {
   await ensure()
   await loadRepoBanner()
+  await loadArtifacts('repro')
 })
 </script>
 
@@ -186,6 +196,14 @@ onMounted(async () => {
     </div>
     <p class="panel-note">运行流水线不会写目标仓库，只产出提案；在这里点「采纳」只会把改动写入工作区（不 commit、不 push），由你确认后自行提交。</p>
   </section>
+
+  <!-- 复现用例：agentic 修复循环在沙箱里跑红→绿的那份用例（type=repro 的产出物）。
+       提案补丁不支持新建文件，所以它单独挂在这里，点采纳才会进仓库。
+       面板自己就是 <section class="panel">，不要再套一层（同 id 结构会串，
+       且 check_panel_fold 量的是各面板的 top）。 -->
+  <ArtifactsPanel label="复现用例" :visible="true" id-suffix="repro"
+                  empty-hint="还没有复现用例。运行流水线后，模型若写出了能先把缺陷跑红的用例，会挂在这里等你采纳。"
+                  @open="openArtifact" />
 
   <section class="panel collapsible" id="stats-panel"
            :class="{ collapsed: isCollapsed('stats-panel') }">

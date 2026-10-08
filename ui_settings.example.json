@@ -60,6 +60,9 @@
     "link_node_modules": true,
     "per_command_timeout": 240,
     "page_read": true,
+    "repro": "auto",
+    "repro_command": "",
+    "repro_max_rewrite": 2,
     "command_allow_text": ""
   },
   "extensions": {

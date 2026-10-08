@@ -12,6 +12,7 @@ from typing import Dict, List, Optional, Tuple
 from . import usage
 from .ai_model import AIModel
 from .analyzer import DefectAnalyzer
+from .artifact import ArtifactStore
 from .fix_agent import FixAgent
 from .fixer import CodeFixer
 from .gate import resolve_commands, run_gate
@@ -101,6 +102,11 @@ class AIDefectFixerPipeline:
         self.kb = KnowledgeBase(kb_cfg.get("output_dir", "./knowledge_base"))
         self.proposals = ProposalStore(
             config.get("proposals", {}).get("output_dir", "./proposals")
+        )
+        # 复现用例要能进仓库，但**不能走提案的补丁通道**（补丁引擎不支持新建文件）。
+        # 产出物这条路本来就支持新建 + 备份 + 撤销，所以复现用例挂成产出物等人采纳。
+        self.artifacts = ArtifactStore(
+            config.get("artifacts", {}).get("output_dir", "./artifacts")
         )
 
         # 构造期**不做 I/O**：仓库前置检查要起 git 子进程，而 web 层是「每个请求一个
@@ -402,6 +408,12 @@ class AIDefectFixerPipeline:
             verify, page = self._page_evidence(did, defect, skip_verify, on_delta, emit)
 
             agent = self._run_agent(defect, analysis, page, did, emit)
+            art_id = self._repro_artifact(defect, agent)
+            if art_id:
+                agent.setdefault("repro", {})["artifact_id"] = art_id
+                _emit(emit, {"type": "stage", "stage": "repro", "status": "done",
+                             "defect": did,
+                             "detail": f"复现用例已挂成产出物 {art_id}（采纳才会进仓库）"})
             patch_text = agent.get("patch_text") or analysis.get("patch_text", "")
             patch = self.fixer.preview(patch_text) if self.fixer else _empty_patch("无 fixer")
             patch["patch_text"] = patch_text
@@ -535,6 +547,50 @@ class AIDefectFixerPipeline:
                                f"{len(result.get('attempts') or [])} 次补丁尝试 / "
                                f"{result.get('elapsed_seconds')}s）"})
         return result
+
+    # ------------------------------------------------------- 复现用例 → 产出物
+    def _repro_artifact(self, defect: Dict, agent: Dict) -> str:
+        """把沙箱里那份复现用例挂成产出物，让人工单独决定是否收进仓库。
+
+        两个刻意的取舍：① 走产出物而不是提案补丁——补丁引擎不支持新建文件，而
+        `apply_ops` 早就支持「新建 + 回滚时删掉自己建的文件」，没必要为此动唯一写盘路径；
+        ② 同一条工单重跑不会堆出十份一样的用例（按路径 + 正文去重），这是知识库
+        膨胀那次的教训反过来用。
+        """
+        repro = agent.get("repro") or {}
+        path = str(repro.get("path") or "").strip()
+        content = str(repro.get("content") or "").strip()
+        if repro.get("status") not in ("red", "green") or not path or not content:
+            return ""
+        for s in self.artifacts.list(type_filter="repro")[:200]:
+            # list 已按新→旧排；只回看最近 200 份，避免一条工单为了去重读遍全量文件
+            same = self.artifacts.get(s.get("id") or "") or {}
+            for f in (same.get("files") or []):
+                if f.get("path") == path and (f.get("content") or "").strip() == content:
+                    return str(same.get("id") or "")   # 已有同内容，不重复挂
+        did = str(defect.get("id") or "local")
+        title = f"复现用例 · {did} · {str(defect.get('title') or '')[:40]}"
+        strength = ((repro.get("harness") or {}).get("strength_label")
+                    or (repro.get("harness") or {}).get("name") or "")
+        payload = {
+            "ai_mode": str(agent.get("conclusion") or ""),
+            "summary": (f"这条缺陷的复现用例（{strength}）。它在未修复代码上跑红、"
+                        "打上补丁后转绿，是「缺陷确实被修好」的判据。"
+                        "采纳前请确认它能被你们现有的测试跑器收集到。"),
+            "checklist": [
+                f"用例路径 {path} 是仓库里的**新文件**，需要你们决定放不放进去、放哪合适",
+                "跑这个用例的命令：" + str(repro.get("cmd") or ""),
+                "它必须先在未修复代码上失败一次才算数；请在本分支重跑一遍确认",
+            ],
+            "files": [{"path": path, "action": "create",
+                       "description": "缺陷复现用例（agentic 修复循环在沙箱里跑红→绿）",
+                       "content": content}],
+            "cases": [{"name": path, "expect": "修复前红、修复后绿"}],
+        }
+        created = self.artifacts.create(
+            "repro", title, payload,
+            ctx={"notes": f"defect={did}", "file_path": path})
+        return str(created.get("id") or "")
 
     # ------------------------------------------------------------ 闸门折算
     def _gate_of(self, agent: Dict, patch: Dict) -> Dict:

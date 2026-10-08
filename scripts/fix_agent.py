@@ -32,6 +32,8 @@ from . import usage
 from .chat import RepoReader, _clip, _strip_dsml, _tool_label
 from .gate import resolve_commands
 from .patch_engine import build_patch, parse_blocks, render_block_prompt
+from .repro import (STRENGTH_ASSERT, STRENGTH_NONE, STRENGTH_TEST, classify_run,
+                    broken_hint, detect_harness, render_cmd, spec_ok)
 from .sandbox import CmdResult, Sandbox, resolve_sandbox_cfg
 
 # 预算默认值（config `agent:` 段可覆盖；界面参数面板同源）
@@ -39,6 +41,10 @@ DEFAULT_MAX_ROUNDS = 8
 DEFAULT_DEADLINE_SECONDS = 360
 DEFAULT_MAX_STALL = 3
 DEFAULT_NOTE_BUDGET = 60000
+# 复现环节要先占一轮（写用例 + 跑红），不额外给预算就会把修代码的轮次挤光
+DEFAULT_REPRO_EXTRA_ROUNDS = 2
+DEFAULT_REPRO_MAX_REWRITE = 2
+REPRO_CHECK_NAME = "repro"
 # 单轮送进模型的验证输出上限：再长就该用更精确的命令，而不是把日志整份吞进上下文
 MAX_FEEDBACK_CHARS = 6000
 MAX_DIFF_CHARS = 4000
@@ -55,6 +61,14 @@ CONCLUSION_UNVERIFIED = "unverified"        # 补丁能构建，但这个仓库�
 # 结论 → 是否需要人工介入（写进提案，UI 直接读这个字段决定徽标颜色）
 NEEDS_HUMAN = {CONCLUSION_STALLED, CONCLUSION_BUDGET, CONCLUSION_NO_PATCH,
                CONCLUSION_NO_SANDBOX, CONCLUSION_DISABLED}
+
+# verified 是**靠什么**验出来的，证据强度差一个量级，必须分开标：
+#   repro-test   针对工单现象写的单测，从不绿到绿 —— 最接近「缺陷被修好了」
+#   repro-assert 机械断言脚本（仓库没有单测跑器时的退路）—— 只证明代码改对了
+#   gate-command 只有 lint/tsc/build 从红变绿 —— 只证明没改坏构建
+VIA_REPRO_TEST = "repro-test"
+VIA_REPRO_ASSERT = "repro-assert"
+VIA_GATE = "gate-command"
 
 # 一次尝试的分级：预算耗尽时取历史最好的一次作为最终提案，而不是「最后一次」
 RANK_VERIFIED = 5
@@ -78,7 +92,11 @@ AGENT_SYSTEM = """\
    所以「我觉得这样改应该能好」不是进展，**沙箱里跑绿了才是**。
 3. 每次提交补丁后必须等系统的验证结果。系统回给你的内容里若有报错，那就是下一步的输入：
    读它、定位、改掉、再提交。禁止无视报错重复提交同一份补丁。
-4. 补丁格式（严格，标记独占一行）：
+4. ⭐ **先立判据，再动手修**：仓库里有可用的复现手段时（见下面「复现环节」），你要先用
+   `repro_add` 写一个**针对工单现象**的复现用例，它必须在未修复的代码上**跑红**——
+   现在就能通过的用例会被打回重写。用例转绿 + 验收命令不新增失败，才算这次真的修好了。
+   修代码的过程中**绝不许改用例凑绿**（系统会直接拒绝包含用例路径的补丁）。
+5. 补丁格式（严格，标记独占一行）：
 <<<<<<< SEARCH 相对仓库根的文件路径
 原文里的一整段（必须与文件内容逐字一致，含缩进）
 =======
@@ -88,13 +106,13 @@ AGENT_SYSTEM = """\
    - 同一文件可以有多块；每个块在文件里必须**唯一匹配**，否则会被拒绝；
    - 流水线**不支持新建文件**（需要新增文件时，把要加的内容和路径写进最后的「交给人工的
      待办」里，别硬造一个不存在的 SEARCH）。
-5. 输出协议（三选一，别混）：
+6. 输出协议（三选一，别混）：
    - 要查东西 → **整条回复只有一个 JSON**：{"action":"call","tool":"repo_grep","arguments":{...}}
    - 要交补丁 → 一句「这次改什么、预期验证会怎么变」+ 紧随其后的 SEARCH/REPLACE 块，**不要**套 JSON
    - 要认输 → {"action":"give_up","reason":"...","evidence":"还需要人工看什么"}
-6. **不要反问**，也不要让用户把文件内容贴给你——那是把活推回给用户的最后手段。缺信息就自己查。
+7. **不要反问**，也不要让用户把文件内容贴给你——那是把活推回给用户的最后手段。缺信息就自己查。
    有多种合理改法时，选最贴合仓库现状的直接做，把选择和理由写进最终说明，让人工在审批时改主意。
-7. 修**这个**缺陷，不要顺手重构。最小改动、可审、可回滚的补丁远胜大而漂亮的补丁。
+8. 修**这个**缺陷，不要顺手重构。最小改动、可审、可回滚的补丁远胜大而漂亮的补丁。
 """
 
 READ_RULES = """\
@@ -108,7 +126,8 @@ READ_RULES = """\
 PATCH_RULES = """\
 ## 提交补丁的正确姿势
 1. 动手前先想清楚「这条缺陷的判据是什么」——什么命令跑绿 / 什么页面不该再报错，才算修好。
-2. 第一轮不要急着交补丁：先把关键文件与调用方读够。
+2. 前几轮的顺序是：读够文件 → （有复现手段时）`repro_add` 把用例跑红 → 才交修代码的补丁。
+   跳过复现直接下补丁，最后只能拿到「命令级证据」，用户看不出缺陷现象有没有消失。
 3. 拿到验证结果后：
    - 全绿 → 停，给最终说明（根因 / 改动 / 验证结论 / 遗留风险）。
    - 还有报错 → 只针对报错改，别推翻重来。
@@ -129,7 +148,9 @@ def _tools_text() -> str:
         ("repo_list", "列目录：{\"path\": \"packages/app/src\"}"),
         ("repo_read", "读文件：{\"path\": \"…\", \"start\": 120, \"end\": 160}"),
         ("repo_grep", "搜代码：{\"pattern\": \"getFinalContent\", \"glob\": \"*.vue\"}"),
-        ("check_run", "沙箱里跑一条检查命令：{\"cmd\": \"npx vitest run src/x.spec.ts\"}"),
+        ("repro_add", "写复现用例（沙箱内新建文件，立刻在未修复代码上跑一次）："
+                      "{\"path\": \"…\", \"content\": \"…\"}"),
+        ("check_run", "在沙箱里跑一条检查命令：{\"cmd\": \"npx vitest run src/x.spec.ts\"}"),
         ("patch_try", "提交候选补丁：直接输出 SEARCH/REPLACE 块，系统自动识别并真跑验证"),
         ("give_up", "认输转人工：{\"action\":\"give_up\",\"reason\":\"…\"}"),
     ]
@@ -215,6 +236,27 @@ class FixAgent:
         self.note_budget = _int(self.cfg.get("note_budget"), DEFAULT_NOTE_BUDGET, 8000, 400000)
         self.command_timeout = _int(self.cfg.get("per_command_timeout"), 240, 10, 1800)
         self.sandbox_cfg = resolve_sandbox_cfg(self.cfg)
+        # 复现环节：`agent.repro` 支持三种写法 —— off/auto/on（开关）、
+        # 或 {enabled: auto, command: "...", strength: test}（自定义复现命令）
+        raw_repro = self.cfg.get("repro")
+        if isinstance(raw_repro, dict):
+            mode = str(raw_repro.get("enabled", "auto")).strip().lower()
+            self.repro_cfg = dict(raw_repro)
+        else:
+            mode = str(raw_repro or "auto").strip().lower()
+            self.repro_cfg = {"command": str(self.cfg.get("repro_command") or "").strip(),
+                              "strength": str(self.cfg.get("repro_strength") or "").strip()}
+        self.repro_mode = mode if mode in ("off", "auto", "on") else "auto"
+        self.repro_extra_rounds = _int(self.cfg.get("repro_extra_rounds"),
+                                       DEFAULT_REPRO_EXTRA_ROUNDS, 0, 8)
+        self.repro_max_rewrite = _int(self.cfg.get("repro_max_rewrite"),
+                                      DEFAULT_REPRO_MAX_REWRITE, 0, 6)
+        self.harness = (detect_harness(self.repo_root, self.repro_cfg)
+                        if self.repro_mode != "off" else None)
+        if (self.harness is not None and self.harness.usable
+                and self.repro_extra_rounds):
+            # 复现要占轮次：不补预算，等于把修代码的机会全让给写用例
+            self.max_rounds += self.repro_extra_rounds
 
     # ------------------------------------------------------------------ events
     def _stage(self, detail: str, status: str = "start",
@@ -256,11 +298,19 @@ class FixAgent:
             "notes": [],
             "final_summary": "",
             "sandbox": {},
+            "repro": {},
+            "verified_via": "",
             "suggested_commands": [],
             "elapsed_seconds": 0.0,
             "started_at": _now(),
             "stall_counts": {},
         }
+        # 复现用例的状态机：none → red（合格判据，开始修）→ green（修好了）
+        #                    或 → blocked（写了几个用例都复现不出来，放弃复现环节）
+        self.repro: Dict = {"attempted": False, "status": "none", "path": "",
+                            "content": "", "harness": (self.harness.to_dict()
+                                                       if self.harness else {}),
+                            "rewrites": 0, "runs": []}
         if str(getattr(self.ai, "mode", "")) == "mock":
             result["conclusion"] = CONCLUSION_DISABLED
             result["notes"].append("Mock 模型不会真的读写代码，agentic 循环无意义，"
@@ -290,6 +340,15 @@ class FixAgent:
         baseline, baseline_notes = self._baseline(sandbox, commands)
         result["baseline"] = baseline
         result["notes"].extend(baseline_notes)
+        if self.harness is None:
+            result["repro"]["status"] = "disabled"
+        elif not self.harness.usable:
+            result["notes"].append("没有可用的复现手段（既没探测到单测跑器，也没找到可执行的"
+                                   "断言脚本环境），本次只验证验收命令，不验证缺陷现象。")
+        elif self.repro_mode == "auto":
+            self._stage(f"复现环节就绪：{self.harness.name}（证据强度 "
+                        f"{self.harness.strength}）——先写用例跑红，再动手修",
+                        stage="复现用例", status="start")
         if not commands:
             suggested = suggest_commands(self.repo_root)
             result["suggested_commands"] = suggested
@@ -385,8 +444,10 @@ class FixAgent:
         best: Optional[Dict] = None
         for a in attempts:
             best = a if best is None or a["rank"] > best["rank"] else best
+        result["repro"] = self.repro
         if best:
             result["patch_text"] = best.get("patch_text", "")
+            result["verified_via"] = best.get("verified_via", "")
             result["patch_canonical"] = best.get("patch_canonical", "")
             result["blocks"] = best.get("blocks", [])
             result["combined_diff"] = best.get("combined_diff", "")
@@ -509,6 +570,7 @@ class FixAgent:
                     "\n".join(f"  · {e}" for e in page["console_errors"][:12]), 2500))
             if page.get("ai_verdict"):
                 lines.append("- 视觉判读：" + _clip(str(page["ai_verdict"]), 1200))
+        lines.append(self._repro_seed())
         if baseline:
             fail = [k for k, v in baseline.items() if not v.get("ok")]
             lines.append("## 基线：沙箱里**未打补丁**时跑验收命令的结果")
@@ -527,14 +589,48 @@ class FixAgent:
                          "并在最终说明里写清「未经验证，需人工跑一遍」。")
         return "\n".join(lines)
 
+    def _repro_seed(self) -> str:
+        """复现环节的规矩。没跑器时也要说清楚为什么只能退到断言脚本。"""
+        h = self.harness
+        if h is None:
+            return ("## 复现环节\n配置已关闭复现（agent.repro: off）。只按验收命令判断结果。")
+        if not h.usable:
+            return ("## 复现环节\n这个仓库没有可用的复现手段（没有单测跑器，也没有 node/"
+                    "python 断言环境）。跳过 repro_add，直接读代码 + 交补丁。")
+        head = ["## 复现环节（先红，再修）",
+                f"- 可用跑器：**{h.name}**（证据强度 {h.strength}）",
+                f"- 命令模板：`{h.cmd_tpl}`（{{file}} 换成你的用例路径）",
+                f"- 落点建议：{h.spec_hint}"]
+        if h.notes:
+            head += [f"- 注意：{n}" for n in h.notes]
+        if h.strength == STRENGTH_TEST:
+            head.append("- 用 `repro_add` 提交用例（path + content）。它会先写在**未修复**的"
+                        "代码上跑一次：**必须红**才算你复现了这条缺陷；现在就绿会被打回重写。")
+        else:
+            head.append("- 这个仓库没有单测跑器，只能写**机械断言脚本**（读被测源码，断言"
+                        "「缺陷导致的特征不该再出现」）。它比单测弱：绿了只说明改动落实了，"
+                        "不代表页面现象消失。仍然必须先红。")
+        head.append("- 复现用例只存在于沙箱里，**不要**把它写进 SEARCH/REPLACE 补丁"
+                    "（补丁只放修代码的改动）；系统会自动把它收成一份产出物交给人工。")
+        head.append("- 顺序要求：先把用例跑红，再交修代码的补丁。跳过复现直接改代码，"
+                    "最后只能拿到「命令级证据」，用户看不到缺陷是否真的消失。")
+        return "\n".join(head)
+
     # ------------------------------------------------------------------ 跑命令
     def _run_commands(self, sandbox: Sandbox, commands: List[Dict],
                       label: str = "") -> Tuple[Dict[str, Dict], List[str]]:
-        """跑一遍验收命令。被白名单拒绝的命令**从结果里剔掉**，而不是算通过——
-        否则「denied → ok=True」会让模型以为这条已经验过了。"""
+        """跑一遍验收命令（有合格复现用例时连它一起跑）。被白名单拒绝的命令**从结果里
+        剔掉**，而不是算通过——否则「denied → ok=True」会让模型以为这条已经验过了。"""
+        specs = list(commands)
+        if self.repro.get("status") == "red" and self.repro.get("path"):
+            # 复现用例是这条缺陷的判据，每一次验证都必须带上它；它不在 commands 里，
+            # 因为基线阶段它还不存在（那时跑它没有意义）
+            specs = specs + [{"name": REPRO_CHECK_NAME,
+                              "cmd": self.repro.get("cmd")
+                              or render_cmd(self.harness, self.repro["path"])}]
         out: Dict[str, Dict] = {}
         notes: List[str] = []
-        for idx, spec in enumerate(commands):
+        for idx, spec in enumerate(specs):
             r = sandbox.run(spec["cmd"], name=spec["name"], timeout=self.command_timeout)
             if r.denied:
                 notes.append(f"{label}命令 {spec['name']} 被沙箱白名单拒绝（{r.note}），"
@@ -584,12 +680,82 @@ class FixAgent:
                 else:
                     result = (f"$ {cmd}\n返回码 {r.returncode}"
                               f"（{r.seconds}s）\n" + _clip(r.output, 4000))
+        elif name in ("repro_add", "repro_write", "add_repro"):
+            result = self._add_repro(args, sandbox, rnd)
         else:
             result = ("[错误] 未知工具 " + repr(name) + "。可用：repo_list / repo_read / "
-                      "repo_grep / check_run / patch_try（直接输出 SEARCH/REPLACE 块）/ give_up")
+                      "repo_grep / repro_add / check_run / patch_try（直接输出 "
+                      "SEARCH/REPLACE 块）/ give_up")
         self._tool_event(name, args, result)
         return [f"### 工具 {name} {_json_short(args)}（第 {rnd} 轮）\n"
                 + _clip(result, MAX_FEEDBACK_CHARS)]
+
+    # ------------------------------------------------------- 复现用例（红优先）
+    def _add_repro(self, args: Dict, sandbox: Sandbox, rnd: int) -> str:
+        """收下模型写的复现用例，立刻在未修复代码上跑一次：**必须先红**。
+
+        这是整个复现环节的立身之本。一个在缺陷代码上就通过的文件，测的不是这条缺陷；
+        放任它进后续的「红→绿」，得到的 `verified` 是假的——而且比没有更糟，因为它
+        看起来像证据。
+        """
+        h = self.harness
+        if h is None or not h.usable:
+            return ("[错误] 这个仓库没有可用的复现手段（没探测到单测跑器，也没有可执行的"
+                    "断言脚本环境）。跳过 repro_add，直接读代码 + 交补丁，并在最终说明里"
+                    "写明「无法构造可执行复现」。")
+        rel = str(args.get("path") or "").strip().replace("\\", "/")
+        content = str(args.get("content") or "")
+        ok, why = spec_ok(h, self.repo_root, rel)
+        if not ok:
+            return f"[错误] 复现用例落点不合法：{why}"
+        if not content.strip():
+            return "[错误] repro_add 需要 content（用例正文）。"
+        self.repro["attempted"] = True
+        self._stage(f"落复现用例到沙箱并跑一次（要求先红）：{rel[:60]}",
+                    stage="复现用例", status="start")
+        try:
+            sandbox.write(rel, content)
+        except Exception as e:
+            return f"[错误] 复现用例写进沙箱失败：{e}"
+        cmd = render_cmd(h, rel)
+        r = sandbox.run(cmd, name=REPRO_CHECK_NAME, timeout=self.command_timeout)
+        state = classify_run(h, r.returncode, r.output, denied=r.denied)
+        self.repro["runs"].append({"round": rnd, "path": rel, "cmd": cmd,
+                                   "state": state, "returncode": r.returncode,
+                                   "output": _clip(r.output, 2500)})
+        if r.denied:
+            return (f"[复现命令被沙箱拒绝] {r.note}\n请换成仓库里能跑的测试命令写法"
+                    "（例如直接用 npx <runner> run <文件>）。")
+        if state == "red":
+            self.repro.update({"status": "red", "path": rel, "content": content,
+                               "cmd": cmd})
+            return (f"复现成功：用例在未修复代码上就是**红的**（返回码 {r.returncode}），"
+                    "它就是这条缺陷的判据。现在可以动手修了——之后每次交补丁我都会带上"
+                    "这个用例一起跑，它转绿 + 验收命令不新增失败，才算 verified。\n"
+                    f"报错原文：\n{_clip(r.output, 3000)}")
+        if state == "broken":
+            self.repro["rewrites"] = int(self.repro.get("rewrites", 0)) + 1
+            left = max(0, self.repro_max_rewrite + 1 - self.repro["rewrites"])
+            tail = ("" if left else
+                    "复现环节的尝试次数已用尽：这一条不再要求可执行复现，"
+                    "请直接进入修复，并在说明里写清「未能构造复现用例」。")
+            return (f"[复现命令没跑起来，这不算红] 返回码 {r.returncode}\n"
+                    f"{_clip(r.output, 2500)}\n{broken_hint(h, r.output)}"
+                    f"（剩余尝试次数 {left}）{tail}")
+        # green：用例在缺陷代码上就通过了 —— 硬闸门打回
+        self.repro["rewrites"] = int(self.repro.get("rewrites", 0)) + 1
+        if self.repro["rewrites"] > self.repro_max_rewrite:
+            self.repro["status"] = "blocked"
+            return ("[复现用例未能复现缺陷] 它在**未修复**的代码上就通过了，说明它测的不是"
+                    "这条缺陷；已重写 " + str(self.repro_max_rewrite) + " 次仍如此。"
+                    "复现环节到此为止：请照常读代码交补丁，但要在最终说明里明确"
+                    "「未能构造出能复现该缺陷的用例，结论只有验收命令级证据」。")
+        return ("[复现用例未复现缺陷，打回重写] 它在**未修复**的代码上就通过了（返回码 0）。"
+                "一个现在就绿的用例不可能证明你把缺陷修好了。重写请**沿用同一个 path**"
+                "（直接覆盖，别在沙箱里堆第二个用例，否则全量跑测试时会把废弃的那份一起收走）。"
+                "断言必须落在「缺陷会让它失败」的那一点上（比如 undefined 访问、错误的字段、"
+                "少了一层的可选链、错误的分支条件），而不是随便挑一段能跑通的代码。"
+                f"（剩余重写次数 {max(0, self.repro_max_rewrite - self.repro['rewrites']) + 1}）")
 
     # ---------------------------------------------------------------- 补丁尝试
     def _try_patch(self, text: str, blocks: List, sandbox: Sandbox,
@@ -607,6 +773,19 @@ class FixAgent:
             "summary": _clip(_plain(text), 600),
         }
         built = build_patch(str(sandbox.root), blocks)
+        # 硬拦「改温度计说退烧」：一旦复现用例被立为判据，补丁里就不允许再动它。
+        # 只在提示词里禁止是不够的——模型确实会为了拿到绿而改用例。
+        repro_path = str(self.repro.get("path") or "")
+        if self.repro.get("status") == "red" and repro_path:
+            touched = [b.file_path for b in blocks
+                       if (b.file_path or "").replace("\\", "/") == repro_path]
+            if touched:
+                attempt["errors"] = [
+                    f"补丁试图修改复现用例 {repro_path}：它是这条缺陷的判据，改它等于改考卷"
+                    "凑分数。请只修改业务代码；若确信用例本身写错了，先 give_up 说明理由。"]
+                attempt["signature"] = "repro-touched"
+                attempt["conclusion"] = "unbuilt"
+                return attempt
         if not built.ok:
             attempt["errors"] = list(dict.fromkeys(built.errors))[:8]
             attempt["signature"] = "unbuilt:" + "|".join(sorted(attempt["errors"]))[:800]
@@ -634,6 +813,10 @@ class FixAgent:
         attempt["seconds"] = round(time.time() - start, 1)
 
         base_pass = {k: bool(v.get("ok")) for k, v in baseline.items()}
+        if REPRO_CHECK_NAME in checks:
+            # 复现用例不在基线里（写它的时候基线已经跑完了），但它的「红」是**确证过的**
+            # ——不补这一笔，红→绿的折算会把它当成「基线就是绿的」，fixed 里永远不含它
+            base_pass[REPRO_CHECK_NAME] = False
         has_baseline_fail = any(not v for v in base_pass.values())
         # 注意必须真的把 checks 塞回 attempt：漏了这一行时，反馈区会照着「没有可跑命令」
         # 的分支给模型发一句假提示，闸门也拿不到真实结果（集成用例 [11] 抓到的就是这个）。
@@ -649,11 +832,26 @@ class FixAgent:
                                "regression": RANK_FAIL,
                                "failing": RANK_FAIL}.get(concl, RANK_FAIL)
             attempt["signature"] = checks_signature(checks)
+            repro_green = bool(passed.get(REPRO_CHECK_NAME))
+            attempt["verified_via"] = self._via_of(repro_green, bool(checks))
+            if concl in (CONCLUSION_VERIFIED, CONCLUSION_GREEN) and \
+                    REPRO_CHECK_NAME in checks:
+                self.repro["status"] = "green" if repro_green else "red"
+                self.repro["green_round"] = rnd if repro_green else None
         else:
             attempt["conclusion"] = CONCLUSION_UNVERIFIED
             attempt["rank"] = RANK_UNVERIFIED
             attempt["signature"] = f"unverified:r{rnd}"
         return attempt
+
+    def _via_of(self, repro_green: bool, has_checks: bool) -> str:
+        """verified 到底靠什么验出来的：复现用例 >> 验收命令。"""
+        strength = (self.harness.strength if self.harness else STRENGTH_NONE)
+        if repro_green and strength == STRENGTH_TEST:
+            return VIA_REPRO_TEST
+        if repro_green and strength == STRENGTH_ASSERT:
+            return VIA_REPRO_ASSERT
+        return VIA_GATE if has_checks else ""
 
     # ------------------------------------------------------- 回喂给模型的反馈
     def _attempt_feedback(self, attempt: Dict, rnd: int) -> List[str]:
@@ -692,6 +890,15 @@ class FixAgent:
                              + "。这比缺陷没修好更严重，先把它修回去。")
             if verdict.get("still_failing"):
                 lines.append("仍然失败：" + ", ".join(verdict["still_failing"]))
+        if REPRO_CHECK_NAME in checks:
+            rp = self.repro
+            if rp.get("status") == "green":
+                lines.append(f"✅ 复现用例 {rp.get('path')} 已转绿 —— 这条缺陷的现象"
+                             "在可执行判据上消失了。")
+            else:
+                lines.append(f"⚠ 复现用例 {rp.get('path')} 仍然是红的。它是这条缺陷的判据："
+                             "别的命令全绿也不算修好。看上面的报错改你的补丁，"
+                             "**不要改用例来凑绿**（那是把温度计砸了说退烧了）。")
         lines.append(f"本次改动的 diff：\n```diff\n{attempt.get('combined_diff', '')}\n```")
         if attempt.get("conclusion") in (CONCLUSION_VERIFIED, CONCLUSION_GREEN):
             lines.append("验证通过。请给出最终说明（根因 / 为什么这么改 / 验证结论 / "

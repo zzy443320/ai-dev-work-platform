@@ -69,7 +69,19 @@ cp config.yaml.example config.yaml
 | `unverified` | 补丁能构建，但这个仓库没有任何可跑的验收命令 | 当"AI 的下一版尝试"看，必须人工跑一遍 |
 | `not_converged` / `budget_exhausted` | 同一错误连续 3 次或轮次/时间用尽 | 认输转人工，看轨迹里最后一次的真实报错 |
 
-**要让前两个结论可能出现，仓库里得有可执行的验收命令**。很多团队仓库（尤其是没配 `type-check` / `lint` / `test` 脚本的老多包仓）拿不到 `verified`，因为压根没有命令可跑。两种起步方式：
+**先立判据，再动手修。** 光让 `lint` / `tsc` 从红变绿，证明的是「没改坏构建」，不是「这条缺陷修好了」。所以循环在改代码之前要先交一个**针对工单现象的复现用例**：它被写进沙箱、在**未修复**的代码上跑一次，**必须红**——现在就绿说明它测的根本不是这条缺陷，会被打回重写（默认允许重写 2 次，仍复现不出就放弃这一环节并在提案里如实写明）。判据成立之后，每一轮补丁的验证都会带上这个用例一起跑，它转绿 + 验收命令不新增失败，才是 `verified` 里最强的那一档。为防止「改温度计说退烧」，**补丁里出现复现用例的路径会被直接拒绝**。
+
+跑器按这个顺序探测：配置里显式给的 `agent.repro.command` → `package.json` 里的测试脚本 → `node_modules/.bin` 里的 vitest/jest/mocha → 都没有就退化成**可执行断言脚本**（读被测源码做机械断言）。退化要认清：断言脚本绿了只说明「该改的地方改了」，不说明页面现象消失，所以 `verified` 会标清证据来源：
+
+| `verified_via` | 靠什么验出来的 | 强度 |
+|---|---|---|
+| `repro-test` | 针对工单现象的单测从红转绿 | 最强，最接近「缺陷被修好了」 |
+| `repro-assert` | 可执行断言脚本从红转绿 | 机械判据，仍需看页面 |
+| `gate-command` | 只有 lint / tsc / build 从红转绿 | 只证明没改坏构建 |
+
+复现用例**不进提案补丁**（补丁引擎不支持新建文件），它会自动挂成一份 `type=repro` 的**产出物**，在「缺陷修复 → 复现用例」面板里单独点采纳才会进仓库——想留作回归防护就采纳，不想留就不点，同一份内容重跑也不会堆出重复件。
+
+**要让上面这些结论有意义，仓库里得有可执行的验收命令**。很多团队仓库（尤其是没配 `type-check` / `lint` / `test` 脚本的老多包仓）拿不到 `verified`，因为压根没有命令可跑。两种起步方式：
 
 ```yaml
 # 有脚本就照实写
@@ -91,7 +103,7 @@ gate:
 
 没配命令时，循环会去 `node_modules/.bin` 里看有哪些检查器可用，并把建议原样写进提案说明——照抄一行就能让「验证通过」这件事真正成立。
 
-预算与开关都在配置 `agent:` 段（界面「配置 → Agentic 修复」同字段）：`max_rounds: 8`（一次"交补丁 + 拿验证"算一轮）、`deadline_seconds: 360`、`max_stall: 3`（同一验证结果连续出现即认输，不再烧 token）、`sandbox: auto|worktree|copy`、`sandbox_dir`（临时副本放哪）、`link_node_modules`（把源仓依赖目录链进沙箱，关掉会有一大片"找不到模块"的假失败）、`page_read`（让模型看修复前截图与 console 报错）。
+预算与开关都在配置 `agent:` 段（界面「配置 → Agentic 修复」同字段）：`max_rounds: 8`（一次"交补丁 + 拿验证"算一轮）、`deadline_seconds: 360`、`max_stall: 3`（同一验证结果连续出现即认输，不再烧 token）、`sandbox: auto|worktree|copy`、`sandbox_dir`（临时副本放哪）、`link_node_modules`（把源仓依赖目录链进沙箱，关掉会有一大片"找不到模块"的假失败）、`page_read`（让模型看修复前截图与 console 报错）、`repro: auto|on|off` 与 `repro_command`（自定义复现命令，`{file}` 是用例路径，monorepo 常用 `npx vitest run --root packages/xxx {file}`）、`repro_max_rewrite: 2`（复现失败允许重写几次）。开复现时轮次预算会自动 +2，因为写用例与修代码抢的是同一份轮次。
 
 沙箱里的命令执行受白名单约束：只放行 npm/npx/node/tsc/eslint/vitest/pytest/git diff 这类**读取与检查**动作；删除类、外发类（curl/ssh）、发布类（npm publish）、改 git 状态类（push/reset/clean）以及解释器内联代码（`python -c` / `node -e`）一律拒绝，并把拒绝原因回给模型。命令超时会被杀整棵进程树（避免 dev server 类常驻进程挂住流水线）。
 

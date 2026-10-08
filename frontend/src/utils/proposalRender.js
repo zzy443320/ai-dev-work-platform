@@ -136,6 +136,49 @@ function pmAgent(p) {
       html += `<ul class="note-list">${sb.notes.map((n) => `<li>${mdBold(n)}</li>`).join('')}</ul>`
     }
   }
+  const rp = a.repro || {}
+  if (Object.keys(rp).length && rp.status !== 'disabled') {
+    const strength = (rp.harness || {}).strength || ''
+    const stateText = {
+      green: '已在沙箱里跑红→跑绿（这条缺陷有了可执行判据）',
+      red: '已跑红，但补丁还没让它转绿',
+      blocked: `重写 ${rp.rewrites || 0} 次仍未复现出缺陷，已放弃复现环节`,
+      none: rp.attempted ? '尝试过但没建立有效判据' : '未做复现（模型没有提交用例）',
+      disabled: '配置已关闭复现',
+    }[rp.status] || rp.status
+    html += `<div class="pm-line${rp.status === 'green' ? '' : ' bad'}"><b>复现用例</b>`
+      + `<span>${escapeHtml((rp.harness || {}).name || '未知跑器')}`
+      + (strength ? ` · 证据强度 ${escapeHtml((rp.harness || {}).strength_label || strength)}` : '')
+      + ` → ${escapeHtml(stateText)}</span></div>`
+    if (rp.path) {
+      html += `<div class="pm-line"><b>用例路径</b><span><code>${escapeHtml(rp.path)}</code>`
+        + (rp.artifact_id
+          ? ` · 已挂成产出物 <code>${escapeHtml(rp.artifact_id)}</code>，在「缺陷修复 → 复现用例」里采纳才会进仓库`
+          : ' · 只存在于沙箱，跑完即回收') + '</span></div>'
+      if (rp.cmd) html += `<div class="pm-line"><b>复现命令</b><span><code>${escapeHtml(rp.cmd)}</code></span></div>`
+      if (rp.content) {
+        html += `<details class="fold"><summary>用例原文（${rp.content.length} 字符）</summary>`
+          + `<pre class="diff">${escapeHtml(rp.content)}</pre></details>`
+      }
+      const lastRun = (rp.runs || [])[Math.max(0, (rp.runs || []).length - 1)]
+      if (lastRun && lastRun.output) {
+        html += `<details class="fold"><summary>这一次运行的真实输出（${escapeHtml(lastRun.state || '')}）</summary>`
+          + `<pre class="check-out">${escapeHtml(lastRun.output)}</pre></details>`
+      }
+    }
+    if (strength === 'assert') {
+      html += '<p class="muted">⚠ 这个仓库没有单测跑器，用例是**机械断言脚本**：'
+        + '它能证明「该改的地方确实改了」，不能证明「页面上的现象消失了」。</p>'
+    }
+  }
+  if (a.verified_via) {
+    const via = {
+      'repro-test': '证据来源：针对工单现象的单测从红转绿（最强）',
+      'repro-assert': '证据来源：可执行断言脚本从红转绿（机械判据，弱于单测）',
+      'gate-command': '证据来源：验收命令从红转绿（只证明构建/类型/测试没坏，不证明现象消失）',
+    }[a.verified_via] || ''
+    if (via) html += `<div class="pm-line"><b>verified 靠什么</b><span>${escapeHtml(via)}</span></div>`
+  }
   const attempts = a.attempts || []
   if (attempts.length) {
     html += `<ul class="check-list">${attempts.map((at) => {

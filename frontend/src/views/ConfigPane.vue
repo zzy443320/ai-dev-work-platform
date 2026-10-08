@@ -243,6 +243,24 @@ function openAiModal() {
             <span class="track"></span><span class="switch-label">让模型看修复前截图与 console 报错（多模态判读）</span>
           </label>
           <label class="field">
+            <span>复现环节（先写用例跑红，再动手修）</span>
+            <el-select id="cfg-agent-repro" v-model="form.agent.repro">
+              <el-option label="auto（探测到可用跑器才做，没有则退化成断言脚本）" value="auto" />
+              <el-option label="on（必须做，做不到就在提案里标明）" value="on" />
+              <el-option label="off（只要验收命令级证据）" value="off" />
+            </el-select>
+          </label>
+          <label class="field">
+            <span>复现命令（留空自动探测；{file} = 用例路径）</span>
+            <el-input id="cfg-agent-repro-cmd" v-model="form.agent.repro_command"
+                      placeholder="npx vitest run --root packages/demo-app {file}" />
+          </label>
+          <label class="field">
+            <span>用例复现失败时允许重写几次</span>
+            <el-input-number id="cfg-agent-repro-rewrite" v-model="form.agent.repro_max_rewrite"
+                             :min="0" :max="6" controls-position="right" />
+          </label>
+          <label class="field">
             <span>单条命令超时（秒）</span>
             <el-input-number id="cfg-agent-cmd-timeout" v-model="form.agent.per_command_timeout"
                              :min="15" :max="1800" :step="15" controls-position="right" />

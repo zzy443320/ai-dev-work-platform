@@ -33,6 +33,7 @@ const form = reactive({
     enabled: true, max_rounds: 8, deadline_seconds: 360, max_stall: 3,
     sandbox: 'auto', sandbox_dir: '', link_node_modules: true,
     per_command_timeout: 240, page_read: true, command_allow_text: '',
+    repro: 'auto', repro_command: '', repro_max_rewrite: 2,
   },
   playwright: { base_url: '', headless: true },
 })
@@ -137,6 +138,9 @@ async function loadSettings() {
     form.agent.link_node_modules = ag.link_node_modules !== false
     form.agent.per_command_timeout = ag.per_command_timeout ?? 240
     form.agent.page_read = ag.page_read !== false
+    form.agent.repro = ag.repro || 'auto'
+    form.agent.repro_command = ag.repro_command || ''
+    form.agent.repro_max_rewrite = ag.repro_max_rewrite ?? 2
     form.agent.command_allow_text = ag.command_allow_text || ''
     const pw = s.playwright || {}
     form.playwright.base_url = pw.base_url || ''
@@ -355,6 +359,9 @@ async function saveSettings() {
       link_node_modules: form.agent.link_node_modules,
       per_command_timeout: Number(form.agent.per_command_timeout) || 240,
       page_read: form.agent.page_read,
+      repro: form.agent.repro,
+      repro_command: String(form.agent.repro_command || '').trim(),
+      repro_max_rewrite: Number(form.agent.repro_max_rewrite) || 0,
       command_allow_text: form.agent.command_allow_text,
     },
     playwright: {

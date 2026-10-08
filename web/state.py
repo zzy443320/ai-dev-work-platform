@@ -134,6 +134,9 @@ DEFAULT_SETTINGS = {
         "link_node_modules": True,   # 把源仓 node_modules 链接进沙箱，否则依赖型命令全是假失败
         "per_command_timeout": 240,
         "page_read": True,           # 让模型看修复前截图与 console 报错（多模态视觉判读）
+        "repro": "auto",             # auto|on|off —— 先写复现用例跑红，再动手修
+        "repro_command": "",         # 探测不准时自定义复现命令（{file} 是用例路径）
+        "repro_max_rewrite": 2,      # 复现失败允许重写几次，超过就放弃该环节
         "command_allow_text": "",    # 追加放行的命令正则，一行一条
     },
     "playwright": {
@@ -384,6 +387,8 @@ def _pipeline_config(s: dict) -> dict:
         },
         "knowledge_base": {"output_dir": str(KB_DIR)},
         "proposals": {"output_dir": str(PROPOSAL_DIR)},
+        # 复现用例由修复循环挂成产出物等人采纳（见 pipeline._repro_artifact）
+        "artifacts": {"output_dir": str(ARTIFACT_DIR)},
     }
 
 

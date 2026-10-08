@@ -74,6 +74,15 @@ agent:
   link_node_modules: true  # 把源仓 node_modules 链进沙箱，否则 type-check 类命令会因缺依赖假失败
   per_command_timeout: 240
   page_read: true        # 让模型看修复前截图 + console 报错（多模态视觉判读）
+  # 复现环节：先写一个针对工单现象的用例，在**未修复**代码上跑红，再开始修。
+  #   auto = 探测到可用跑器才做（vitest/jest/mocha → 单测；没有就退化成可执行断言脚本）
+  #   on   = 必须做；off = 关掉
+  repro: auto
+  # 探测不准时自己指定复现命令（{file}  = 用例路径）。monorepo 常用：
+  # repro_command: "npx vitest run --root packages/demo-app {file}"
+  repro_command: ""
+  # 复现用例跑红失败时允许重写几次（超过就放弃复现环节并如实记录）
+  repro_max_rewrite: 2
   # 沙箱默认只放行构建/测试/检查类命令（npm/npx/node/tsc/eslint/vitest/git diff…），
   # 删除、外发、发布、改 git 状态的命令一律拒绝。这里可以追加正则（谨慎）。
   # command_allow:

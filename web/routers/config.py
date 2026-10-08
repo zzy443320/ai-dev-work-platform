@@ -101,6 +101,15 @@ async def update_settings(req: Request):
         if "sandbox" in ag:
             mode = str(ag["sandbox"]).strip().lower()
             cur["sandbox"] = mode if mode in ("auto", "copy", "worktree") else "auto"
+        if "repro" in ag:
+            rm = str(ag["repro"]).strip().lower()
+            cur["repro"] = rm if rm in ("auto", "on", "off") else "auto"
+        if "repro_command" in ag:
+            cur["repro_command"] = str(ag["repro_command"]).strip()[:500]
+        if "repro_max_rewrite" in ag:
+            n = _as_num(ag["repro_max_rewrite"], None)
+            if n is not None:
+                cur["repro_max_rewrite"] = int(min(max(n, 0), 6))
         if "sandbox_dir" in ag:
             cur["sandbox_dir"] = str(ag["sandbox_dir"]).strip().strip('"')
         if "command_allow_text" in ag:

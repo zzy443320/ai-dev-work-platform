@@ -46,6 +46,7 @@ BASE_CONFIG = {
     },
     "knowledge_base": {"output_dir": "./knowledge_base"},
     "proposals": {"output_dir": "./proposals"},
+    "artifacts": {"output_dir": "./artifacts"},
 }
 
 

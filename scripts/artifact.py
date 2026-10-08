@@ -28,6 +28,8 @@ TYPE_LABELS = {
     "reqdev": "需求开发",
     "apidebug": "接口联调",
     "codetest": "代码测试",
+    # 缺陷修复循环在沙箱里跑红→绿的复现用例，见 scripts/repro.py 与 pipeline._repro_artifact
+    "repro": "缺陷复现用例",
     # 长任务作业（多子 Agent 协作），见 scripts/team_run.py
     "team": "长任务作业",
 }
@@ -45,32 +47,43 @@ class ArtifactStore(JsonRecordStore):
 
     def create(self, kind: str, title: str, payload: Dict, ctx: Optional[Dict] = None) -> Dict:
         now = datetime.now().isoformat(timespec="seconds")
-        aid = f"{_slug(kind)}-{datetime.now():%Y%m%d-%H%M%S}"
-        artifact = {
-            "id": aid,
-            "type": kind,
-            "type_label": TYPE_LABELS.get(kind, kind),
-            "title": (title or "（无标题）")[:120],
-            "created": now,
-            "updated": now,
-            "status": STATUS_PENDING,
-            "ai_mode": payload.get("ai_mode", ""),
-            "summary": payload.get("summary", ""),
-            "plan": payload.get("plan", ""),
-            "checklist": payload.get("checklist", []),
-            "endpoints": payload.get("endpoints", []),
-            "mock_data": payload.get("mock_data", ""),
-            "cases": payload.get("cases", []),
-            "files": payload.get("files", []),
-            "error": payload.get("error", ""),
-            "raw": payload.get("raw", ""),
-            # 长任务作业的协作上下文（角色卡、工作项、复核结论）；其他类型为空
-            "team": payload.get("team") or {},
-            "context": _ctx_summary(ctx or {}),
-            "apply": {},
-            "decision": {},
-        }
-        self._write(artifact)
+        base_id = f"{_slug(kind)}-{datetime.now():%Y%m%d-%H%M%S}"
+        # id 只精确到秒：两条工单在同一秒内各出一份产出物时，后写的会**静默覆盖**前一份
+        # （提案那边也有这个约定，但产出物更容易撞上——复现用例每条工单都可能挂一份）。
+        # 覆盖掉的不是「一条记录」，而是用户可能已经审了半天的一份文件正文，所以避让。
+        # 探测与写入必须在同一把类级锁里：分两步的话并发双方都会挑中 base_id，
+        # 加后缀就成了摆设（锁的归属规则见 scripts/json_store.py 顶部注释）。
+        with self._lock:
+            aid = base_id
+            n = 1
+            while self._path(aid).exists():
+                n += 1
+                aid = f"{base_id}-{n}"
+            artifact = {
+                "id": aid,
+                "type": kind,
+                "type_label": TYPE_LABELS.get(kind, kind),
+                "title": (title or "（无标题）")[:120],
+                "created": now,
+                "updated": now,
+                "status": STATUS_PENDING,
+                "ai_mode": payload.get("ai_mode", ""),
+                "summary": payload.get("summary", ""),
+                "plan": payload.get("plan", ""),
+                "checklist": payload.get("checklist", []),
+                "endpoints": payload.get("endpoints", []),
+                "mock_data": payload.get("mock_data", ""),
+                "cases": payload.get("cases", []),
+                "files": payload.get("files", []),
+                "error": payload.get("error", ""),
+                "raw": payload.get("raw", ""),
+                # 长任务作业的协作上下文（角色卡、工作项、复核结论）；其他类型为空
+                "team": payload.get("team") or {},
+                "context": _ctx_summary(ctx or {}),
+                "apply": {},
+                "decision": {},
+            }
+            self._write(artifact)
         return artifact
 
     def list(self, type_filter: Optional[str] = None, status: Optional[str] = None) -> List[Dict]:
