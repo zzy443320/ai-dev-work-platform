@@ -101,7 +101,9 @@ defineExpose({ append, refill })
         <!-- 阶段 / 状态徽标：用 el-tag 承载 -->
         <el-tag effect="light" round class="team-agent-stage">{{ stageLine }}</el-tag>
       </div>
-      <div class="team-agent-duty">{{ agent.duty || '' }}</div>
+      <!-- 职责文案 CSS 里限 2 行截断（-webkit-line-clamp），窄屏实测会被裁掉一行多；
+           补 title 让悬停能读全文，否则被截的部分没有任何找回途径。 -->
+      <div class="team-agent-duty" :title="agent.duty || ''">{{ agent.duty || '' }}</div>
       <div class="team-agent-now">{{ agent.current || '待命中' }}</div>
       <div v-if="prog.total" class="team-progress" :title="`${prog.done}/${prog.total} 个工作项`">
         <i :style="{ width: pct + '%' }" />

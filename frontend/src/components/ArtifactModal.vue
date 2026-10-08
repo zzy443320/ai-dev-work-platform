@@ -73,7 +73,8 @@ function undo() {
        用例要在打开前/关闭后按 id 断言 hidden，所以稳定 id 与 hidden 语义挂在这里。 -->
   <div id="amodal" class="amodal-host" :class="{ hidden: !modalVisible }">
   <el-dialog v-model="modalVisible"
-             :append-to-body="false" :show-close="false">
+             :append-to-body="false" :show-close="false"
+             width="min(1000px, 96vw)">
     <template #header>
       <div class="modal-head">
         <h3>
@@ -126,10 +127,10 @@ function undo() {
 
         <section class="pm-sec" id="am-files">
           <h4>将写入的文件（{{ (detail.files || []).length }}）<template v-if="fileViews.hasDiff"><span v-if="fileViews.applied" class="muted" style="font-weight:400">已采纳，内容与工作区一致</span><el-button class="am-toggle-btn" id="am-file-view-toggle" @click="fileFullView = !fileFullView">{{ fileFullView ? '查看改动高亮' : '查看完整文件' }}</el-button></template></h4>
-          <div v-if="fileViews.showDiff" class="muted" style="margin:2px 0 6px;font-size:12px">高亮说明：<span class="dl add" style="padding:0 4px">绿底 = 新增行</span> · <span class="dl del" style="padding:0 4px">红底 = 被删除/替换的旧行</span> · 淡显 = 未变行；新建文件的所有行均为新增。</div>
+          <div v-if="fileViews.showDiff" class="muted" style="margin:2px 0 6px;font-size:12px">高亮说明：<span class="dl add" style="padding:0 4px">绿底 = 新增行</span> · <span class="dl del" style="padding:0 4px">红底 = 被删除/替换的旧行</span> · 未变的行只展示改动前后各 3 行上下文，其余折叠。</div>
           <template v-if="fileViews.list.length">
             <template v-for="f in fileViews.list" :key="f.path">
-              <div class="diff-file"><span class="df-path">{{ f.path }}</span><span class="tag" :title="f.isNew ? '仓库中不存在该文件，采纳时创建；以下所有行均为新增' : ''">{{ f.isNew ? '新建' : '覆盖已有' }}</span><template v-if="f.added || f.removed"><span class="df-stat df-stat-add">+{{ f.added }}</span><span class="df-stat df-stat-del">−{{ f.removed }}</span></template><span class="muted">{{ f.lineCount }} 行</span></div>
+              <div class="diff-file"><span class="df-path">{{ f.path }}</span><span class="tag" :title="f.isNew ? '仓库中不存在该文件，采纳时创建；以下所有行均为新增' : (f.mode === 'edit' ? '只替换 find 命中的片段，文件其余部分保持原样' : '')">{{ f.mode === 'edit' ? '局部替换' : (f.isNew ? '新建' : '覆盖已有') }}</span><template v-if="f.added || f.removed"><span class="df-stat df-stat-add">+{{ f.added }}</span><span class="df-stat df-stat-del">−{{ f.removed }}</span></template><span class="muted">{{ f.lineCount }} 行</span></div>
               <div v-if="f.desc" class="muted" style="margin:2px 0 4px">{{ f.desc }}</div>
               <pre v-if="f.lines" class="diff diff-lines"><span v-for="(l, i) in f.lines" :key="i" class="dl blk" :class="l.cls">{{ l.s }}</span></pre>
               <pre v-else class="diff">{{ f.content }}</pre>

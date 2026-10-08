@@ -208,6 +208,14 @@ def run(base: str, *, errors: list, consoles: list) -> None:
               repr(page.inner_text("#amodal-status")))
         check("弹窗有 meta 行",
               len(page.query_selector_all("#amodal-meta span")) > 0)
+        # 弹窗宽度：以前没传 width，走 Element 默认的 50%（1600 视口只有 800px，
+        # diff 看不全），另外四个弹窗都是 `min(Npx, 9xvw)`。这里锁住口径。
+        dlg = page.evaluate("""() => {
+          const d = document.querySelector('#amodal .el-dialog');
+          return d ? {w: Math.round(d.getBoundingClientRect().width), vw: innerWidth} : null;
+        }""")
+        check("产出物详情弹窗按 min(1000px,96vw) 撑开（不再是默认 50%）",
+              dlg is not None and dlg["w"] >= min(1000, dlg["vw"] * 0.96) - 2, str(dlg))
         check("文件区渲染了将写入的文件",
               "将写入的文件" in page.inner_text("#am-files"), repr(page.inner_text("#am-files")[:80]))
         check("采纳按钮可见",
