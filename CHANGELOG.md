@@ -435,3 +435,10 @@
 - 做法：① 步骤条推导函数从 `useDefect.js` 抽到 `frontend/src/utils/stages.js`——它们本来就是纯函数，只是住在一个 import 了 vue 与 element-plus toast 的模块里，Node 直调会连带拉起整棵浏览器依赖树。`useDefect.js` 改成 import + 再 export（App.vue 与界面用例的取法不变）；`liveStage()` 里那份与 `stageAdvance()` 重复的推进逻辑合并成一份。⚠️ 写成 `export {…} from` 不产生本地绑定，本模块自己就调不到那几个函数（第一次改完 eslint 立刻报 `stagesRunning is not defined`）。② 空壳用例走系统回收站收掉，git 历史与回收站双通道可恢复。③ 包一层 Python 用例而不是让 pytest 直接收 .mjs：项目里 40 多个用例都是「脚本 + 退出码」的形状，照同一个形状进 suite 最省事；**缺 node 时判失败而不是退出码 2 当跳过**——静默不跑正是这两条当初烂掉的机制原因。另外断言「跑到的条数 ≥ 20」，防止有人把断言文件改空还全绿。④ 新写的渲染断言当场抓到外链那个缺陷：`renderMarkdown` 的链接正则字符类里没有 `:`，`https://` 永远匹配不上，注释写着「外链直接跳」是句空话；补上 `:` 与 `?=&%` 之后又发现整行是先 escapeHtml 再解析链接的，`&` 此时已成 `&amp;`，`;` 不在类里会让链接断在查询参数中间，一并补进字符类。转义在解析之前完成，所以引号与尖括号进不了 href，另加一条属性注入断言钉住这一点。
 - 文件：frontend/src/utils/stages.js（新增）、frontend/src/composables/useDefect.js、frontend/src/utils/format.js、frontend/tests/pure.test.mjs（新增）、frontend/package.json（加 `npm test`）、tests/check_pure_js.py（新增）、tests/suite_pytest.py、tests/check_vue_all.py、tests/check_vue_defect_ui.py、tests/kb_fixture.py；收掉 tests/check_stages_ui.py、tests/check_kb_render.py
 - 影响：纯前端与测试层，需 `npm run build` + 刷新页面。① 卡片/正文里的 http(s) 链接现在真的可点（外链新窗口）；② 链接字符类放宽后，「链接紧跟中文分号」这种极端写法可能把分号吃进 URL，只影响那条链接的跳转目标，不影响安全；③ 步骤条状态的单一事实来源变成 `utils/stages.js`，改状态取值要同步 style.css 的 `.stage.*` 类；④ pytest 安全子集多一条依赖 node 的用例（能构建前端就能跑）。回归：`pure.test.mjs` 24/24、`check_pure_js` 全过、`pytest` 14/14、`check_vue_all` 15 个 Playwright 用例全过、eslint 0 error、`vite build` 通过。
+
+## 2026-10-08 18:30 · 修复 · `symptom_persists` 的提案以前闸门照判通过，采纳按钮直接可点
+
+- 内容：上一条「页面复验」把结论降级成 `symptom_persists`（命令全绿但现象仍在），却漏了让它去影响闸门——这类提案仍停在 `pending`，「采纳」按钮亮着，只有点进去看轨迹才知道页面没过。而 README 与界面文案都写着「按未修好处理 / 走强制采纳需显式确认」，属于我自己把话说在前、代码没做到。现在这类提案落 `gate_failed`，不勾选风险确认后端直接拒。
+- 做法：`pipeline._gate_of` 在拼沙箱闸门结果时，若 `agent.conclusion == "symptom_persists"` 就补一条失败项 `page-reverify`（`kind: "page"`，`output_tail` 放模型的判读原文，让「为什么没通过」在闸门区直接可见），而不是另开一套状态字段——审批矩阵、强制采纳勾选、角标口径全都自然复用。
+- 文件：scripts/pipeline.py、README.md、tests/check_repro.py（第 12 组：闸门判未通过 / 提案落 gate_failed / 不勾风险后端拒且零写入 / 正常 verified 不被误伤）
+- 影响：行为收紧——以前能直接点的「页面仍有现象」提案，现在要走强制采纳。回归：`check_repro` 12 组全过、`pytest` 14/14。

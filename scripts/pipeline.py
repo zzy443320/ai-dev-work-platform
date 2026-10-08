@@ -723,6 +723,18 @@ class AIDefectFixerPipeline:
                        "output_tail": (c.get("output") or "")[-3000:]}
                       for n, c in best["checks"].items()]
             failed = [c["name"] for c in checks if not c["ok"]]
+            if str(agent.get("conclusion") or "") == "symptom_persists":
+                # 命令全绿但页面复验说现象仍在：闸门必须判未通过。否则这条提案会停在
+                # pending、采纳按钮直接可点，而 README 与界面都写着「按未修好处理」——
+                # 说强制采纳要确认，代码却放行，就是自己造了个假安全。
+                checks.append({"name": "page-reverify", "cmd": "沙箱页面复验（修复后现象仍在）",
+                               "kind": "page", "returncode": 1, "ok": False,
+                               "skipped": False, "seconds": 0,
+                               "output_tail": str((agent.get("page_after") or {})
+                                                  .get("evidence")
+                                                  or (agent.get("page_after") or {})
+                                                  .get("reason") or "")[:3000]})
+                failed.append("page-reverify")
             notes = [f"验收命令在**沙箱里打在补丁上**真跑过（第 {best.get('round')} 轮）；"
                      f"循环结论 {agent.get('conclusion')}"]
             notes.extend(agent.get("notes") or [])

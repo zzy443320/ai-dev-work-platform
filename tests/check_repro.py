@@ -532,6 +532,57 @@ def t_pipeline_end_to_end():
           body.split("## 修复循环结论")[1][:200])
 
 
+def t_gate_blocks_persists():
+    """symptom_persists 必须让闸门判未通过（否则采纳按钮直接可点，界面就是骗人的）。"""
+    print("\n[12] 闸门联动：现象仍在的提案不能停在可直接采纳的状态")
+    import scripts.pipeline as _pl
+    from fixture_defect import TEST_DEFECT
+
+    _pl.SAMPLE_DEFECTS[:] = [TEST_DEFECT]
+    repo = F.make_repo()
+    cfg = {
+        "ones": {"base_url": "", "token": "", "project_uuid": ""},
+        "ai": {"model": "x", "api_key": ""},
+        "repo": {"path": str(repo), "branch": "main"},
+        "gate": {"commands": [{"name": "check", "cmd": F.CHECK_CMD}]},
+        "agent": {"repro": "off", "sandbox_server": "off"},
+        "playwright": {"base_url": "http://127.0.0.1:1",
+                       "screenshot_dir": str(F._tempdir("gate-shots-"))},
+        "knowledge_base": {"output_dir": str(F._tempdir("gate-kb-"))},
+        "proposals": {"output_dir": str(F._tempdir("gate-props-"))},
+        "artifacts": {"output_dir": str(F._tempdir("gate-arts-"))},
+    }
+    pipe = _pl.AIDefectFixerPipeline(cfg)
+    patch = {"files": ["src/a.js"], "patched_contents": {"src/a.js": "x"}, "ok": True}
+    agent = {"conclusion": "symptom_persists", "notes": [],
+             "page_after": {"verdict": "same", "evidence": "列表仍然为空"},
+             "attempts": [{"round": 2, "built": True, "rank": 5,
+                           "checks": {"check": {"cmd": "node check.js", "ok": True,
+                                                "returncode": 0, "output": "clean",
+                                                "seconds": 0.1}}}]}
+    g = pipe._gate_of(agent, patch)
+    check("命令全绿但现象仍在 → 闸门判未通过", g["ok"] is False, str(g["ok"]))
+    check("失败项里能看到页面复验", "page-reverify" in (g.get("failed_checks") or []),
+          str(g.get("failed_checks")))
+    check("页面判读原文进了失败项", "列表仍然为空"
+          in (g["checks"][-1].get("output_tail") or ""), str(g["checks"][-1])[:160])
+    prop = pipe.proposals.create({"id": "G1", "title": "t"}, {"category": "逻辑"},
+                                 {"ok": True, "files": ["src/a.js"], "changes": [],
+                                  "patch_text": "", "errors": [], "warnings": []},
+                                 g, {}, agent=agent)
+    check("这样的提案落在 gate_failed（需勾选强制采纳）",
+          prop["status"] == "gate_failed", prop["status"])
+    r = pipe.approve(prop["id"])
+    check("不勾强制采纳时后端直接拒绝", r["ok"] is False and "强制采纳" in r["error"],
+          str(r.get("error"))[:120])
+    check("被拒时没有写任何文件",
+          (repo / "src" / "a.js").read_text(encoding="utf-8") == F.SOURCE_BUGGED)
+
+    ok_agent = {"conclusion": "verified", "notes": [], "attempts": agent["attempts"]}
+    g2 = pipe._gate_of(ok_agent, patch)
+    check("正常 verified 不会被这道新规则误伤", g2["ok"] is True, str(g2)[:120])
+
+
 def main():
     print("== 复现环节（先跑红再修）行为用例 ==")
     t_detect()
@@ -545,6 +596,7 @@ def main():
     t_precedents()
     t_sandbox_server()
     t_pipeline_end_to_end()
+    t_gate_blocks_persists()
     print("\n" + ("ALL PASS" if not FAIL else f"{len(FAIL)} FAIL: {FAIL}"))
     sys.exit(1 if FAIL else 0)
 
