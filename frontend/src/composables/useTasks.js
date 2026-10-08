@@ -7,8 +7,13 @@
 //
 // ⚠️ 空白保真：#figma-tree / #test-preview 里的标题行（.log-title）与内容行
 // （.log-html）是 innerHTML 结构，v-html 时不要加额外换行/空格。
+//
+// ⚠️ 这两段 HTML 的每一个外部字段都必须过 escapeHtml：内容来自 Figma（外部
+// 站点）和目标仓库里的任意文件，一个 `<img src=x onerror=...>` 就是执行脚本。
+// 其余拼 HTML 的地方（useDefect / proposalRender / useSettings）都是这么做的。
 import { ref } from 'vue'
 import { api } from '../api/client.js'
+import { escapeHtml } from '../utils/format.js'
 import { useToast } from './useToast.js'
 import { setRunStatus } from './useRunStatus.js'
 import { useArtifacts } from './useArtifacts.js'
@@ -51,10 +56,10 @@ export function useTasks() {
       const head = data.source === 'browser'
         ? `浏览器通道拉取 · 「${data.file_name || ''}」 · 页面可见文本（无图层结构）`
         : `已拉取「${data.file_name || ''}」· 节点「${data.node_name || ''}」· ${data.node_count} 个节点`
-      figmaTree.value = `<div class="log-title">${head}`
+      figmaTree.value = `<div class="log-title">${escapeHtml(head)}`
         + `${data.truncated ? '（内容过长，已截断）' : ''}</div>`
-        + (data.note ? `<div class="info-note">${data.note}</div>` : '')
-        + `<div class="log-html">${data.tree || ''}</div>`
+        + (data.note ? `<div class="info-note">${escapeHtml(data.note)}</div>` : '')
+        + `<div class="log-html">${escapeHtml(data.tree || '')}</div>`
       toast(data.source === 'browser' ? '设计稿已通过浏览器通道拉取（结构信息不全）' : '设计稿拉取成功',
         data.source === 'browser' ? 'warn' : 'ok')
     } catch (e) {
@@ -99,8 +104,9 @@ export function useTasks() {
     try {
       const data = await api.repoFile(rel)
       testError.value = ''
-      testPreview.value = `<div class="log-title">${data.path}${data.truncated ? '（超过 2 万字符已截断）' : ''}</div>`
-        + `<div class="log-html">${data.content || ''}</div>`
+      testPreview.value = `<div class="log-title">${escapeHtml(data.path)}`
+        + `${data.truncated ? '（超过 2 万字符已截断）' : ''}</div>`
+        + `<div class="log-html">${escapeHtml(data.content || '')}</div>`
     } catch (e) {
       testPreview.value = ''
       testError.value = String((e && e.message) || e)
