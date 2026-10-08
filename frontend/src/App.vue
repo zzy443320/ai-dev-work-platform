@@ -18,7 +18,7 @@
 //      `#stage-flow .stage` 恰好 5 个、且第 1 步带 done。
 // 这两处换成纯 Element 选择器也能测，但改成 `.el-*` 要同时改 12 个用例，
 // 收益不抵风险，所以用「Element 结构 + 稳定 id/class」的方式并存。
-import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { Clock, Sunny, Moon, Setting } from '@element-plus/icons-vue'
 import zhCn from 'element-plus/es/locale/lang/zh-cn'
 import StatsPane from './views/StatsPane.vue'
@@ -44,6 +44,7 @@ import { useTheme } from './composables/useTheme.js'
 import { useConfigDrawer } from './composables/useConfigDrawer.js'
 import { useModuleParams } from './composables/useModuleParams.js'
 import { useLayout } from './composables/useLayout.js'
+import { useTabStrip } from './composables/useTabStrip.js'
 import { useRunStatus } from './composables/useRunStatus.js'
 import { useHealth } from './composables/useHealth.js'
 import { useArtifacts } from './composables/useArtifacts.js'
@@ -116,81 +117,12 @@ window.toggleTheme = toggleTheme
 window.setThemeStyle = setStyle
 
 // ── 顶部导航布局（top）的页签条 ────────────────────────────────────
-// 切到「顶部导航」后，页签从主列搬到顶栏、紧跟品牌右侧（模板里的 .topbar-tabs）；
 // 9 个页签在 1440 及以下视口装不下，所以容器横向滚动、两端各浮一枚箭头。
-//
-// 三个刻意的实现选择，改之前先读：
-//   1. 箭头是 **absolute 浮层**，不占布局宽度。若让它占位，「箭头出现 → 条变窄 →
-//      更该出现」是单向自锁，而反向又会在阈值附近来回翻，ResizeObserver 直接自激；
-//      浮层化之后显隐不改变任何盒模型，回路从根上没了。
-//   2. 箭头只在**真的还能往那个方向滚**时出现（停在左端就没有左箭头）——
-//      比「禁用态的灰箭头」语义清楚，也少两个常驻控件。
-//   3. 切页签后把活动页签滚进可视区，并按箭头宽度内缩，否则点最靠右的页签时
-//      它会被右箭头压住一半。
-const tabStripEl = ref(null)
-const tabScrollable = ref(false)
-const tabAtStart = ref(true)
-const tabAtEnd = ref(true)   // 初始按「到头」处理：量之前不闪箭头
-
-function syncTabScroll() {
-  const el = tabStripEl.value
-  if (!el) return
-  const max = el.scrollWidth - el.clientWidth
-  tabScrollable.value = max > 2
-  tabAtStart.value = el.scrollLeft <= 2
-  tabAtEnd.value = el.scrollLeft >= max - 2
-}
-
-/** 一屏的 70%（至少 200px）：点一下保证换一批页签，而不是挪一格 */
-function scrollTabs(dir) {
-  const el = tabStripEl.value
-  if (!el) return
-  const step = Math.max(200, Math.round(el.clientWidth * 0.7))
-  el.scrollBy({ left: dir * step, behavior: 'smooth' })
-}
-
-/** 浮动箭头会盖住条的两端，所以判定「可见」时两边各内缩这些像素 */
-const TAB_ARROW_INSET = 30
-
-function revealActiveTab() {
-  const el = tabStripEl.value
-  if (!el || layoutMode.value !== 'top') return
-  const cur = el.querySelector('.tt-tab.active')
-  if (!cur) return
-  const view = el.getBoundingClientRect()
-  const box = cur.getBoundingClientRect()
-  // 只对**真会显示箭头的那一侧**内缩：停在左端时左边没有箭头，没必要白留 30px
-  const left = tabScrollable.value && !tabAtStart.value ? TAB_ARROW_INSET : 0
-  const right = tabScrollable.value && !tabAtEnd.value ? TAB_ARROW_INSET : 0
-  if (box.left < view.left + left) {
-    el.scrollBy({ left: box.left - view.left - left, behavior: 'smooth' })
-  } else if (box.right > view.right - right) {
-    el.scrollBy({ left: box.right - view.right + right, behavior: 'smooth' })
-  }
-}
-
-// 切页签 / 换布局后重新量一次：不仅要更新箭头显隐，还要把活动页签带回可视区
-watch([activeTab, layoutMode], async () => {
-  await nextTick()
-  syncTabScroll()
-  revealActiveTab()
-})
-
-let tabResizeObs = null
-onMounted(async () => {
-  await nextTick()
-  syncTabScroll()
-  if (typeof ResizeObserver === 'undefined' || !tabStripEl.value) return
-  // 窗口变宽变窄（或风格切换改了字号）都会改 clientWidth —— 只有这条能兜住
-  tabResizeObs = new ResizeObserver(() => {
-    syncTabScroll()
-    revealActiveTab()
-  })
-  tabResizeObs.observe(tabStripEl.value)
-})
-onBeforeUnmount(() => {
-  if (tabResizeObs) tabResizeObs.disconnect()
-})
+// 尺寸测量与滚动逻辑在 composables/useTabStrip.js（那里写了三条「改之前先读」的
+// 实现约束：箭头为什麼做浮层、显隐条件、活动页签为何要按箭头宽度内缩）。
+// 这里只留模板要用的那几个名字。
+const { tabStripEl, tabScrollable, tabAtStart, tabAtEnd, scrollTabs, syncTabScroll } =
+  useTabStrip({ activeTab, layoutMode })
 
 // ── 侧边工作台（side 布局）的分组导航 ──────────────────────────────
 // 页签名/图标仍以 TABS 为唯一事实来源，这里只做分组投影；点项走同一个
