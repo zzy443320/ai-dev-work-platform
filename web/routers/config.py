@@ -6,6 +6,8 @@
 
 from pathlib import Path
 
+from starlette.concurrency import run_in_threadpool
+
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 
@@ -110,7 +112,9 @@ async def test_ai(req: Request):
         return {"ok": True, "mode": "mock", "mock": True,
                 "note": "当前是 Mock 模式（未填 API Key 或勾选了 Mock），不会发起网络请求",
                 "errors": [], "request": model.describe_request()}
-    result = model.probe()
+    # 连通性探测会一直等到模型超时（默认 120s）——必须离开事件循环，
+    # 否则「测试连接」期间整个界面（含健康轮询）都会冻住。
+    result = await run_in_threadpool(model.probe)
     result["mode"] = model.cfg.mode
     return JSONResponse(result, status_code=200 if result.get("ok") else 400)
 
@@ -199,7 +203,8 @@ async def fetch_ai_models(req: Request):
     if model.cfg.is_mock:
         return JSONResponse({"error": "需要先填写 API Key（当前为 Mock 模式）"}, status_code=400)
     try:
-        names = model.available_models()
+        # 同样走工作线程：列模型是一次真实的 HTTP 请求
+        names = await run_in_threadpool(model.available_models)
     except AIError as e:
         return JSONResponse(e.to_dict(), status_code=400)
     except Exception as e:
@@ -250,5 +255,6 @@ async def test_mcp(req: Request):
         cfg = _clean_mcp(body.get("server") or {})
     except HTTPException as e:
         raise HTTPException(400, str(e.detail))
-    result = mcp_client.test_server(cfg)
+    # MCP 探测要起子进程 + 走 initialize/tools/list 握手，同样不能占着事件循环
+    result = await run_in_threadpool(mcp_client.test_server, cfg)
     return JSONResponse(result, status_code=200 if result.get("ok") else 400)

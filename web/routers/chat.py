@@ -7,6 +7,8 @@
 import asyncio
 from pathlib import Path
 
+from starlette.concurrency import run_in_threadpool
+
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 
@@ -134,7 +136,9 @@ async def chat_stream(req: Request):
     root = Path(str(s["repo"]["path"]))
     reader = RepoReader(str(root), tools_enabled=bool(use_repo and root.exists()))
     skills_text = _skills_text(s, "chat")
-    tool_specs, tool_executor = _mcp_toolkit(s)
+    # 每个启用的 MCP server 都要做一次 initialize/tools/list 握手（起子进程或走 HTTP），
+    # 不能留在事件循环上：否则每条带工具的消息都先卡住整个界面。
+    tool_specs, tool_executor = await run_in_threadpool(_mcp_toolkit, s)
     title = (sess.get("title") or text)[:CHAT_TITLE_MAX]
     # 图片在**请求线程**里先转成 base64：多像素图编码不便宜，放进 worker 会白占
     # 一次模型调用的时间窗（且 base64 结果与磁盘状态无关，提前算不会过期）。

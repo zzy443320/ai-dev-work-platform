@@ -10,7 +10,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 
-from web.state import _RUN_STATE, _applier, _astore, _body_json, _fresh_pipeline, _load_settings, _store
+from web.state import _RUN_STATE, _applier, _astore, _body_json, _fresh_pipeline, _load_settings, _store, _pipeline_preflight
 from scripts.artifact import diff_against_repo  # noqa: E402
 
 router = APIRouter()
@@ -28,7 +28,8 @@ async def get_artifact(aid: str):
     s = _load_settings()
     a["repo"] = {"path": s["repo"]["path"], "branch": s["repo"]["branch"]}
     try:
-        a["preflight_live"] = _applier().preflight()
+        # ArtifactApplier.preflight() 会起 git 子进程
+        a["preflight_live"] = await run_in_threadpool(_applier().preflight)
     except Exception as e:
         a["preflight_live"] = {"problems": [str(e)]}
     return a
@@ -64,7 +65,11 @@ async def approve_artifact(aid: str, req: Request):
     artifact = store.get(aid)
     if not artifact:
         raise HTTPException(404, f"产出物不存在: {aid}")
-    result = _applier().apply(artifact, force_gate=force)
+    # 采纳会写目标仓库、跑验收闸门（gate 命令是 shell）、还可能拍 playwright 截图——
+    # 这是全服务最重的一次同步操作，必须在工作线程里做（proposals/approve 早已如此，
+    # artifacts/approve 之前漏了，等于点一次「采纳」整个界面冻到闸门跑完）。
+    applier = _applier()
+    result = await run_in_threadpool(applier.apply, artifact, force_gate=force)
     status = result.get("status", "failed")
     if result.get("ok"):
         from datetime import datetime as _dt
@@ -127,7 +132,7 @@ async def get_proposal(pid: str):
     s = _load_settings()
     p["repo"] = {"path": s["repo"]["path"], "branch": s["repo"]["branch"]}
     try:
-        p["preflight_live"] = _fresh_pipeline().preflight
+        p["preflight_live"] = await run_in_threadpool(_pipeline_preflight)
     except Exception as e:
         p["preflight_live"] = {"problems": [str(e)]}
     p["screenshot_base"] = "/screenshots"

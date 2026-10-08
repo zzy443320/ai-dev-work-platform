@@ -475,6 +475,15 @@ def _fresh_pipeline() -> AIDefectFixerPipeline:
     return AIDefectFixerPipeline(_pipeline_config(_load_settings()))
 
 
+def _pipeline_preflight() -> dict:
+    """新起一个流水线并取仓库前置检查。
+
+    单独成函数是为了能被 `run_in_threadpool` 直接调：里面至少一次 git 子进程，
+    在 async 端点上直接跑会冻住整个界面（健康轮询每几秒就来一次）。
+    """
+    return _fresh_pipeline().preflight
+
+
 _RUN_STATE = {"running": False}
 # 问答占用标记：与缺陷流水线**各管各的**（可以一边跑流水线一边问问题），
 # 但同一时刻只允许一个问答在跑，避免重复提交把会话写乱。

@@ -7,11 +7,13 @@
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from starlette.concurrency import run_in_threadpool
+
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from web.state import ATTACH_DIR, KB_DIR, SCREENSHOT_DIR, STATIC_DIR, VUE_ENTRY, _RUN_STATE, _astore, _fresh_pipeline, _gate_commands, _load_settings, _page_auth, _resolve_ai, _store
+from web.state import ATTACH_DIR, KB_DIR, SCREENSHOT_DIR, STATIC_DIR, VUE_ENTRY, _RUN_STATE, _astore, _gate_commands, _load_settings, _page_auth, _resolve_ai, _store, _pipeline_preflight
 from scripts.ai_providers import AIConfig  # noqa: E402
 from scripts.gate import resolve_commands  # noqa: E402
 
@@ -159,7 +161,9 @@ async def health():
     pre = {}
     if repo_ok:
         try:
-            pre = _fresh_pipeline().preflight
+            # 界面每隔几秒就轮询 /api/health，这里内含 git 子进程 → 必须离开事件循环，
+            # 否则整页（含流式输出的心跳）都会随轮询周期卡顿。
+            pre = await run_in_threadpool(_pipeline_preflight)
         except Exception as e:
             pre = {"problems": [str(e)]}
     counts = _store().counts()

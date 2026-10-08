@@ -236,7 +236,7 @@ async def tasks_run(req: Request):
     skills_text = _skills_text(s, kind)
     used_skills = [sk.get("name") for sk in _extensions(s).get("skills") or []
                    if sk.get("enabled") and ("all" in (sk.get("scope") or ["all"]) or kind in (sk.get("scope") or []))]
-    tool_specs, tool_executor = _mcp_toolkit(s)
+    tool_specs, tool_executor = await run_in_threadpool(_mcp_toolkit, s)  # MCP 握手会阻塞
     ctx["skills_used"] = used_skills
     ctx["tools_used"] = [t["name"] for t in tool_specs]
 

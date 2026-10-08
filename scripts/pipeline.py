@@ -96,11 +96,21 @@ class AIDefectFixerPipeline:
             config.get("proposals", {}).get("output_dir", "./proposals")
         )
 
-        self.preflight = self.fixer.preflight() if self.fixer else {
-            "problems": ["未配置可用仓库路径，只能产出分析结论，不会生成补丁"],
-            "repo": self.repo_path, "is_git": False, "current_branch": "",
-            "expected_branch": self.branch, "branch_ok": False, "dirty": False,
-        }
+        # 构造期**不做 I/O**：仓库前置检查要起 git 子进程，而 web 层是「每个请求一个
+        # 新 pipeline」（_fresh_pipeline），放在这里等于每次请求都付一次 git 开销，
+        # 而且是在事件循环上付的（界面整体卡顿）。改成首次访问时再算并缓存，
+        # 调用点（run/describe/run.py）语义不变。
+        self._preflight: Optional[Dict] = None
+
+    @property
+    def preflight(self) -> Dict:
+        if self._preflight is None:
+            self._preflight = self.fixer.preflight() if self.fixer else {
+                "problems": ["未配置可用仓库路径，只能产出分析结论，不会生成补丁"],
+                "repo": self.repo_path, "is_git": False, "current_branch": "",
+                "expected_branch": self.branch, "branch_ok": False, "dirty": False,
+            }
+        return self._preflight
 
     def describe(self) -> Dict:
         return {
