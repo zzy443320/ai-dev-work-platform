@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """脱敏的知识库夹具：自检用例的**唯一**数据来源，不再对着生产知识库断言。
 
-背景：`check_kb_patterns.py` / `check_kb_render.py` / `check_kb_patterns_ui.py`
+背景：`check_kb_patterns.py` / `check_kb_patterns_ui.py` / `pure.test.mjs`
 原来直接读项目根的 `knowledge_base/`（真实工单 + 真实分析结论，已被 .gitignore 排除），
 还断言了真实工单号 `DEMO-OLD-1`、`STREAM-TEST-1` 这些字面量。后果有两个：
 别人克隆下来这三个用例必然红；而为了保住它们，生产知识库里那两条测试用假工单

@@ -91,7 +91,14 @@ export function renderMarkdown(md, onLocalLink) {
       // 模式卡与 INDEX 里的关联缺陷写成 markdown 相对链接（分类/缺陷.md、
       // _patterns/模式.md）。外链直接跳，站内相对链接交给调用方路由，
       // 这样正文里点缺陷 id 也能下钻，不必只依赖弹窗头部的关联缺陷链接。
-      .replace(/\[([^\]\n]+)\]\(([A-Za-z0-9_./\u4e00-\u9fa5-]+)\)/g, (m, text, url) =>
+      // ⚠ URL 的字符类里必须留 `:`、`?=&` 与 `;`：旧实现只放了 `[A-Za-z0-9_./\u4e00-\u9fa5-]`，
+      // 于是 `https://...` 永远匹配不上，注释里的「外链直接跳」是句空话，工单正文里
+      // 贴的链接会原样显示成 `[文字](https://...)`。注意整行是先 escapeHtml 再解析链接的，
+      // `&` 此时已经是 `&amp;`，所以字符类里还得收 `;`，否则带查询参数的链接照样断在半路。
+      // url 到这里已经过 escapeHtml，引号/尖括号都不可能被带进 href。
+      // 收 `;` 的代价：链接后面紧贴中文分号时可能多吃几个字符，只影响那条链接的
+      // 跳转目标，不影响安全；卡片与 INDEX 里的链接都在表格/列表里，实际碰不到。
+      .replace(/\[([^\]\n]+)\]\(([A-Za-z0-9_:./?=&%;~#@\u4e00-\u9fa5-]+)\)/g, (m, text, url) =>
         /^(https?:)?\/\//.test(url)
           ? `<a class="link" href="${url}" target="_blank" rel="noopener">${text}</a>`
           : `<a class="link" href="#" data-kb-link="${escapeHtml(url)}">${text}</a>`

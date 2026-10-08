@@ -8,6 +8,7 @@
     "dev": "vite",
     "clean": "node scripts/clean.mjs",
     "build": "npm run clean && vite build",
+    "test": "node tests/pure.test.mjs",
     "lint": "eslint src",
     "lint:fix": "eslint src --fix",
     "preview": "vite preview"

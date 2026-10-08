@@ -44,6 +44,7 @@ PIPELINE = [
     "check_patch_fallback.py",
     "check_kb_patterns.py",
     "check_changelog.py",
+    "check_pure_js.py",           # 前端纯函数直调（步骤条推导 + Markdown 渲染），需要 node
     "check_usage.py",
 ]
 

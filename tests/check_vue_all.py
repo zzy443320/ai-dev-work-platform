@@ -30,8 +30,10 @@ from temp_server import serve                                  # noqa: E402
 # 下面这些用例**已退役**（清单留此备查，不再执行）——它们直调旧版挂到 window 上
 # 的命令式函数，而在 Vue 版里这些是 composable 内部状态，没有同名全局，
 # 一律 `ReferenceError`（实测）：
-#   - check_stages_ui.py       → stagesFromRunResults 未定义；覆盖面已迁到
-#                                check_vue_defect_ui.py 第 4b 步「步骤条与真实结果联动」
+#   - check_stages_ui.py【已收掉】→ 曾直调 window 上的 stagesFromRunResults；纯函数分支
+#                                判定已迁到 frontend/tests/pure.test.mjs（由
+#                                tests/check_pure_js.py 收进 pytest），DOM 接线仍由
+#                                check_vue_defect_ui.py 第 4b 步守
 #   - check_live_ui.py         → healthCache / liveSetup / liveLine / liveAI 未定义；
 #                                覆盖面（日志区 420px、空态占位、实时视图）已迁到
 #                                check_vue_defect_ui.py 第 3、4 步
@@ -41,9 +43,10 @@ from temp_server import serve                                  # noqa: E402
 #                                已迁到 check_vue_defect_ui.py 的知识库部分
 #   - check_changelog_ui.py    → 找不到旧版 DOM 而超时；#chmodal / #ch-body /
 #                                .ch-chip / 关闭 已由 check_vue_settings_ui.py 覆盖
-#   - check_kb_render.py       → renderMarkdown 未定义；Markdown 渲染
-#                                （h1+h2+strong）已由 check_vue_settings_ui.py 的
-#                                #modal-body 断言覆盖
+#   - check_kb_render.py【已收掉】→ 曾直调 window 上的 renderMarkdown；表格/代码块/
+#                                空行不腰斩/内外链分流等渲染规则已迁到
+#                                frontend/tests/pure.test.mjs，弹窗接线仍由
+#                                check_vue_settings_ui.py 的 #modal-body 断言覆盖
 #   - check_chat_ui.py         → 旧版问答用例；已由 check_vue_chat_ui.py 全面承接
 LEGACY = [
     "check_panel_fold.py",

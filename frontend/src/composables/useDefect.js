@@ -11,67 +11,22 @@ import { useToast } from './useToast.js'
 import { setRunStatus } from './useRunStatus.js'
 import { STATUS_ORDER, isOpenStatus } from '../utils/labels.js'
 
-/** 步骤条状态集合。旧版 app.js:1371 —— 与 style.css 的 .stage 类名一一对应 */
-export const STAGE_STATES = ['active', 'done', 'warn', 'fail', 'off', 'idle']
-
-/** 事件里的 stage 名 → 步骤条下标。旧版 app.js:1429 */
-const LIVE_STAGE_IDX = { fetch: 0, locate: 1, patch: 2, proposal: 2, gate: 3, kb: 4 }
+// 步骤条的状态推导是纯函数，住在 utils/stages.js（可在 Node 里直调断言）。
+// 这里既 import 进来自己用，又再 export 一次：既有 import 路径与界面用例的取法都不变。
+// （写成 `export {…} from` 不会产生本地绑定，本模块内部就调不到那几个函数了。）
+import {
+  stageAdvance, stagesFromProbeResults, stagesFromRunResults, stagesIdle, stagesRunning,
+} from '../utils/stages.js'
+export {
+  STAGE_STATES, LIVE_STAGE_IDX, stagesIdle, stagesRunning,
+  stagesFromRunResults, stagesFromProbeResults,
+} from '../utils/stages.js'
 
 /** 待审批提案每页条数（2 列 × 4 行）。旧版 app.js:156 */
 export const PROP_PAGE_SIZE = 8
 
 /** 知识库视图的 localStorage 键（与旧版同源） */
 const KB_VIEW_KEY = 'kb-view'
-
-// ---------------------------------------------------------------- 步骤条计算
-// 步骤条与真实结果关联，不伪造中间进度。旧版 app.js:1373-1424。
-
-/** 运行开始：只有「拉取」进入进行中（呼吸），其余待定 */
-export function stagesRunning() {
-  return ['active', 'idle', 'idle', 'idle', 'idle']
-}
-
-export function stagesIdle() {
-  return ['idle', 'idle', 'idle', 'idle', 'idle']
-}
-
-/** 完整流水线结束后的步骤条。旧版 app.js:1384 */
-export function stagesFromRunResults(data) {
-  const results = (data && data.results) || []
-  if (!data || data.source === 'error' || !results.length) {
-    return ['fail', 'off', 'off', 'off', 'off'] // 拉取失败/为空，后面没有发生
-  }
-  const arr = ['done', 'done', 'done', 'done', 'done']
-  const rate = (bad) => results.filter(bad).length
-  // 定位：locate_empty=护栏触发（警告）；invalid 由提案步表达
-  const locBad = rate((x) => x.locate_empty)
-  arr[1] = locBad ? 'warn' : 'done'
-  // 生成提案：invalid=没有可用补丁
-  const invalid = rate((x) => x.status === 'invalid')
-  arr[2] = invalid === results.length ? 'fail' : (invalid ? 'warn' : 'done')
-  // 闸门：gate_ok=false（含 gate_failed 待人工确认）
-  const gateBad = rate((x) => x.gate_ok === false)
-  arr[3] = gateBad === results.length ? 'fail' : (gateBad ? 'warn' : 'done')
-  // 沉淀：kb_path 为空即没落卡
-  const noKb = rate((x) => !x.kb_path)
-  arr[4] = noKb === results.length ? 'fail' : (noKb ? 'warn' : 'done')
-  return arr
-}
-
-/** 试运行只涉及前两步；3-5 标记为 off（不适用）。旧版 app.js:1406 */
-export function stagesFromProbeResults(data) {
-  const off = ['off', 'off', 'off', 'off', 'off']
-  const results = (data && data.results) || []
-  if (!data || data.source === 'error' || data.fetch_error) {
-    return ['fail', 'fail', off[2], off[3], off[4]]
-  }
-  off[0] = 'done'
-  if (!results.length) { off[1] = 'warn'; return off } // 接口通但没工单
-  const errs = results.filter((x) => x.analysis_error).length
-  const empty = results.filter((x) => x.locate_empty).length
-  off[1] = errs === results.length ? 'fail' : (errs || empty ? 'warn' : 'done')
-  return off
-}
 
 /** 分页页码序列（超过 9 页时中间折叠成 …）。旧版 app.js:171 */
 export function pageNumbers(current, total) {
@@ -164,18 +119,8 @@ function _createDefectState() {
 
   /** 步骤条推进。旧版 app.js:1502 */
   function liveStage(evt) {
-    const idx = LIVE_STAGE_IDX[evt.stage]
-    if (idx == null) return // verify 等只进日志行，不映射步骤条
-    const next = stageStates.value.slice()
-    if (evt.status === 'start') {
-      next[idx] = 'active'
-    } else {
-      next[idx] = evt.status === 'done' ? 'done' : evt.status
-      if (evt.status === 'done' && idx < 4 && next[idx + 1] === 'idle') {
-        next[idx + 1] = 'active'
-      }
-    }
-    stageStates.value = next
+    // 推导规则本身在 utils/stages.js 里（有 Node 直调断言），这里只负责写回状态
+    stageStates.value = stageAdvance(stageStates.value, evt.stage, evt.status)
   }
 
   /**

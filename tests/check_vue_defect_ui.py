@@ -9,7 +9,7 @@
 所以断言从既有用例里搬，不另发明口径：
 
   - 面板顺序 + 折叠 + 状态记忆          ← tests/check_panel_fold.py
-  - 步骤条与真实结果联动                ← tests/check_stages_ui.py（第 4b 步，
+  - 步骤条与真实结果联动                ← 原 check_stages_ui.py（第 4b 步，
     收口时补的回归：stageStates 曾被算出来却没接到 #stage-flow 上）
   - 提案分页（每页 8 条 / 翻页 / 筛选重置）← tests/check_pager.py
   - 知识库双层视图 + 开关持久化          ← tests/check_kb_patterns_ui.py（视图部分）
@@ -289,7 +289,7 @@ def run(base: str, dirs, *, errors: list) -> None:
               body_len == 1 and "DEMO-UI-1" in log_html and "无法生成补丁" in log_html,
               f"rows={body_len} {log_html[:90]}")
 
-        # ── 4b. 步骤条与真实结果联动（check_stages_ui.py 契约）──
+        # ── 4b. 步骤条与真实结果联动（原 check_stages_ui.py 的 DOM 契约；纯函数分支判定在 frontend/tests/pure.test.mjs）──
         # 这是收口时补上的一处真回归：`#stage-flow` 在迁移期被写成静态标记，
         # useDefect 里全套 stageStates 状态机（stagesRunning / stagesFromRunResults /
         # stagesFromProbeResults）算出来了却没有接到 DOM 上，5 步永远不带
