@@ -226,12 +226,17 @@ def store_locking():
         t.start()
     for t in ts:
         t.join()
-    check("无锁对照组也没抛错（否则下面那条是假通过）", not errs2, "; ".join(errs2)[:160])
     bad = real_get(p2["id"])
     lost = not ((bad.get("apply") or {}).get("a") == 1 and
                 (bad.get("decision") or {}).get("note") == "b")
-    check("反向对照：去掉锁确实会丢更新（说明用例咬得住）", lost,
-          str({k: bad.get(k) for k in ("apply", "decision")})[:120])
+    # 这条不能要求「必须不抛错」：无锁组制造的是真实竞态，Windows 上两个线程同时
+    # replace 同一目标，结果可能是丢更新、也可能是 PermissionError(WinError 5/32)——
+    # 两者都是竞态的正常表现，都算「锁在起作用」的证据。上一版写成「必须不抛错」，
+    # 于是这条用例成了随机失败发生器（单独跑必过、进全套偶发挂，就是这个原因）。
+    check("无锁对照组出现竞态后果（丢更新或写失败，任一即证明锁有用）",
+          lost or bool(errs2),
+          f"lost={lost} errs={errs2[:1]} "
+          f"fields={ {k: bad.get(k) for k in ('apply', 'decision')} }"[:150])
 
 
 def http_wiring_is_live():
