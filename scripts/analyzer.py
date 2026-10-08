@@ -344,7 +344,7 @@ class DefectAnalyzer:
         self,
         repo_path: str,
         ai_model,
-        # 窗口 4→6：4 个名额在大型 monorepo（cloudpivot 等 8000+ 文件）里
+        # 窗口 4→6：4 个名额在 8000+ 文件的企业级 monorepo 里
         # 几乎必然漏掉真正的改动点——即使稀有标识符加权后它已排进候选池前 6
         # （工单 214646：import-input.vue 排第 6，前 4 被同分信号文件占满）。
         # 大文件走关键词锚点窗口化，token 增量可控。

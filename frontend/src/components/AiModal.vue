@@ -249,7 +249,7 @@ function pickModel(name) {
                 <label class="field">
                   <span>额外请求头（JSON 或每行 <code>名称: 值</code>）</span>
                   <el-input id="cfg-ai-headers" v-model="ai.extra_headers" type="textarea" :rows="3"
-                            spellcheck="false" placeholder='{"X-Tenant": "h3yun"}' />
+                            spellcheck="false" placeholder='{"X-Tenant": "demo-tenant"}' />
                 </label>
                 <label class="field">
                   <span>额外请求体（JSON，会合并进请求）</span>

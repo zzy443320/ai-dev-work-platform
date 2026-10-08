@@ -99,7 +99,7 @@ def main():
             page.fill("#cfg-ai-model", "gw-claude-pro")
             page.fill("#cfg-ai-temp", "0.2")
             page.fill("#cfg-ai-max-tokens", "1500")
-            page.fill("#cfg-ai-headers", "X-Tenant: h3yun")
+            page.fill("#cfg-ai-headers", "X-Tenant: demo-tenant")
             page.uncheck("#cfg-ai-json-mode")
             check("高级区字段可填写", page.is_visible("#cfg-ai-content-path"))
             page.screenshot(path=str(SHOTS / "ui_ai_form.png"), full_page=True)

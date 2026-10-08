@@ -44,8 +44,8 @@ def ai_config(base, **over):
         "max_tokens": 1200,
         "timeout": 20,
         "json_mode": False,
-        "extra_body": {"tenant": "h3yun"},
-        "extra_headers": {"X-Tenant": "h3yun"},
+        "extra_body": {"tenant": "demo-tenant"},
+        "extra_headers": {"X-Tenant": "demo-tenant"},
     }
     cfg.update(over)
     return cfg
@@ -104,8 +104,8 @@ def main():
         check("打到 /gw/chat", last["path"] == "/gw/chat", last["path"])
         check("用了自定义请求头而不是 Authorization",
               last["gw"] == "gw-secret-abcdef123456" and last["auth"] is None)
-        check("extra_body 透传", last["body"].get("tenant") == "h3yun")
-        check("extra_headers 透传", last["tenant"] == "h3yun", str(last.get("tenant")))
+        check("extra_body 透传", last["body"].get("tenant") == "demo-tenant")
+        check("extra_headers 透传", last["tenant"] == "demo-tenant", str(last.get("tenant")))
         check("temperature/max_tokens 生效",
               last["body"]["temperature"] == 0.2 and last["body"]["max_tokens"] == 1200)
         check("json_mode=False 不发 response_format",

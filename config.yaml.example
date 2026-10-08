@@ -34,7 +34,7 @@ ai:
   auth_style: x-api-key
   auth_header:                        # header/query 模式下的字段名，如 X-Auth-Token
 
-  extra_headers: {}                   # {"X-Tenant": "h3yun"}
+  extra_headers: {}                   # {"X-Tenant": "demo-tenant"}
   extra_body: {}                      # {"enable_thinking": false} 网关私有参数
 
 # Target repo. branch is only checked, never auto-switched; leave "" to skip the check.
