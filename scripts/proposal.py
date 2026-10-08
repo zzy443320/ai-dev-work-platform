@@ -6,6 +6,8 @@ only code path allowed to call CodeFixer.apply().
 """
 import json
 import re
+import threading
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -29,6 +31,11 @@ class ProposalStore:
     def __init__(self, base_dir: str):
         self.base = Path(base_dir).resolve()
         self.base.mkdir(parents=True, exist_ok=True)
+        # set_status 是「读 → 改 → 写」三步，单个 _write 里的 tmp+rename 只能保证
+        # **不出现半份文件**，挡不住两个请求互相覆盖（A 读到旧版、B 也读到旧版、
+        # 后写的把先写的字段抹掉）。用 RLock 是因为 set_status → update → _write
+        # 是同线程嵌套调用。
+        self._lock = threading.RLock()
 
     # ---------- paths ----------
     def _path(self, pid: str) -> Path:
@@ -57,25 +64,34 @@ class ProposalStore:
             "decision": {},
             "kb_path": "",
         }
-        self._write(proposal)
+        # 提案 id 精确到秒：同一条工单在同一秒内跑两次会撞同一个文件名。create 是整份
+        # 写入（不是读-改-写），但仍在锁内，避免与并发的 update 交叉。
+        with self._lock:
+            self._write(proposal)
         return proposal
 
     def update(self, proposal: Dict) -> Dict:
-        proposal["updated"] = datetime.now().isoformat(timespec="seconds")
-        self._write(proposal)
+        with self._lock:
+            proposal["updated"] = datetime.now().isoformat(timespec="seconds")
+            self._write(proposal)
         return proposal
 
     def set_status(self, pid: str, status: str, **extra) -> Optional[Dict]:
-        p = self.get(pid)
-        if not p:
-            return None
-        p["status"] = status
-        p.update(extra)
-        return self.update(p)
+        with self._lock:          # 整个「读-改-写」必须在同一把锁里
+            p = self.get(pid)
+            if not p:
+                return None
+            p["status"] = status
+            p.update(extra)
+            return self.update(p)
 
     def _write(self, proposal: Dict) -> None:
         target = self._path(proposal["id"])
-        tmp = target.with_suffix(".json.tmp")
+        # 临时名必须唯一。原先固定用 "<id>.json.tmp"：两个线程同时写同一份提案时，
+        # 先到的那个 replace 掉文件、后到的还握着句柄 → Windows 上直接
+        # PermissionError(WinError 32)（在无锁对照用例里实测复现）。set_status 的锁
+        # 只是把这条路径串行化了，唯一文件名才是「原子替换」这层本身的正确姿势。
+        tmp = target.with_name(f".{target.name}.{uuid.uuid4().hex[:8]}.tmp")
         tmp.write_text(
             json.dumps(proposal, ensure_ascii=False, indent=2, default=str),
             encoding="utf-8",

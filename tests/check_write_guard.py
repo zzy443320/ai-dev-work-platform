@@ -155,6 +155,85 @@ def restore_reports_failures():
           (repo / "src" / "ProcessList.tsx").read_text(encoding="utf-8") == "// restored\n")
 
 
+def store_locking():
+    print("\n[6] set_status 的「读-改-写」在并发下不丢更新")
+    import threading
+    import time
+
+    from scripts.proposal import ProposalStore
+
+    base = Path(tempfile.mkdtemp(prefix="guard-store-")) / "proposals"
+    st = ProposalStore(str(base))
+    p = st.create({"id": "LOCK-1", "title": "锁"}, {"category": "逻辑"},
+                  {"ok": True, "changes": []}, {"ok": True})
+    pid = p["id"]
+    real_get = st.get
+
+    def slow_get(x):
+        r = real_get(x)
+        time.sleep(0.05)        # 放大竞态窗口：没有锁的话两个线程都会读到同一份旧数据
+        return r
+
+    st.get = slow_get
+    errs = []
+
+    def run(store, target, extra):
+        # 子线程里的异常不会传回主线程，只会打一行 stderr 就被吞掉——上一版就是这么
+        # 「两头假通过」的（Thread 的 kwargs 会把参数拆成关键字参数传给目标函数）。
+        # 所以显式收集，任何一次抛错都算用例失败。
+        try:
+            store.set_status(target, **extra)
+        except Exception as e:          # noqa: BLE001
+            errs.append(f"{type(e).__name__}: {e}")
+
+    def pair(store, target, a, b):
+        ts = [threading.Thread(target=run, args=(store, target, x)) for x in (a, b)]
+        for t in ts:
+            t.start()
+        for t in ts:
+            t.join()
+
+    pair(st, pid,
+         {"status": "applied", "apply": {"a": 1}},
+         {"status": "rejected", "decision": {"note": "b"}})
+    check("两个并发写线程都没抛错", not errs, "; ".join(errs)[:160])
+    final = real_get(pid)
+    both = (final.get("apply") or {}).get("a") == 1 and \
+           (final.get("decision") or {}).get("note") == "b"
+    check("加锁后两次写入的字段都在", both,
+          str({k: final.get(k) for k in ("apply", "decision")})[:120])
+
+    # 反向对照：同一套并发跑在「没有锁」的实例上必须丢字段，否则上面的断言是空炮。
+    class _NoLock:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    st2 = ProposalStore(str(base))
+    p2 = st2.create({"id": "LOCK-2", "title": "无锁"}, {"category": "逻辑"},
+                    {"ok": True, "changes": []}, {"ok": True})
+    st2.get = slow_get
+    st2._lock = _NoLock()
+    errs2 = []
+    def run2(store, target, extra):
+        try:
+            store.set_status(target, **extra)
+        except Exception as e:          # noqa: BLE001
+            errs2.append(f"{type(e).__name__}: {e}")
+    ts = [threading.Thread(target=run2, args=(st2, p2["id"], x)) for x in (
+        {"status": "applied", "apply": {"a": 1}},
+        {"status": "rejected", "decision": {"note": "b"}})]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join()
+    check("无锁对照组也没抛错（否则下面那条是假通过）", not errs2, "; ".join(errs2)[:160])
+    bad = real_get(p2["id"])
+    lost = not ((bad.get("apply") or {}).get("a") == 1 and
+                (bad.get("decision") or {}).get("note") == "b")
+    check("反向对照：去掉锁确实会丢更新（说明用例咬得住）", lost,
+          str({k: bad.get(k) for k in ("apply", "decision")})[:120])
+
+
 def http_wiring_is_live():
     print("\n[5] 写盘面在 HTTP 上确实可达（server.py 模块化拆分后的装配验证）")
     # 单元测试过 store 层不够：approve/undo 挪进 web/routers/review.py 之后，如果
@@ -196,6 +275,7 @@ if __name__ == "__main__":
     undo_checks_preflight()
     escape_patch_writes_nothing_outside()
     restore_reports_failures()
+    store_locking()
     http_wiring_is_live()
     print("\n" + ("ALL PASS" if not FAIL else f"{len(FAIL)} FAILED: {FAIL}"))
     sys.exit(1 if FAIL else 0)
