@@ -5,7 +5,7 @@
 // 所以这里所有 span 都紧挨着写，不换行、不加空格。
 import { computed } from 'vue'
 import { relTime } from '../utils/format.js'
-import { gateBadge, proposalTitle, statusBadge } from '../utils/labels.js'
+import { agentLabel, agentTone, gateBadge, proposalTitle, statusBadge } from '../utils/labels.js'
 
 const props = defineProps({
   p: { type: Object, required: true },
@@ -38,8 +38,24 @@ const statusType = computed(() => {
 })
 const gateType = computed(() => {
   if (props.p.gate_ok === false) return 'danger'
-  const map = { explicit: 'success', package_json: 'primary', degraded: 'warning', none: 'info' }
+  const map = { explicit: 'success', package_json: 'primary', degraded: 'warning', sandbox: 'success', none: 'info' }
   return map[props.p.gate_level] || 'info'
+})
+
+// 修复循环结论胶囊：列表里先告诉人「这份补丁真跑过没有」，再决定要不要点进去看轨迹。
+// 读的是列表摘要字段（ProposalStore.summary 已带 agent_*），不额外拉整份提案。
+const agentText = computed(() => (props.p.agent_conclusion
+  ? agentLabel(props.p.agent_conclusion).split('（')[0] : ''))
+const agentType = computed(() => {
+  const tone = agentTone(props.p.agent_conclusion)
+  return tone === 'good' ? 'success' : tone === 'bad' ? 'danger' : 'warning'
+})
+const agentTitle = computed(() => {
+  const p = props.p
+  if (!p.agent_conclusion) return ''
+  return `${agentLabel(p.agent_conclusion)} · ${p.agent_rounds || 0} 轮 / `
+    + `${p.agent_attempts || 0} 次候选补丁`
+    + (p.sandbox_available ? '' : ' · 沙箱不可用')
 })
 </script>
 
@@ -56,6 +72,7 @@ const gateType = computed(() => {
     <div class="pcard-top">
       <el-tag :type="statusType" effect="light" round>{{ st.text }}</el-tag>
       <el-tag :type="gateType" effect="light" round>{{ gb.text }}</el-tag>
+      <el-tag v-if="agentText" :type="agentType" effect="plain" round :title="agentTitle">{{ agentText }}</el-tag>
       <span class="pcard-id">{{ p.defect_id || p.id || '' }}</span>
       <span class="pcard-time">{{ timeText }}</span>
     </div>

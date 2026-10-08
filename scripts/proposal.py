@@ -39,7 +39,7 @@ class ProposalStore(JsonRecordStore):
 
     # ---------- write ----------
     def create(self, defect: Dict, analysis: Dict, patch: Dict, gate: Dict,
-               verify: Optional[Dict] = None) -> Dict:
+               verify: Optional[Dict] = None, agent: Optional[Dict] = None) -> Dict:
         now = datetime.now().isoformat(timespec="seconds")
         if patch.get("ok"):
             status = STATUS_PENDING if gate.get("ok", True) else STATUS_GATE_FAILED
@@ -56,6 +56,9 @@ class ProposalStore(JsonRecordStore):
             "patch": patch,
             "gate": gate,
             "verify": verify or {},
+            # agentic 修复循环的完整轨迹：轮次、每次候选补丁的真实验证输出、收敛结论。
+            # 它是「这份补丁凭什么可信」的唯一凭据，审批界面必须能展开看到原文。
+            "agent": agent or {},
             "apply": {},
             "decision": {},
             "kb_path": "",
@@ -92,6 +95,7 @@ class ProposalStore(JsonRecordStore):
         added = sum((c.get("stats") or {}).get("added", 0) for c in changes)
         removed = sum((c.get("stats") or {}).get("removed", 0) for c in changes)
         gate = p.get("gate") or {}
+        agent = p.get("agent") or {}
         return {
             "id": p.get("id"),
             "status": p.get("status"),
@@ -113,4 +117,12 @@ class ProposalStore(JsonRecordStore):
             "warning_count": len(patch.get("warnings", []) or []),
             "error_count": len(patch.get("errors", []) or []),
             "sha": (p.get("apply") or {}).get("sha", ""),
+            # 修复循环的结论摘要：列表页不加载整份提案也能标出「真跑过 / 没跑过 / 认输」
+            "agent_conclusion": agent.get("conclusion", ""),
+            "agent_rounds": agent.get("rounds", 0),
+            "agent_attempts": len(agent.get("attempts") or []),
+            "agent_needs_human": bool(agent.get("needs_human")),
+            "agent_verified": bool(agent.get("conclusion")
+                                   in ("verified", "checks_pass")),
+            "sandbox_available": bool((agent.get("sandbox") or {}).get("available")),
         }

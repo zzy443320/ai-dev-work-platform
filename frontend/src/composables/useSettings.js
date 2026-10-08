@@ -29,6 +29,11 @@ const form = reactive({
   figma: { token: '' },
   pagelogin: { enabled: false, email: '', password: '' },
   gate: { commands_text: '', degraded: true },
+  agent: {
+    enabled: true, max_rounds: 8, deadline_seconds: 360, max_stall: 3,
+    sandbox: 'auto', sandbox_dir: '', link_node_modules: true,
+    per_command_timeout: 240, page_read: true, command_allow_text: '',
+  },
   playwright: { base_url: '', headless: true },
 })
 
@@ -122,6 +127,17 @@ async function loadSettings() {
     const gate = s.gate || {}
     form.gate.commands_text = gate.commands_text || ''
     form.gate.degraded = gate.degraded !== false
+    const ag = s.agent || {}
+    form.agent.enabled = ag.enabled !== false
+    form.agent.max_rounds = ag.max_rounds ?? 8
+    form.agent.deadline_seconds = ag.deadline_seconds ?? 360
+    form.agent.max_stall = ag.max_stall ?? 3
+    form.agent.sandbox = ag.sandbox || 'auto'
+    form.agent.sandbox_dir = ag.sandbox_dir || ''
+    form.agent.link_node_modules = ag.link_node_modules !== false
+    form.agent.per_command_timeout = ag.per_command_timeout ?? 240
+    form.agent.page_read = ag.page_read !== false
+    form.agent.command_allow_text = ag.command_allow_text || ''
     const pw = s.playwright || {}
     form.playwright.base_url = pw.base_url || ''
     form.playwright.headless = pw.headless !== false
@@ -328,6 +344,18 @@ async function saveSettings() {
     gate: {
       commands_text: form.gate.commands_text,
       degraded: form.gate.degraded,
+    },
+    agent: {
+      enabled: form.agent.enabled,
+      max_rounds: Number(form.agent.max_rounds) || 8,
+      deadline_seconds: Number(form.agent.deadline_seconds) || 360,
+      max_stall: Number(form.agent.max_stall) || 3,
+      sandbox: form.agent.sandbox,
+      sandbox_dir: String(form.agent.sandbox_dir || '').trim(),
+      link_node_modules: form.agent.link_node_modules,
+      per_command_timeout: Number(form.agent.per_command_timeout) || 240,
+      page_read: form.agent.page_read,
+      command_allow_text: form.agent.command_allow_text,
     },
     playwright: {
       base_url: form.playwright.base_url.trim(),

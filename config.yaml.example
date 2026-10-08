@@ -62,6 +62,23 @@ playwright:
   headless: true
   screenshot_dir: ./screenshots
 
+# Agentic 修复循环：读代码 → 出补丁 → 沙箱真跑验收 → 读报错 → 自我修复，直到跑绿或认输。
+# 关掉它（enabled: false）就退回旧的「一次成型」链路。
+agent:
+  enabled: true
+  max_rounds: 8          # 一次「交补丁 + 拿真实验证」算一轮
+  deadline_seconds: 360  # 墙钟预算；到点收口，绝不挂住整条流水线
+  max_stall: 3           # 同一验证结果连续 N 次 → 判定不收敛，认输转人工（不再烧 token）
+  sandbox: auto          # auto|worktree|copy —— 补丁只落进仓库外的临时副本
+  sandbox_dir: ""        # 留空用系统临时目录；C 盘紧张就指到别的盘
+  link_node_modules: true  # 把源仓 node_modules 链进沙箱，否则 type-check 类命令会因缺依赖假失败
+  per_command_timeout: 240
+  page_read: true        # 让模型看修复前截图 + console 报错（多模态视觉判读）
+  # 沙箱默认只放行构建/测试/检查类命令（npm/npx/node/tsc/eslint/vitest/git diff…），
+  # 删除、外发、发布、改 git 状态的命令一律拒绝。这里可以追加正则（谨慎）。
+  # command_allow:
+  #   - "^(pnpm|make)\\b"
+
 # Where proposals wait for a human. Nothing touches repo.path until you approve one.
 proposals:
   output_dir: ./proposals

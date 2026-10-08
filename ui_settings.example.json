@@ -44,6 +44,24 @@
     "email": "",
     "password": ""
   },
+  "gate": {
+    "_comment": "每行一条命令；留空则从目标仓库 package.json 里自动探测。没配可跑命令时，缺陷修复的 agentic 循环拿不到真实运行结果（提案会标成 unverified）。",
+    "commands_text": "npx vue-tsc --noEmit\nnpx eslint . --ext .js,.jsx,.ts,.tsx,.vue",
+    "degraded": true
+  },
+  "agent": {
+    "_comment": "缺陷修复闭环：改 → 在仓库外的临时沙箱里真跑上面的命令 → 读真实报错 → 再改。跑绿或认输即停。",
+    "enabled": true,
+    "max_rounds": 8,
+    "deadline_seconds": 360,
+    "max_stall": 3,
+    "sandbox": "auto",
+    "sandbox_dir": "",
+    "link_node_modules": true,
+    "per_command_timeout": 240,
+    "page_read": true,
+    "command_allow_text": ""
+  },
   "extensions": {
     "skills": [],
     "mcp": []

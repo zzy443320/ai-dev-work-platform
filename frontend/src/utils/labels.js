@@ -19,7 +19,45 @@ export const GATE_TEXT = {
   explicit: '显式命令',
   package_json: 'package.json 探测',
   degraded: '降级语法检查',
+  sandbox: '沙箱真跑',
   none: '未校验',
+}
+
+/**
+ * agentic 修复循环的结论 → 中文。这个字段回答的是「这份补丁凭什么可信」，
+ * 与提案 status（审批状态）是两回事：status 说你批没批，conclusion 说 AI 验没验。
+ */
+export const AGENT_TEXT = {
+  verified: '沙箱验证通过（基线红 → 补丁后绿）',
+  checks_pass: '验收命令全绿（基线本就全绿，缺陷本身仍需页面确认）',
+  unverified: '未经真实验证（仓库里没有可跑的验收命令）',
+  not_converged: '未收敛，已认输转人工',
+  budget_exhausted: '轮次/时间预算用尽，未跑绿',
+  no_patch: '模型未给出可用补丁',
+  sandbox_unavailable: '沙箱不可用，未取得任何运行结果',
+  agent_disabled: '未启用 agentic 循环（旧的一次成型链路）',
+  error: '修复循环异常',
+}
+
+/** 结论的可信度分级：good=真跑绿 / mid=有补丁但证据弱 / bad=没证据 */
+export const AGENT_TONE = {
+  verified: 'good',
+  checks_pass: 'good',
+  unverified: 'mid',
+  agent_disabled: 'mid',
+  not_converged: 'bad',
+  budget_exhausted: 'bad',
+  no_patch: 'bad',
+  sandbox_unavailable: 'bad',
+  error: 'bad',
+}
+
+export function agentLabel(c) {
+  return AGENT_TEXT[c] || c || ''
+}
+
+export function agentTone(c) {
+  return AGENT_TONE[c] || 'mid'
 }
 
 /** 知识卡片里 pending 写成 proposed，展示时归一 */

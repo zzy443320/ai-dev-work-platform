@@ -60,6 +60,14 @@ SETTINGS_FILE = Path(os.environ.get("SETTINGS_FILE") or (PROJECT_ROOT / "ui_sett
 
 DEFAULT_REPO = os.environ.get("REPO_PATH") or str(PROJECT_ROOT.parent / "test-mock-repo")
 
+
+def _env_flag(name: str, default: bool) -> bool:
+    """环境变量开关：AGENT_ENABLED=0 / false / no 都算关，没设就用默认值。"""
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return default
+    return raw.strip().lower() not in ("0", "false", "no", "off")
+
 DEFAULT_SETTINGS = {
     "repo": {"path": DEFAULT_REPO, "branch": "main"},
     "ai": {
@@ -114,6 +122,19 @@ DEFAULT_SETTINGS = {
         # one command per line, e.g. "npm run type-check"
         "commands_text": os.environ.get("GATE_COMMANDS", ""),
         "degraded": True,
+    },
+    "agent": {
+        # agentic 修复循环：读代码 → 出补丁 → 沙箱真跑 → 读报错 → 自我修复
+        "enabled": _env_flag("AGENT_ENABLED", True),
+        "max_rounds": 8,             # 一次「提交补丁 + 拿真实验证」算一轮
+        "deadline_seconds": 360,     # 墙钟预算，超时即收口，绝不挂住整条流水线
+        "max_stall": 3,              # 同一验证结果连续 N 次 → 判定不收敛，认输转人工
+        "sandbox": "auto",           # auto | worktree | copy
+        "sandbox_dir": os.environ.get("SANDBOX_DIR", ""),
+        "link_node_modules": True,   # 把源仓 node_modules 链接进沙箱，否则依赖型命令全是假失败
+        "per_command_timeout": 240,
+        "page_read": True,           # 让模型看修复前截图与 console 报错（多模态视觉判读）
+        "command_allow_text": "",    # 追加放行的命令正则，一行一条
     },
     "playwright": {
         "base_url": os.environ.get("APP_BASE_URL", "http://localhost:3000"),
@@ -190,6 +211,11 @@ def _settings_public(s: dict) -> dict:
         s["ai"].get("extra_body") or {}, ensure_ascii=False, indent=2)
     out["ai"]["resolved"] = _ai_preview(_resolve_ai(s))
     out["gate"]["commands"] = _gate_commands(s)
+    # 界面上的白名单文本框读这个键（保存时反解回 command_allow 列表）
+    allow = (s.get("agent") or {}).get("command_allow") or []
+    if isinstance(allow, str):
+        allow = [x.strip() for x in allow.splitlines() if x.strip()]
+    out.setdefault("agent", {})["command_allow_text"] = "\n".join(str(x) for x in allow)
     return out
 
 
@@ -328,6 +354,17 @@ def _page_auth(s: dict) -> dict:
     return auth
 
 
+def _agent_config(s: dict) -> dict:
+    """Settings 里的 `agent` 段 → 流水线能吃的 agent 配置（含命令白名单文本解析）。"""
+    raw = dict(s.get("agent") or {})
+    allow = [ln.strip() for ln in (raw.get("command_allow_text") or "").splitlines()
+             if ln.strip() and not ln.strip().startswith("#")]
+    raw.pop("command_allow_text", None)
+    if allow:
+        raw["command_allow"] = allow
+    return raw
+
+
 def _pipeline_config(s: dict) -> dict:
     gate_cfg = {"degraded": bool(s["gate"].get("degraded", True))}
     commands = _gate_commands(s)
@@ -338,6 +375,7 @@ def _pipeline_config(s: dict) -> dict:
         "ai": _resolve_ai(s),
         "repo": dict(s["repo"]),
         "gate": gate_cfg,
+        "agent": _agent_config(s),
         "playwright": {
             "base_url": s["playwright"]["base_url"],
             "headless": bool(s["playwright"].get("headless", True)),

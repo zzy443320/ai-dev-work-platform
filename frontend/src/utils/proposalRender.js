@@ -3,7 +3,7 @@
 // pmShots/pmConsole/pmBlocks）的逐行移植 —— 输出的 HTML 与旧版逐字节一致，
 // 既有用例与 style.css 的选择器都按它写的。
 import { escapeHtml } from './format.js'
-import { GATE_TEXT, STATUS_TEXT, looksNonFrontend, mdBold } from './labels.js'
+import { GATE_TEXT, STATUS_TEXT, agentLabel, agentTone, looksNonFrontend, mdBold } from './labels.js'
 import { relTime } from './format.js'
 
 /** 闸门徽标（HTML 串版）。旧版 app.js:79 —— labels.js 里那个是结构化版，供组件用 */
@@ -17,6 +17,7 @@ export function gateBadgeHtml(level, ok) {
 export const GATE_HINT = {
   explicit: 'explicit：逐条执行了你在「验收闸门」里写的命令，可信度最高。',
   package_json: 'package_json：命令是从目标仓库 package.json 的 scripts 自动挑的，请确认它确实是团队平时用来验收的那条。',
+  sandbox: 'sandbox：验收命令是**打在补丁上、在仓库外的临时沙箱里真跑**的（agentic 修复循环的产物）。这是目前可信度最高的一层——你的工作区没有被写入，跑的就是这份补丁。',
   degraded: 'degraded：仓库里没有任何可用的校验命令，只做了括号/引号闭合与 node --check。这只证明代码没被写坏，不证明类型、测试通过。',
   none: 'none：什么都没检查过，这份提案的正确性 100% 取决于你人工审查下面的 diff。',
 }
@@ -93,6 +94,85 @@ export function pmAnalysis(p) {
 function shortKbPath(p) {
   if (!p) return '(未配置)'
   return String(p).length > 50 ? '…' + String(p).slice(-47) : p
+}
+
+/**
+ * agentic 修复轨迹：这份补丁「是怎么来的、真跑过没有、跑成什么样」。
+ *
+ * 审批界面最该回答的问题是「凭什么信它」，而旧提案只能给出「模型说它改对了 + 一个和
+ * 补丁无关的静态闸门」。这里把每一轮的候选补丁、命令真实退出码与输出原文摆出来，
+ * 让人工复核时看的是证据而不是模型的作文。
+ */
+function pmAgent(p) {
+  const a = p.agent || {}
+  if (!a || !Object.keys(a).length) {
+    return '<h4>修复轨迹</h4><p class="muted">这份提案来自旧的一次成型链路'
+      + '（没有 agentic 循环记录）：补丁未经过任何真实运行验证，请重点人工审查 diff。</p>'
+  }
+  const tone = agentTone(a.conclusion)
+  let html = `<h4>修复轨迹 <span class="tag agent-${tone}">${escapeHtml(agentLabel(a.conclusion))}</span></h4>`
+  html += `<p class="muted">共 ${escapeHtml(String(a.rounds ?? 0))} 轮 / 提交 `
+    + `${escapeHtml(String((a.attempts || []).length))} 次候选补丁 / 耗时 `
+    + `${escapeHtml(String(a.elapsed_seconds ?? '—'))}s（预算 ${escapeHtml(String(a.max_rounds ?? '—'))} 轮）`
+    + (a.best_round ? ` · 最终采用第 ${escapeHtml(String(a.best_round))} 轮的补丁` : '') + '。</p>'
+  if (a.final_summary) html += kv('AI 的结论', a.final_summary)
+
+  const base = a.baseline || {}
+  if (Object.keys(base).length) {
+    const bad = Object.entries(base).filter(([, v]) => !v.ok)
+    html += `<div class="pm-line"><b>基线</b><span>未打补丁时：`
+      + Object.entries(base).map(([k, v]) => `${escapeHtml(k)} ${v.ok ? '✓' : '✗'}`).join('、')
+      + (bad.length ? `（${bad.length} 项本来就红，这些不是本次改动引入的）` : '')
+      + '</span></div>'
+  }
+  const sb = a.sandbox || {}
+  if (sb.mode) {
+    html += `<div class="pm-line"><b>沙箱</b><span>后端 ${escapeHtml(sb.mode)}`
+      + (sb.linked_dep_dirs && sb.linked_dep_dirs.length
+        ? ` · 已链接 ${sb.linked_dep_dirs.length} 个依赖目录` : '')
+      + (sb.available ? ' · 你的工作区未被写入' : ' · <b>不可用</b>')
+      + `</span></div>`
+    if ((sb.notes || []).length) {
+      html += `<ul class="note-list">${sb.notes.map((n) => `<li>${mdBold(n)}</li>`).join('')}</ul>`
+    }
+  }
+  const attempts = a.attempts || []
+  if (attempts.length) {
+    html += `<ul class="check-list">${attempts.map((at) => {
+      const v = at.verification || {}
+      const state = at.built ? ((v.all_green && !(v.regressions || []).length) ? 'ok' : 'bad') : 'skip'
+      const checks = at.checks || {}
+      const head = `<b>第 ${escapeHtml(String(at.round))} 轮</b>`
+        + `<span>${escapeHtml(String((at.files || []).length))} 个文件</span>`
+        + (at.built ? '' : '<span class="tag">补丁未能构建</span>')
+        + ((v.fixed || []).length ? `<span class="tag">转绿 ${escapeHtml(v.fixed.join(', '))}</span>` : '')
+        + ((v.regressions || []).length
+          ? `<span class="tag">⚠ 新弄坏 ${escapeHtml(v.regressions.join(', '))}</span>` : '')
+        + ((v.still_failing || []).length
+          ? `<span class="tag">仍失败 ${escapeHtml(v.still_failing.join(', '))}</span>` : '')
+      const body = Object.entries(checks).map(([k, c]) => `<div class="muted">`
+        + `${escapeHtml(k)} → ${c.ok ? '通过' : '失败（退出码 ' + escapeHtml(String(c.returncode)) + '）'}`
+        + `</div>${c.output ? `<pre class="check-out">${escapeHtml(c.output)}</pre>` : ''}`).join('')
+        || (at.errors || []).map((e) => `<div class="muted">${escapeHtml(e)}</div>`).join('')
+      return `<li class="${state}"><div class="check-head">${head}</div>`
+        + (at.summary ? `<div class="muted">${escapeHtml(at.summary)}</div>` : '')
+        + (body ? `<details class="fold"><summary>这一轮的真实输出</summary>${body}</details>` : '')
+        + '</li>'
+    }).join('')}</ul>`
+  }
+  const v = a.verification || {}
+  if ((v.regressions || []).length) {
+    html += `<div class="pm-line bad"><b>风险提示</b><span>最后一次验证相比基线新弄坏了：`
+      + `${escapeHtml(v.regressions.join('、'))}。这类补丁不要直接采纳。</span></div>`
+  }
+  if ((a.notes || []).length) {
+    html += `<ul class="note-list">${a.notes.map((n) => `<li>${mdBold(n)}</li>`).join('')}</ul>`
+  }
+  if (a.conclusion === 'agent_disabled') {
+    html += '<p class="muted">想让修复阶段真跑验证：在配置里开启 agent，并给仓库配上可执行的验收命令'
+      + '（如 npx vue-tsc --noEmit / npx vitest run）。</p>'
+  }
+  return html
 }
 
 function pmDiff(p) {
@@ -268,6 +348,7 @@ export function renderProposalSections(p) {
   return {
     meta: pmMeta(p),
     analysis: pmAnalysis(p),
+    agent: pmAgent(p),
     diff: pmDiff(p),
     gate: pmGate(p),
     issues: pmIssues(p),

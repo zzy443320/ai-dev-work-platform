@@ -1,15 +1,18 @@
 """End-to-end orchestrator.
 
-ONES → locate → SEARCH/REPLACE patch → gate → screenshot → **proposal awaiting
-approval**. This module never writes to the target repository. Writing happens only
-through `approve()`, which is what the Web UI's 采纳 button calls.
+ONES → locate（种子线索）→ **agentic 修复循环**（读代码 → 出补丁 → 沙箱真跑验收 →
+读报错 → 自我修复，见 scripts/fix_agent.py）→ SEARCH/REPLACE patch → 闸门（沙箱真实
+结果优先）→ **proposal awaiting approval**。This module never writes to the target
+repository. Writing happens only through `approve()`, which is what the Web UI's
+采纳 button calls.
 """
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from . import usage
 from .ai_model import AIModel
 from .analyzer import DefectAnalyzer
+from .fix_agent import FixAgent
 from .fixer import CodeFixer
 from .gate import resolve_commands, run_gate
 from .kb import KnowledgeBase
@@ -67,6 +70,10 @@ class AIDefectFixerPipeline:
         self.repo_path = repo_cfg.get("path") or ""
         self.branch = repo_cfg.get("branch", "") or ""
         self.gate_cfg = config.get("gate", {}) or {}
+        # agentic 修复循环的预算与沙箱策略（config `agent:` 段，全部有安全默认值）
+        self.agent_cfg = config.get("agent", {}) or {}
+        self.agent_enabled = str(self.agent_cfg.get("enabled", True)).strip().lower() \
+            not in ("false", "0", "no", "off")
 
         self.fixer: Optional[CodeFixer] = None
         if self.repo_path and Path(self.repo_path).is_dir():
@@ -122,6 +129,28 @@ class AIDefectFixerPipeline:
             "gate_commands": resolve_commands(self.repo_path, self.gate_cfg)
             if self.repo_path else [],
             "verifier_base_url": self.verifier.base_url,
+            "agent": self.agent_describe(),
+        }
+
+    def agent_describe(self) -> Dict:
+        """把 agentic 循环的口径摊给界面：开没开、预算多少、沙箱怎么建、能跑到什么信号。"""
+        enabled = bool(self.agent_enabled and self.analyzer is not None
+                       and str(self.ai.mode) != "mock")
+        probe = (FixAgent(self.repo_path, self.ai, agent_cfg=self.agent_cfg,
+                          gate_cfg=self.gate_cfg) if self.repo_path else None)
+        return {
+            "enabled": enabled,
+            "reason": ("" if enabled else
+                       ("Mock 模型不支持 agentic 循环" if str(self.ai.mode) == "mock"
+                        else ("未配置仓库路径" if not self.repo_path
+                              else "配置里已关闭 agent.enabled"))),
+            "max_rounds": probe.max_rounds if probe else 0,
+            "deadline_seconds": probe.deadline_seconds if probe else 0,
+            "max_stall": probe.max_stall if probe else 0,
+            "sandbox_mode": probe.sandbox_cfg.get("mode") if probe else "auto",
+            "verify_commands": [c["name"] for c in
+                                resolve_commands(self.repo_path, self.gate_cfg)]
+            if self.repo_path else [],
         }
 
     # ------------------------------------------------------------- run all
@@ -345,6 +374,9 @@ class AIDefectFixerPipeline:
             patch = _empty_patch("未配置仓库路径，未生成补丁")
             gate = {"level": "none", "ok": True, "checks": [],
                     "notes": ["无仓库，跳过验收"], "failed_checks": []}
+            verify = {"status": "skipped", "reason": "未配置仓库路径"}
+            agent: Dict = {"enabled": False, "conclusion": "agent_disabled",
+                           "needs_human": True, "notes": ["未配置仓库路径，未进入修复循环"]}
         else:
             _emit(emit, {"type": "stage", "stage": "locate", "status": "start",
                          "defect": did, "detail": "关键词抽取 + git grep 扫描…"})
@@ -364,17 +396,21 @@ class AIDefectFixerPipeline:
                 _emit(emit, {"type": "stage", "stage": "locate", "status": "done",
                              "defect": did,
                              "detail": f"定位到 {len(analysis.get('suspect_files') or [])} 个嫌疑文件：{files}"})
-            patch = self.fixer.preview(analysis["patch_text"]) if self.fixer else _empty_patch("无 fixer")
-            patch["patch_text"] = analysis["patch_text"]
+
+            # 修复前的页面现场**必须在动补丁之前抓**：它既进提案给人看，也是修复循环
+            # 唯一能拿到的运行时证据（循环本身只跑静态命令，不起 dev server）。
+            verify, page = self._page_evidence(did, defect, skip_verify, on_delta, emit)
+
+            agent = self._run_agent(defect, analysis, page, did, emit)
+            patch_text = agent.get("patch_text") or analysis.get("patch_text", "")
+            patch = self.fixer.preview(patch_text) if self.fixer else _empty_patch("无 fixer")
+            patch["patch_text"] = patch_text
             if patch["ok"]:
                 _emit(emit, {"type": "stage", "stage": "patch", "status": "done",
                              "defect": did,
                              "detail": f"补丁构建成功：{len(patch.get('blocks') or [])} 个块 → "
                                        f"{', '.join(patch.get('files') or [])}"})
-                gate = run_gate(
-                    self.repo_path, self.gate_cfg, patch["files"],
-                    patched_contents=patch.get("patched_contents"),
-                ).to_dict()
+                gate = self._gate_of(agent, patch)
             else:
                 reason = "；".join((patch.get("errors") or [])[:2]) or "补丁未构建成功"
                 _emit(emit, {"type": "stage", "stage": "patch", "status": "warn",
@@ -385,20 +421,9 @@ class AIDefectFixerPipeline:
                      "defect": did,
                      "detail": f"验收闸门 level={gate.get('level')} ok={gate.get('ok')}"})
 
-        if skip_verify or not self.repo_path:
-            verify = {"status": "skipped", "reason": "按请求跳过页面验证"}
-        else:
-            _emit(emit, {"type": "stage", "stage": "verify", "status": "start",
-                         "defect": did, "detail": "打开页面、复刻操作并截图…"})
-            verify = self.verifier.capture(did, "before", defect, on_delta=on_delta)
-            print(f"  [verify:before] {verify['status']} route={verify.get('route')}")
-            _emit(emit, {"type": "stage", "stage": "verify",
-                         "status": "done" if verify.get("status") in ("ok", "error_visible") else "warn",
-                         "defect": did,
-                         "detail": f"页面验证：{verify.get('status')}（route={verify.get('route')}）"})
-
         proposal = self.proposals.create(
-            defect=defect, analysis=analysis, patch=patch, gate=gate, verify=verify
+            defect=defect, analysis=analysis, patch=patch, gate=gate,
+            verify=verify, agent=agent,
         )
         proposal["preflight"] = self.preflight
         kb_path = self.kb.record(defect, analysis, proposal)
@@ -415,6 +440,8 @@ class AIDefectFixerPipeline:
                      "detail": f"知识卡片已沉淀：{kb_path}" if kb_path else "知识卡片未沉淀"})
 
         print(f"  [patch] ok={patch['ok']} files={patch['files']} gate={gate['level']}")
+        print(f"  [agent] conclusion={agent.get('conclusion')} "
+              f"rounds={agent.get('rounds')} attempts={len(agent.get('attempts') or [])}")
         for err in (patch["errors"] or [])[:3]:
             print(f"    ! {err}")
         print(f"  [proposal] {proposal['id']} status={proposal['status']}")
@@ -426,11 +453,122 @@ class AIDefectFixerPipeline:
             "patch": patch,
             "gate": gate,
             "verify": verify,
+            "agent": agent,
             "proposal": proposal,
             "proposal_id": proposal["id"],
-            "fix": {"status": proposal["status"]},
+            "fix": {"status": proposal["status"], "conclusion": agent.get("conclusion")},
             "kb_path": kb_path,
         }
+
+    # ------------------------------------------------- 页面现场（修复前证据）
+    def _page_evidence(self, did: str, defect: Dict, skip_verify: bool,
+                       on_delta, emit) -> Tuple[Dict, Dict]:
+        """截修复前的图，并折算成两份东西：提案里的 `verify` + 修复循环用的 `page` 种子。
+
+        截图判读（视觉信号）失败或没配模型时**如实留空**，不要让循环以为「页面没问题」——
+        没看过和看过没发现，是两回事。
+        """
+        if skip_verify or not self.repo_path:
+            return ({"status": "skipped", "reason": "按请求跳过页面验证"}, {})
+        _emit(emit, {"type": "stage", "stage": "verify", "status": "start",
+                     "defect": did, "detail": "打开页面、复刻操作并截图…"})
+        verify = self.verifier.capture(did, "before", defect, on_delta=on_delta)
+        print(f"  [verify:before] {verify['status']} route={verify.get('route')}")
+        _emit(emit, {"type": "stage", "stage": "verify",
+                     "status": "done" if verify.get("status") in ("ok", "error_visible") else "warn",
+                     "defect": did,
+                     "detail": f"页面验证：{verify.get('status')}（route={verify.get('route')}）"})
+        if str(self.agent_cfg.get("page_read", True)).strip().lower() in ("false", "0", "no"):
+            return verify, {}
+        verdict = ""
+        if verify.get("screenshot"):
+            _emit(emit, {"type": "stage", "stage": "verify", "status": "start",
+                         "defect": did, "detail": "让模型看这张修复前截图，判读现象是否出现…"})
+            verdict = self.verifier.describe(verify, defect, on_delta=on_delta)
+            if verdict:
+                _emit(emit, {"type": "stage", "stage": "verify", "status": "done",
+                             "defect": did, "detail": "截图判读完成：" + verdict[:120]})
+        verify["ai_verdict"] = verdict
+        page = {
+            "route": verify.get("route") or "",
+            "status": verify.get("status") or "",
+            "console_errors": (verify.get("console_errors") or [])
+            + (verify.get("page_errors") or []),
+            "ai_verdict": verdict,
+        }
+        if not page["console_errors"] and page["status"] in ("unreachable", "error", "blank"):
+            page["ai_verdict"] = (page["ai_verdict"]
+                                  + f"\n（注意：页面验证状态为 {page['status']}，"
+                                    "没有可用的运行时证据）").strip()
+        return verify, page
+
+    # ------------------------------------------------------- agentic 修复循环
+    def _run_agent(self, defect: Dict, analysis: Dict, page: Dict, did: str,
+                   emit) -> Dict:
+        """跑一次修复循环。任何意外都退回到「一次成型」的结果，而不是让整条流水线红。"""
+        if not self.agent_enabled or str(self.ai.mode) == "mock":
+            return {"enabled": False, "conclusion": "agent_disabled",
+                    "needs_human": False, "notes": [], "attempts": []}
+
+        def _emit_agent(evt: Dict) -> None:
+            _emit(emit, {**evt, "defect": did})
+
+        _emit(emit, {"type": "stage", "stage": "agent", "status": "start",
+                     "defect": did,
+                     "detail": "进入 agentic 修复循环：自己查代码、改、在沙箱里真跑验收…"})
+        agent = FixAgent(self.repo_path, self.ai, agent_cfg=self.agent_cfg,
+                         gate_cfg=self.gate_cfg, emit=_emit_agent)
+        try:
+            with usage.step("fix_agent"):
+                result = agent.run(defect, seed={"analysis": analysis, "page": page,
+                                                 "description": defect.get("description")
+                                                 or defect.get("desc") or ""})
+        except Exception as e:
+            print(f"  [agent] 异常，退回一次成型结果: {e}")
+            _emit(emit, {"type": "stage", "stage": "agent", "status": "fail",
+                         "defect": did, "detail": f"修复循环异常：{e}"})
+            return {"enabled": True, "conclusion": "error", "needs_human": True,
+                    "notes": [f"修复循环异常：{e}"], "attempts": [], "trace": []}
+        _emit(emit, {"type": "stage", "stage": "agent", "status": "done", "defect": did,
+                     "detail": f"修复循环结束：{result.get('conclusion')}"
+                               f"（{result.get('rounds')} 轮 / "
+                               f"{len(result.get('attempts') or [])} 次补丁尝试 / "
+                               f"{result.get('elapsed_seconds')}s）"})
+        return result
+
+    # ------------------------------------------------------------ 闸门折算
+    def _gate_of(self, agent: Dict, patch: Dict) -> Dict:
+        """提案的闸门结论：**优先用沙箱里真跑过的结果**。
+
+        旧行为有个说不出口的坑：layer-1 的 `gate.commands` 是拿 `cwd=目标仓库` 跑的，
+        而补丁此时只在内存里——所以「闸门通过」其实只证明了「仓库现状通过」，与这份
+        补丁改了什么无关。修复循环已经把同一批命令打在补丁上跑过了，没有理由继续用那个
+        与补丁无关的结论。拿不到沙箱结果时（循环关闭 / 没跑成）才退回旧路径。
+        """
+        best = None
+        for a in (agent.get("attempts") or []):
+            if not a.get("built"):
+                continue
+            if best is None or int(a.get("rank", 0)) > int(best.get("rank", 0)):
+                best = a
+        if best and int(best.get("rank", 0)) >= 3 and (best.get("checks") or {}):
+            checks = [{"name": n, "cmd": c.get("cmd", ""), "kind": "command",
+                       "returncode": c.get("returncode", -1), "ok": bool(c.get("ok")),
+                       "skipped": False, "seconds": c.get("seconds", 0),
+                       "output_tail": (c.get("output") or "")[-3000:]}
+                      for n, c in best["checks"].items()]
+            failed = [c["name"] for c in checks if not c["ok"]]
+            notes = [f"验收命令在**沙箱里打在补丁上**真跑过（第 {best.get('round')} 轮）；"
+                     f"循环结论 {agent.get('conclusion')}"]
+            notes.extend(agent.get("notes") or [])
+            if not failed:
+                notes.append("沙箱未复现工作区改动：补丁只落在临时副本里，你的仓库未被写入。")
+            return {"level": "sandbox", "ok": not failed, "checks": checks,
+                    "notes": notes, "failed_checks": failed,
+                    "verification": best.get("verification") or {}}
+        # 循环没跑出可用结论 → 沿用旧闸门（含降级语法检查），至少不比原来差
+        return run_gate(self.repo_path, self.gate_cfg, patch["files"],
+                        patched_contents=patch.get("patched_contents")).to_dict()
 
     def _analysis_without_repo(self, defect: Dict) -> Dict:
         return {
@@ -464,17 +602,21 @@ class AIDefectFixerPipeline:
         patch = _empty_patch(f"处理异常: {error}")
         gate = {"level": "none", "ok": False, "checks": [],
                 "notes": [f"异常: {error}"], "failed_checks": []}
+        agent = {"enabled": bool(self.agent_enabled), "conclusion": "error",
+                 "needs_human": True, "notes": [f"处理异常: {error}"], "attempts": []}
         proposal = self.proposals.create(defect, analysis, patch, gate,
-                                         {"status": "skipped", "error": error})
+                                         {"status": "skipped", "error": error},
+                                         agent=agent)
         return {
             "defect": defect,
             "analysis": analysis,
             "patch": patch,
             "gate": gate,
+            "agent": agent,
             "verify": {"status": "skipped", "error": error},
             "proposal": proposal,
             "proposal_id": proposal["id"],
-            "fix": {"status": "failed", "error": error},
+            "fix": {"status": "failed", "error": error, "conclusion": "error"},
             "kb_path": "",
         }
 

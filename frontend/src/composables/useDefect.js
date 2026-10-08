@@ -520,8 +520,28 @@ function gbadge(level, ok) {
   const lv = level || 'none'
   const failed = ok === false ? ' · 未通过' : ''
   const text = ({ explicit: '显式命令', package_json: 'package.json 探测',
-    degraded: '降级语法检查', none: '未校验' })[lv] || lv
+    degraded: '降级语法检查', sandbox: '沙箱真跑', none: '未校验' })[lv] || lv
   return `<span class="gate-badge gate-${esc(lv)}">闸门 ${esc(text)}${esc(failed)}</span>`
+}
+
+/** 修复循环结论胶囊：运行结果里就能看出「沙箱真跑绿」还是「一次成型的猜测」 */
+const AGENT_BADGE = {
+  verified: ['good', '沙箱已验证'],
+  checks_pass: ['good', '验收全绿'],
+  unverified: ['mid', '未经验证'],
+  agent_disabled: ['mid', '一次成型'],
+  not_converged: ['bad', '未收敛'],
+  budget_exhausted: ['bad', '预算用尽'],
+  no_patch: ['bad', '无补丁'],
+  sandbox_unavailable: ['bad', '沙箱不可用'],
+  error: ['bad', '循环异常'],
+}
+
+function abadge(x) {
+  const hit = AGENT_BADGE[x.agent_conclusion]
+  if (!hit) return ''
+  const detail = ` · ${x.agent_rounds || 0} 轮 / ${x.agent_attempts || 0} 次补丁尝试`
+  return `<span class="tag agent-${hit[0]}">修复 ${esc(hit[1])}${esc(detail)}</span>`
 }
 
 /** 旧版 app.js:1645 `renderRunResults` */
@@ -537,11 +557,15 @@ export function renderRunResults(data) {
     const warns = (x.warnings || []).map((w) => `<li>${esc(w)}</li>`).join('')
     return '<div class="run-row">'
       + `<div class="run-row-head"><b>${esc(x.id || '(无工单 ID)')}</b>`
-      + `${badge(x.status)}${gbadge(x.gate_level, x.gate_ok)}`
+      + `${badge(x.status)}${gbadge(x.gate_level, x.gate_ok)}${abadge(x)}`
       + `<span class="muted">${esc(x.category || '—')}</span>`
       + (x.proposal_id ? `<a class="link" data-proposal="${esc(x.proposal_id)}">查看提案</a>` : '')
       + '</div>'
       + `<div class="run-files">${files}</div>`
+      + (x.agent_needs_human
+        ? '<div class="run-warn">修复循环没能给出可信证据（见「查看提案 → 修复轨迹」里每一轮的真实报错）。'
+          + '这条提案的补丁请当作「AI 的下一版尝试」来审，不要当成已验证的修复。</div>'
+        : '')
       + (x.status === 'invalid'
         ? (looksNonFrontendLoose(x)
           ? '<div class="run-warn">模型判断根因不在前端仓库（见下方根因与证据链），未生成前端补丁——建议转后端/接口排查，或在工单补充后端日志后重跑。</div>'

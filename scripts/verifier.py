@@ -31,6 +31,9 @@ _SKIP_ROUTES = ("/api/", "/static/", "/node_modules/", "/src/", "/dist/")
 
 _PLAN_SYSTEM = "你是前端 E2E 测试工程师，把缺陷复现步骤转成可执行的 Playwright 动作序列。只输出 JSON。"
 
+_READ_SYSTEM = ("你是前端缺陷排查工程师，只看图与给定报错说话。判读页面截图时必须引用图里"
+                "真实可见的内容；图里看不到的就明确说看不到，**绝不按工单文字编造页面内容**。")
+
 # 白屏判定：body.innerText 几乎为空。SPA 路由打不开时 console 往往是安静的，
 # 文本量比 console 更可靠地回答「页面真的渲染出来了吗」。
 _BLANK_PROBE_JS = (
@@ -334,6 +337,53 @@ class ScreenshotVerifier:
         errors = console_errors + page_errors
         return {**base, "status": "ok" if not errors else "error_visible",
                 "screenshot": str(path)}
+
+    def describe(self, verify: Dict, defect: Dict, on_delta=None) -> str:
+        """让人「看」一眼修复前的截图：截图 + 控制台报错 → 一段可读判读。
+
+        agentic 修复循环拿不到浏览器运行时（补丁只落在沙箱里，不会起 dev server），
+        这张截图与 console 报错就是它能拿到的唯一现场证据。没有它，模型只能凭工单文字
+        猜现象；有了它，至少「报错到底还在不在」是个有图有据的判断。
+        返回空串表示没做判读（没截图 / 没配模型 / Mock），调用方据此如实说明。
+        """
+        path = str(verify.get("screenshot") or "")
+        if not path or not Path(path).is_file() or self.ai is None:
+            return ""
+        cfg = getattr(self.ai, "cfg", None)
+        if cfg is None or getattr(cfg, "is_mock", True):
+            return ""
+        try:
+            data = Path(path).read_bytes()
+        except OSError:
+            return ""
+        if not data or len(data) > 4_000_000:
+            return ""     # 过大的图对判读没好处，只浪费 token
+        import base64
+
+        image = {"mime": "image/png",
+                 "data_uri": "data:image/png;base64," + base64.b64encode(data).decode()}
+        errors = (verify.get("console_errors") or []) + (verify.get("page_errors") or [])
+        prompt = (
+            "下面这张截图是**修复前**在真实页面上按工单操作复刻之后拍的。\n"
+            f"缺陷标题：{str(defect.get('title') or '')[:200]}\n"
+            f"路由：{verify.get('route') or '-'}  页面标题：{verify.get('page_title') or '-'}\n"
+            + ("控制台/页面报错：\n" + "\n".join(f"· {str(e)[:200]}" for e in errors[:15])
+               if errors else "控制台与页面均未捕获到报错。\n")
+            + "\n请只回答三件事，用中文，尽量短：\n"
+              "1. 工单描述的现象在图里**是否出现**（出现 / 未出现 / 看不出来），证据是图里哪个区域；\n"
+              "2. 图里可见的错误提示、空白区域、错位、异常数据分别是什么；\n"
+              "3. 修复之后应当看到什么。\n"
+              "**看不到就说看不出来，绝不要按工单文字编造图里内容。**"
+        )
+        try:
+            with usage.step("page_read"):
+                res = self.ai.complete_text(prompt, system=_READ_SYSTEM, max_tokens=1500,
+                                            images=[image])
+        except Exception as e:
+            return f"（截图判读失败：{e}）"
+        if res.get("error"):
+            return f"（截图判读失败：{res['error']}）"
+        return str(res.get("text") or "").strip()
 
     def compare(self, before: Dict, after: Dict) -> Dict:
         b, a = before.get("screenshot", ""), after.get("screenshot", "")

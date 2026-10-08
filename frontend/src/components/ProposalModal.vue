@@ -55,6 +55,7 @@ const {
         <b>后端拒绝了这个操作：</b>{{ pendingError }}
       </div>
       <section class="pm-sec" id="pm-analysis" v-html="(sections && sections.analysis) || ''" />
+      <section class="pm-sec" id="pm-agent" v-html="(sections && sections.agent) || ''" />
       <section class="pm-sec" id="pm-diff" v-html="(sections && sections.diff) || ''" />
       <section class="pm-sec" id="pm-blocks" v-html="(sections && sections.blocks) || ''" />
       <section class="pm-sec" id="pm-gate" v-html="(sections && sections.gate) || ''" />

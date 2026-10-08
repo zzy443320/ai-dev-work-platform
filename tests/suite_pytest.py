@@ -38,6 +38,7 @@ SECURITY = [
 # 流水线核心行为
 PIPELINE = [
     "test_safety.py",             # 采纳/撤销/闸门/漂移 六个场景
+    "check_fix_agent.py",         # agentic 修复循环：沙箱隔离、红→绿、不收敛、预算、白名单
     "check_artifact_diff.py",
     "check_patch_fallback.py",
     "check_kb_patterns.py",

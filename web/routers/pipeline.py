@@ -40,6 +40,11 @@ def _summarize_results(pipeline, results: list) -> list:
             "files": patch.get("files", []),
             "gate_level": (prop.get("gate") or {}).get("level"),
             "gate_ok": (prop.get("gate") or {}).get("ok"),
+            # agentic 修复循环的结论：运行结果表里就要能看出「沙箱真跑过」还是「没跑过」
+            "agent_conclusion": (prop.get("agent") or {}).get("conclusion", ""),
+            "agent_rounds": (prop.get("agent") or {}).get("rounds", 0),
+            "agent_attempts": len((prop.get("agent") or {}).get("attempts") or []),
+            "agent_needs_human": bool((prop.get("agent") or {}).get("needs_human")),
             "errors": (patch.get("errors") or [])[:4],
             "warnings": (patch.get("warnings") or [])[:4],
             "verify_status": (r.get("verify") or {}).get("status"),

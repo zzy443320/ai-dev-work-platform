@@ -197,6 +197,67 @@ function openAiModal() {
           <div class="gate-preview" id="gate-preview" v-html="gatePreviewHtml"></div>
         </div>
 
+        <div class="settings-group" id="cfg-agent-group" style="--span:5">
+          <div class="group-head">
+            <span class="group-title">Agentic 修复</span>
+            <span class="group-tag">缺陷流水线</span>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="cfg-agent-enabled" v-model="form.agent.enabled" />
+            <span class="track"></span><span class="switch-label">修复阶段走「改 → 沙箱真跑 → 读报错 → 再改」的闭环</span>
+          </label>
+          <label class="field">
+            <span>最大轮次（一次「交补丁 + 拿真实验证」算一轮）</span>
+            <el-input-number id="cfg-agent-rounds" v-model="form.agent.max_rounds"
+                             :min="1" :max="24" controls-position="right" />
+          </label>
+          <label class="field">
+            <span>墙钟预算（秒）</span>
+            <el-input-number id="cfg-agent-deadline" v-model="form.agent.deadline_seconds"
+                             :min="60" :max="1800" :step="30" controls-position="right" />
+          </label>
+          <label class="field">
+            <span>连续几次同样的验证结果就认输转人工</span>
+            <el-input-number id="cfg-agent-stall" v-model="form.agent.max_stall"
+                             :min="1" :max="8" controls-position="right" />
+          </label>
+          <label class="field">
+            <span>沙箱后端</span>
+            <el-select id="cfg-agent-sandbox" v-model="form.agent.sandbox">
+              <el-option label="auto（有 git 用 worktree，否则拷贝）" value="auto" />
+              <el-option label="worktree（git 临时工作树）" value="worktree" />
+              <el-option label="copy（逐文件拷贝）" value="copy" />
+            </el-select>
+          </label>
+          <label class="field">
+            <span>沙箱根目录（留空用系统临时目录）</span>
+            <el-input id="cfg-agent-sandbox-dir" v-model="form.agent.sandbox_dir"
+                      placeholder="例如 D:/tmp/ones-sandbox" />
+          </label>
+          <label class="switch">
+            <input type="checkbox" id="cfg-agent-nm" v-model="form.agent.link_node_modules" />
+            <span class="track"></span><span class="switch-label">把源仓库 node_modules 链进沙箱（关掉会有大片假失败）</span>
+          </label>
+          <label class="switch">
+            <input type="checkbox" id="cfg-agent-pageread" v-model="form.agent.page_read" />
+            <span class="track"></span><span class="switch-label">让模型看修复前截图与 console 报错（多模态判读）</span>
+          </label>
+          <label class="field">
+            <span>单条命令超时（秒）</span>
+            <el-input-number id="cfg-agent-cmd-timeout" v-model="form.agent.per_command_timeout"
+                             :min="15" :max="1800" :step="15" controls-position="right" />
+          </label>
+          <label class="field">
+            <span>额外放行的命令正则（一行一条，默认已含 npm/npx/node/tsc/eslint/vitest/git diff）</span>
+            <el-input id="cfg-agent-allow" type="textarea" :rows="2"
+                      v-model="form.agent.command_allow_text"
+                      placeholder="^(pnpm|make)\b" />
+          </label>
+          <div class="info-note">补丁只写进<strong>仓库外的临时副本</strong>，你的工作区在修复阶段不会被写入；
+            跑完即回收。要让「验证通过」这件事真正成立，上面「验收闸门」里必须有可执行的命令
+            （云枢这类没配脚本的仓库，填 <code>npx vue-tsc --noEmit</code> / <code>npx vitest run</code> 就能跑起来）。</div>
+        </div>
+
         <div class="settings-group" style="--span:12">
           <div class="group-head">
             <span class="group-title">页面验证</span>

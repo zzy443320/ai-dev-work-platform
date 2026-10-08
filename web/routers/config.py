@@ -11,7 +11,9 @@ from starlette.concurrency import run_in_threadpool
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 
-from web.state import _as_bool, _body_json, _clean_mcp, _clean_skill, _extensions, _load_settings, _merge_ai, _save_settings, _settings_public
+from web.state import (_as_bool, _as_num, _body_json, _clean_mcp, _clean_skill,
+                       _extensions, _load_settings, _merge_ai, _save_settings,
+                       _settings_public)
 from scripts import mcp_client  # noqa: E402
 from scripts.ai_model import AIModel  # noqa: E402
 from scripts.ai_providers import AIError  # noqa: E402
@@ -80,6 +82,31 @@ async def update_settings(req: Request):
         s["playwright"]["base_url"] = str(pw["base_url"]).strip().rstrip("/")
     if "headless" in pw:
         s["playwright"]["headless"] = bool(pw["headless"])
+
+    ag = body.get("agent") or {}
+    if ag:
+        cur = s.setdefault("agent", {})
+        if "enabled" in ag:
+            cur["enabled"] = _as_bool(ag["enabled"], True)
+        if "page_read" in ag:
+            cur["page_read"] = _as_bool(ag["page_read"], True)
+        if "link_node_modules" in ag:
+            cur["link_node_modules"] = _as_bool(ag["link_node_modules"], True)
+        for key, lo, hi in (("max_rounds", 1, 24), ("deadline_seconds", 60, 1800),
+                            ("max_stall", 1, 8), ("per_command_timeout", 15, 1800)):
+            if key in ag:
+                n = _as_num(ag[key], None)
+                if n is not None:
+                    cur[key] = int(min(max(n, lo), hi))
+        if "sandbox" in ag:
+            mode = str(ag["sandbox"]).strip().lower()
+            cur["sandbox"] = mode if mode in ("auto", "copy", "worktree") else "auto"
+        if "sandbox_dir" in ag:
+            cur["sandbox_dir"] = str(ag["sandbox_dir"]).strip().strip('"')
+        if "command_allow_text" in ag:
+            cur["command_allow"] = [ln.strip() for ln in
+                                    str(ag["command_allow_text"]).splitlines()
+                                    if ln.strip() and not ln.strip().startswith("#")]
 
     _save_settings(s)
     return _settings_public(s)
