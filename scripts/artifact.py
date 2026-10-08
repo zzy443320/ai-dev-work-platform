@@ -156,18 +156,21 @@ def _ctx_summary(ctx: Dict) -> Dict:
 
 
 def safe_rel_path(repo_root: Path, rel: str) -> Optional[Path]:
-    """Resolve rel inside repo_root; None if it escapes the repo."""
-    rel = (rel or "").strip().replace("\\", "/").lstrip("/")
-    if not rel or any(p == ".." for p in rel.split("/")):
-        return None
-    if any(seg.endswith(":") for seg in rel.split("/")[:1]):
-        return None
-    target = (repo_root / rel).resolve()
+    """解析仓库内相对路径，越界返回 None。
+
+    实现已统一到一个地方（scripts/repo_paths.resolve_in_repo）。这里只是保留
+    「返回 Optional」的旧签名给 chat/team_run 的读路径用。
+
+    顺便修掉这份实现原先的一个洞：它先 `lstrip("/")` 再判断，于是
+    `/etc/passwd` 被洗成 `etc/passwd` 当成仓内路径放行；而 Windows 上
+    `Path("/etc/passwd").is_absolute()` 又恰好是 False（被当成当前盘根的相对路径），
+    所以那一层也拦不住。resolve_in_repo 现在在任何剥离之前先拒前导 `/`。
+    """
+    from .repo_paths import UnsafePath, resolve_in_repo
     try:
-        target.relative_to(repo_root.resolve())
-    except ValueError:
+        return resolve_in_repo(repo_root, rel)
+    except UnsafePath:
         return None
-    return target
 
 
 def diff_lines(old_text: str, new_text: str) -> Tuple[List[Dict[str, str]], int, int]:
@@ -295,6 +298,8 @@ class ArtifactApplier:
         return new_text, ""
 
     def apply(self, artifact: Dict, force_gate: bool = False) -> Dict:
+        from .apply_ops import write_and_gate
+
         files = artifact.get("files") or []
         if not files:
             return {"ok": False, "status": "failed", "error": "产出物里没有可写入的文件"}
@@ -304,64 +309,41 @@ class ArtifactApplier:
             return {"ok": False, "status": "failed",
                     "error": "仓库预检未通过: " + "; ".join(pre["problems"]), "preflight": pre}
 
-        written: List[Dict[str, str]] = []
-        try:
-            for f in files:
-                target = safe_rel_path(self.repo_path, f.get("path", ""))
-                if target is None:
-                    raise ValueError(f"非法文件路径: {f.get('path', '')}（必须相对仓库根且不能越界）")
-                content, err = self._file_content(f, target)
-                if err:
-                    self._restore(written)
-                    return {"ok": False, "status": "failed",
-                            "error": f"文件内容不可用，已回滚: {err}"}
-                backup = target.read_text(encoding="utf-8") if target.exists() else ""
-                target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_text(content, encoding="utf-8")
-                written.append({"file": str(f.get("path", "")), "backup": backup})
-        except Exception as e:
-            self._restore(written)
-            return {"ok": False, "status": "failed", "error": f"写入失败，已回滚: {e}"}
+        # 先把每个文件的最终内容算出来（edit 条目要读盘做替换），此阶段不落盘、
+        # 不会留下半套改动；再整体交给与提案采纳共用的落盘内核。
+        staged = []
+        for f in files:
+            rel = str(f.get("path", ""))
+            target = safe_rel_path(self.repo_path, rel)
+            if target is None:
+                return self._pre_write_error(
+                    f"非法文件路径: {rel}（必须相对仓库根且不能越界）", pre)
+            content, err = self._file_content(f, target)
+            if err:
+                return self._pre_write_error(f"文件内容不可用: {err}", pre)
+            staged.append((rel, content))
 
-        from .gate import run_gate
-        recheck = run_gate(str(self.repo_path), self.gate_cfg,
-                           [f.get("path", "") for f in files], patched_contents=None)
-        if not recheck.ok and not force_gate:
-            self._restore(written)
-            return {"ok": False, "status": "apply_failed",
-                    "error": "写入后验收未通过，已回滚文件内容（工作区未改动）",
-                    "gate": recheck.to_dict()}
+        result = write_and_gate(self.repo_path, staged, gate_cfg=self.gate_cfg,
+                                force_gate=force_gate,
+                                gate_files=[str(f.get("path", "")) for f in files],
+                                preflight=pre)
+        return result
 
-        return {"ok": True, "status": "ok", "files": [w["file"] for w in written],
-                "gate": recheck.to_dict(), "level": recheck.level, "forced": bool(force_gate),
-                "committed": False,
-                "backups": {w["file"]: w["backup"] for w in written}}
-
-    def _restore(self, written: List[Dict[str, str]]) -> None:
-        for item in written:
-            try:
-                target = safe_rel_path(self.repo_path, item["file"])
-                if target is None:
-                    continue
-                if item["backup"]:
-                    target.write_text(item["backup"], encoding="utf-8")
-                elif target.exists():
-                    target.unlink()
-            except Exception:
-                pass
+    def _pre_write_error(self, msg: str, pre: Dict) -> Dict:
+        """算内容/校验路径阶段的失败：此时一个字节都没写，工作区是干净的。
+        别套用「已回滚」那种措辞——它会让用户去核对根本不存在的变化。"""
+        return {"ok": False, "status": "failed", "preflight": pre,
+                "error": f"{msg}（未写入任何文件）"}
 
     def undo(self, artifact: Dict) -> Dict:
+        from .apply_ops import restore_written
+
         backups = (artifact.get("apply") or {}).get("backups") or {}
         if not backups:
             return {"ok": False, "error": "没有找到采纳时的备份，无法撤销"}
-        restored = []
-        for rel, content in backups.items():
-            target = safe_rel_path(self.repo_path, rel)
-            if target is None:
-                continue
-            if content:
-                target.write_text(content, encoding="utf-8")
-            elif target.exists():
-                target.unlink()
-            restored.append(rel)
-        return {"ok": True, "restored": restored}
+        written = [{"file": rel, "backup": content} for rel, content in backups.items()]
+        unrestored = restore_written(self.repo_path, written)
+        if unrestored:
+            return {"ok": False, "error": f"以下文件恢复失败，请手工核对：{', '.join(unrestored)}",
+                    "unrestored": unrestored}
+        return {"ok": True, "restored": [w["file"] for w in written]}
