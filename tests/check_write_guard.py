@@ -155,10 +155,47 @@ def restore_reports_failures():
           (repo / "src" / "ProcessList.tsx").read_text(encoding="utf-8") == "// restored\n")
 
 
+def http_wiring_is_live():
+    print("\n[5] 写盘面在 HTTP 上确实可达（server.py 模块化拆分后的装配验证）")
+    # 单元测试过 store 层不够：approve/undo 挪进 web/routers/review.py 之后，如果
+    # include_router 漏了或路径写错，只有真发请求才会暴露（OpenAPI 表能看出路径，
+    # 但看不出中间件/依赖是否照常工作）。
+    import json
+    import urllib.error
+    import urllib.request
+
+    from temp_server import serve
+    with serve() as srv:
+        def call(path, method="GET", body=None):
+            req = urllib.request.Request(srv.base + path, method=method,
+                                         data=json.dumps(body or {}).encode() if method == "POST" else None,
+                                         headers={"Content-Type": "application/json"})
+            try:
+                with urllib.request.urlopen(req, timeout=20) as r:
+                    return r.status, json.loads(r.read().decode("utf-8"))
+            except urllib.error.HTTPError as e:
+                return e.code, json.loads(e.read().decode("utf-8") or "{}")
+
+        code, data = call("/api/proposals")
+        check("GET /api/proposals 可达", code == 200 and isinstance(data, list),
+              f"code={code}")
+        code, data = call("/api/proposals/nope-404/approve", "POST", {})
+        check("POST approve 路由在位（不存在的提案给出业务错误而非 404 路由缺失）",
+              code in (200, 409) and "error" in data, f"code={code} {str(data)[:80]}")
+        code, data = call("/api/proposals/nope-404/undo", "POST")
+        check("POST undo 路由在位", code in (200, 409) and "不存在" in str(data),
+              f"code={code} {str(data)[:80]}")
+        code, data = call("/api/artifacts")
+        check("GET /api/artifacts 可达", code == 200 and isinstance(data, list), f"code={code}")
+        code, data = call("/api/artifacts/nope/approve", "POST", {})
+        check("产出物 approve 路由在位", code in (200, 404, 409), f"code={code}")
+
+
 if __name__ == "__main__":
     unit_resolve()
     undo_checks_preflight()
     escape_patch_writes_nothing_outside()
     restore_reports_failures()
+    http_wiring_is_live()
     print("\n" + ("ALL PASS" if not FAIL else f"{len(FAIL)} FAILED: {FAIL}"))
     sys.exit(1 if FAIL else 0)

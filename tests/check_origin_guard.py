@@ -106,7 +106,8 @@ with temp_server.serve() as srv:
     check("localhost 冒充 127.0.0.1 → 拒", code == 403, f"code={code}")
 
 # ---- 6. 端口归一化的单元测试（默认端口省略不影响比对） ----
-from web.server import _origin_tuple  # noqa: E402
+# 闸门实现随 server.py 的模块化拆分搬到了 web/urls.py（这里同时是对「搬对了」的校验）
+from web.urls import _origin_tuple  # noqa: E402
 
 check("默认端口归一：http://h:80 → http://h", _origin_tuple("http://127.0.0.1:80")
       == "http://127.0.0.1", _origin_tuple("http://127.0.0.1:80"))

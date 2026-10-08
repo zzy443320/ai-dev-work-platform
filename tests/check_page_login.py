@@ -80,31 +80,31 @@ check("绝对路径直用", sp._abs("/login") == "http://localhost:9100/login")
 check("完整 URL 不改", sp._abs("http://x.com/login") == "http://x.com/login")
 
 print("== 8. web 层：_page_auth 只在启用且填全时才给凭据 ==")
-from web import server  # noqa: E402
+from web import state  # noqa: E402  （settings 助手随模块化拆分搬到 web/state.py）
 
-s = server._deep_defaults()
-a = server._page_auth(s)
+s = state._deep_defaults()
+a = state._page_auth(s)
 check("默认不带凭据（只有 storage_state）", "password" not in a and "storage_state" in a, str(a))
 s["pagelogin"].update({"enabled": True, "email": "u", "password": "p"})
-a = server._page_auth(s)
+a = state._page_auth(s)
 check("启用后注入 email/password", a.get("email") == "u" and a.get("password") == "p", str(a))
 s["pagelogin"]["enabled"] = False
-check("关闭开关即撤回凭据", "password" not in server._page_auth(s))
+check("关闭开关即撤回凭据", "password" not in state._page_auth(s))
 s["pagelogin"]["enabled"] = True
 s["pagelogin"]["password"] = ""
-check("密码为空不算启用", "password" not in server._page_auth(s))
+check("密码为空不算启用", "password" not in state._page_auth(s))
 check("storage_state 落在 screenshots 目录",
-      Path(server._page_auth(s)["storage_state"]).parent == server.SCREENSHOT_DIR)
+      Path(state._page_auth(s)["storage_state"]).parent == state.SCREENSHOT_DIR)
 
 print("== 9. 配置面板读写：密码只进不回 ==")
-s = server._deep_defaults()
+s = state._deep_defaults()
 s["pagelogin"].update({"enabled": True, "email": "u@corp.com", "password": "topsecret"})
-pub = server._settings_public(s)
+pub = state._settings_public(s)
 check("公开结构里没有明文密码", "topsecret" not in json.dumps(pub, ensure_ascii=False))
 check("给出 has_page_password 标记", pub.get("has_page_password") is True)
 check("密码字段被替换为掩码", "password_masked" in pub.get("pagelogin", {}))
 check("pipeline_config 带上 auth",
-      server._pipeline_config(s)["playwright"]["auth"].get("email") == "u@corp.com")
+      state._pipeline_config(s)["playwright"]["auth"].get("email") == "u@corp.com")
 
 print()
 if FAILED:

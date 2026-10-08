@@ -71,12 +71,30 @@ def main() -> int:
     os.environ["SETTINGS_FILE"] = str(tmp / "ui_settings.json")
 
     from web import server
+    from web import state  # 目录常量与 settings 助手随模块化拆分搬到了 web/state.py
     check("/ 指向 Vue 入口",
-          server.VUE_ENTRY.name == "v2.html" and server.VUE_ENTRY.is_file(),
-          str(server.VUE_ENTRY))
-    routes = {r.path for r in server.app.routes if hasattr(r, "path")}
+          state.VUE_ENTRY.name == "v2.html" and state.VUE_ENTRY.is_file(),
+          str(state.VUE_ENTRY))
+
+    def api_paths(app):
+        """列出 /api 端点。
+
+        不能直接读 app.routes：新版 FastAPI 的 include_router 是**惰性展开**的，
+        app.routes 里放的是 _IncludedRouter 包装对象，既没有 .path 也还没有 .routes，
+        静态遍历会把 52 条业务路由看成 0 条（实测踩过）。openapi() 会强制构建路由表，
+        所以枚举走它；这也顺带证明「路由确实能被装配出来」，比读内部结构更贴近事实。
+        """
+        return set(app.openapi().get("paths", {}))
+
+    routes = api_paths(server.app)
     check("/v2 路由已移除（不再需要别名）", "/v2" not in routes)
-    check("原有 58 个路由未被动过（/api/health 在）", "/api/health" in routes)
+    check("原有路由未被动过（/api/health 在）", "/api/health" in routes)
+    check("业务端点数量未缩水（拆分只搬位置不丢路由）",
+          len(routes) >= 49, f"{len(routes)} 条（HEAD 版本为 50）")
+    for must in ("/api/proposals/{pid}/approve", "/api/artifacts/{aid}/undo",
+                 "/api/chat/stream", "/api/team/stream", "/api/run/stream",
+                 "/api/tasks/run", "/api/settings", "/api/extensions/mcp"):
+        check(f"端点在位：{must}", must in routes)
 
     # ── 3. 契约：全局函数与页签 ──
     print("\n[3] 前端契约（保界面用例不失效）")
