@@ -2062,11 +2062,14 @@ async def reject_artifact(aid: str, req: Request):
 
 @app.post("/api/artifacts/{aid}/undo")
 async def undo_artifact(aid: str):
+    # 与 proposals/undo 对齐：撤销会写目标仓库，流水线在跑时不能插队。
+    if _RUN_STATE["running"]:
+        return JSONResponse({"error": "流水线正在运行，稍后再撤销"}, status_code=409)
     store = _astore()
     artifact = store.get(aid)
     if not artifact:
         raise HTTPException(404, f"产出物不存在: {aid}")
-    result = _applier().undo(artifact)
+    result = await run_in_threadpool(_applier().undo, artifact)
     if result.get("ok"):
         store.set_status(aid, "pending", apply={})
     return JSONResponse(result, status_code=200 if result.get("ok") else 409)
@@ -2122,7 +2125,12 @@ async def reject_proposal(pid: str, req: Request):
 
 @app.post("/api/proposals/{pid}/undo")
 async def undo_proposal(pid: str):
-    result = _fresh_pipeline().undo(pid)
+    # 撤销也是往目标仓库写文件，所以和采纳一样要先确认流水线没在跑；
+    # undo 现在会跑 preflight（内含 git 子进程），因此同样放工作线程。
+    if _RUN_STATE["running"]:
+        return JSONResponse({"error": "流水线正在运行，稍后再撤销"}, status_code=409)
+    pipeline = _fresh_pipeline()
+    result = await run_in_threadpool(pipeline.undo, pid)
     return JSONResponse(result, status_code=200 if result.get("ok") else 409)
 
 

@@ -12,6 +12,7 @@ from typing import Dict, List, Optional
 
 from .gate import GateResult, run_gate
 from .patch_engine import Block, build_patch, parse_blocks
+from .repo_paths import UnsafePath, resolve_in_repo
 
 
 class RepoNotUsable(Exception):
@@ -154,11 +155,22 @@ class CodeFixer:
                 "detail": drifted,
             }
 
+        # 落盘前先把每个路径解析成仓库内的绝对路径。上游 _norm_path 已经洗过一轮，
+        # 但写盘这步不该只信上游：越界就整份拒绝，而不是写到仓库外面去。
+        targets: Dict[str, Path] = {}
+        for change in fresh["changes"]:
+            rel = change["file_path"]
+            try:
+                targets[rel] = resolve_in_repo(self.repo_path, rel)
+            except UnsafePath as e:
+                return {"status": "failed", "preflight": pre,
+                        "error": f"提案里的文件路径不安全，拒绝写盘：{e}"}
+
         written: List[Dict[str, str]] = []
         try:
             for change in fresh["changes"]:
                 rel = change["file_path"]
-                target = self.repo_path / rel
+                target = targets[rel]
                 backup = target.read_text(encoding="utf-8")
                 target.write_text(fresh["patched_contents"][rel], encoding="utf-8")
                 written.append({"file": rel, "backup": backup})
@@ -170,10 +182,13 @@ class CodeFixer:
                 patched_contents=None,  # run against the real tree now
             )
             if not recheck.ok and not force_gate:
-                self._restore(written)
+                unrestored = self._restore(written)
                 return {
                     "status": "apply_failed",
-                    "error": "写入后验收未通过，已回滚文件内容（工作区未改动）",
+                    "error": ("写入后验收未通过，已回滚文件内容（工作区未改动）" if not unrestored
+                              else "写入后验收未通过，但下列文件回滚失败，工作区里仍留着改动，"
+                                   f"请手工核对：{', '.join(unrestored)}"),
+                    "unrestored": unrestored,
                     "gate": recheck.to_dict(),
                     "files": fresh["files"],
                 }
@@ -189,15 +204,27 @@ class CodeFixer:
                 "backups": {w["file"]: w["backup"] for w in written},
             }
         except Exception as e:
-            self._restore(written)
-            return {"status": "failed", "error": f"应用失败，已回滚: {e}"}
+            unrestored = self._restore(written)
+            return {"status": "failed",
+                    "error": (f"应用失败，已回滚: {e}" if not unrestored else
+                              f"应用失败（{e}），但下列文件回滚失败，工作区里仍留着改动，"
+                              f"请手工核对：{', '.join(unrestored)}"),
+                    "unrestored": unrestored}
 
-    def _restore(self, written: List[Dict[str, str]]) -> None:
+    def _restore(self, written: List[Dict[str, str]]) -> List[str]:
+        """把已写入的文件恢复成采纳前的内容，返回**恢复失败**的文件相对路径。
+
+        调用方靠这个列表决定对用户说「工作区未改动」还是「这些文件得手工核对」——
+        原先把异常直接 pass 掉，结果是回滚没成也照样报「已回滚」，属于会误导人的谎。
+        """
+        unrestored: List[str] = []
         for item in written:
             try:
-                (self.repo_path / item["file"]).write_text(item["backup"], encoding="utf-8")
+                resolve_in_repo(self.repo_path, item["file"]).write_text(
+                    item["backup"], encoding="utf-8")
             except Exception:
-                pass
+                unrestored.append(item["file"])
+        return unrestored
 
     # ------------------------------------------------------------------ misc
     def diff_against(self, ref: str = "HEAD", paths: Optional[List[str]] = None) -> str:

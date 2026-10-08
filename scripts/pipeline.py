@@ -21,6 +21,7 @@ from .proposal import (
     STATUS_REJECTED,
     ProposalStore,
 )
+from .repo_paths import UnsafePath, resolve_in_repo
 from .verifier import ScreenshotVerifier
 
 
@@ -564,21 +565,37 @@ class AIDefectFixerPipeline:
         if self.fixer is None:
             return {"ok": False, "error": "未配置可用仓库路径，无法恢复文件"}
 
+        # 撤销同样是往工作区写文件，所以和采纳走同一道前置检查：仓库不在了、或者
+        # 已经切到别的分支，就不该再把属于另一分支状态的备份内容写回去。
+        # （原先 undo 完全跳过 preflight，approve 却查——两条写盘路径不对称。）
+        pre = self.fixer.preflight()
+        if pre["problems"]:
+            return {"ok": False, "preflight": pre, "error": "; ".join(pre["problems"])}
+
         patched = (proposal.get("patch") or {}).get("patched_contents") or {}
+        try:
+            targets = {rel: resolve_in_repo(self.fixer.repo_path, rel)
+                       for rel in backups}
+        except UnsafePath as e:
+            return {"ok": False, "error": f"提案里的文件路径不安全，拒绝恢复：{e}"}
+
         touched = []
         try:
             for rel, original in backups.items():
-                target = self.fixer.repo_path / rel
+                target = targets[rel]
                 current = target.read_text(encoding="utf-8") if target.exists() else ""
                 expected = patched.get(rel, "")
                 if expected and current != expected:
                     return {"ok": False,
                             "error": f"{rel} 在采纳后被改过，自动恢复可能覆盖你的改动，请手工处理"}
             for rel, original in backups.items():
-                (self.fixer.repo_path / rel).write_text(original, encoding="utf-8")
+                targets[rel].write_text(original, encoding="utf-8")
                 touched.append(rel)
         except Exception as e:
-            return {"ok": False, "error": f"恢复文件失败: {e}"}
+            # 半途失败时已经恢复的文件要说清楚，否则用户不知道工作区现在是什么状态
+            done = ", ".join(touched) if touched else "无"
+            return {"ok": False,
+                    "error": f"恢复文件失败: {e}；已恢复的文件：{done}"}
         self.proposals.update({**proposal, "status": STATUS_REJECTED,
                                "apply": {**apply_info, "undone_at": _now(),
                                          "restored_files": touched}})
