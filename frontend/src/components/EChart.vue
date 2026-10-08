@@ -1,8 +1,15 @@
 <script setup>
 // ECharts 通用壳。全项目只有统计页签用图，所以统一走这里，好处是：
-//   1. **按需注册**：只引 Bar/Pie + Grid/Tooltip + SVG 渲染器。注意必须用具名导入
-//      （`import { use, init } from 'echarts/core'`）—— 实测 `import * as echarts`
-//      会让 tree-shaking 失效，chunk 从 ~300KB 涨到 517KB；
+//   1. **按需注册**：只引 Bar/Pie + Grid/Tooltip + SVG 渲染器。
+//      这条一直是生效的，别再来"修"一次：2026-10-08 实测过，把 `echarts/charts`
+//      换成逐个 `lib/chart/bar/install.js` 深路径，chunk 体积**一位小数都没变**
+//      （517.29 kB）。产物里 grep 到的 sankey/candlestick/treemap 是
+//      lib/i18n/langZH.js 的中文名称表（"桑基图"、"K线图"），不是图表实现——
+//      sunburstBeginAngle / getSectorForm / sankeyCircular 这类实现独有符号全为 0。
+//      517KB 就是 echarts 6 的 core + 两种图 + Grid/Tooltip + SVG 渲染器的真实成本；
+//      想再降只能换更轻的图表库或砍功能，不是靠改 import 写法。
+//      （旧注释说"`import * as echarts` 会让 tree-shaking 失效、chunk 从 ~300KB
+//      涨到 517KB"，那个 300KB 无从复现，已按实测改掉。）
 //   2. **SVG 渲染器**：产物是真实 DOM，截图与主题调试都能直接看，小图也更清晰；
 //   3. **给界面用例留读取口**：ECharts 画出来的节点没有我们的 class，
 //      `tests/check_vue_stats_ui.py` / `check_usage_ui.py` 靠宿主节点上的
