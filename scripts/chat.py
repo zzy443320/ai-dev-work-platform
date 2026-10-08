@@ -40,8 +40,14 @@ MAX_HISTORY_CHARS = 24000
 MAX_MSG_CHARS = 6000
 # 推理模型（deepseek-flash 等）的 hidden reasoning 与正文共享 max_tokens，留足余量
 BUDGET = 16000
-MAX_TOOL_TEXT = 8000
-MAX_ROUNDS = 5
+# 单个工具结果进上下文的字符上限。旧值 8000 太紧：语言包一行 30-50 字符，
+# 一次只能看到 ~180 行，模型在大文件里定位到改动点后还得再读一次才敢下笔。
+MAX_TOOL_TEXT = 12000
+# 一次 repo_read 最多回多少字符（超出会提示用 start/end 接着读）
+MAX_READ_CHARS = 12000
+# 轮次：grep 定位 → 读上下文 → （大文件分段再读）→ 出提案，5 轮经常不够用，
+# 模型一不够用就退化成「问用户要内容」。给到 6 轮，同时提示词里要求别空转。
+MAX_ROUNDS = 6
 DEFAULT_MAX_HITS = 60
 
 PROPOSAL_OPEN = "<PROPOSAL>"
@@ -54,6 +60,10 @@ IGNORE_DIRS = {
     "venv", ".idea", ".vscode", "public", "static",
 }
 MAX_FILE_BYTES = 1_500_000
+# Python 兜底扫描的文件数上限（git grep 可用时根本不走兜底）。真实案例（2026-09-30）：
+# 目标仓 8000+ 个文件，语言包文件排在 git ls-files 序的 6000 截断线之后——旧实现就此截断，
+# 模型把「前 6000 个文件里命中 3 处引用」当成了「全仓只有引用、没有定义」。
+GREP_SCAN_CAP = 6000
 
 
 class ChatError(Exception):
@@ -209,7 +219,9 @@ TOOL_SPECS: List[Dict] = [
     },
     {
         "name": "repo_grep",
-        "description": "在仓库中按正则搜索文本内容，返回「路径:行号: 内容」。用来找定义、引用、配置项。",
+        "description": "在仓库中按正则搜索文本内容，返回「路径:行号: 内容」，覆盖全仓（含未跟踪文件）。"
+                       "用来找定义、引用、配置项。若结果带「截断/上限」提示，说明只搜到仓库的一部分，"
+                       "必须换更精确的 glob 或目录重搜，不要当成全仓结论。",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -321,31 +333,90 @@ class RepoReader:
         except Exception:
             a, b = 0, len(lines)
         chunk = lines[a:b]
-        body = "\n".join(f"{a + i + 1}\t{ln}" for i, ln in enumerate(chunk))
-        head = f"{path}（第 {a + 1}-{a + len(chunk)} 行 / 共 {len(lines)} 行）\n"
-        return head + _clip(body, MAX_TOOL_TEXT)
+        # 按字符预算截断，并**明确告诉模型下一刀从哪下**：旧实现只丢一句「已截断」，
+        # 模型在大文件里就卡住了，转而去问用户要内容（2026-09-30 真实案例）。
+        body_rows: List[str] = []
+        used = 0
+        cut = False
+        for i, ln in enumerate(chunk):
+            row = f"{a + i + 1}\t{ln}"
+            if used + len(row) + 1 > MAX_READ_CHARS and body_rows:
+                cut = True
+                break
+            body_rows.append(row)
+            used += len(row) + 1
+        last = a + len(body_rows)
+        head = f"{path}（第 {a + 1}-{last} 行 / 共 {len(lines)} 行）\n"
+        tail = ""
+        if cut:
+            tail = (f"\n…（本次读到第 {last} 行，文件共 {len(lines)} 行。"
+                    f"继续读：{{\"action\":\"call\",\"tool\":\"repo_read\","
+                    f"\"arguments\":{{\"path\":\"{path}\",\"start\":{last + 1}}}}}）")
+        return head + "\n".join(body_rows) + tail
 
-    def grep(self, pattern: str, glob: str = "", max_hits: int = DEFAULT_MAX_HITS) -> str:
-        if not str(pattern or "").strip():
-            return "[错误] pattern 不能为空"
-        try:
-            rx = re.compile(pattern)
-        except re.error as e:
-            return f"[错误] 正则不合法：{e}"
-        try:
-            max_hits = max(1, min(int(max_hits or DEFAULT_MAX_HITS), 200))
-        except Exception:
-            max_hits = DEFAULT_MAX_HITS
-        g = str(glob or "").strip().lower()
+    def _glob_pathspecs(self, g: str) -> List[str]:
+        """把界面上的 glob（.vue / *.ts / src/**）转成 git pathspec。"""
+        g = str(g or "").strip()
+        if not g:
+            return []
+        if g.startswith(":") or g.startswith("("):
+            return [g]  # 已经是 pathspec magic 写法，原样透传
+        if "/" in g or "**" in g:
+            return [":(glob)" + g]
+        if "*" in g:
+            return [g]
+        return ["*" + g]  # ".vue" → "*.vue"（路径通配，递归匹配所有目录）
+
+    def _git_grep(self, pattern: str, glob: str, max_hits: int) -> Optional[str]:
+        """git grep 引擎：大仓库无扫描上限，天然跳二进制、遵守 .gitignore、含未跟踪文件。
+
+        返回 None 表示 git 不可用 / 不是 git 仓库 / 两种正则方言都不认这个 pattern，
+        调用方应退回 Python 扫描。git grep 退出码：0=有命中 1=无命中 其它=出错。
+        """
+        pathspecs = self._glob_pathspecs(glob)
+        # 先试 -P（PCRE，最接近 Python re），方言不兼容再试 -E（ERE）
+        for flags in (["-P"], ["-E"]):
+            cmd = (["git", "-C", str(self.root), "-c", "core.quotePath=false",
+                    "grep", "-nI", "--untracked", *flags, "-e", pattern]
+                   + (["--"] + pathspecs if pathspecs else []))
+            try:
+                r = subprocess.run(cmd, capture_output=True, timeout=60)
+            except Exception:
+                return None
+            if r.returncode not in (0, 1):
+                continue  # 非 git 仓 / 该方言编译失败 → 换下一种
+            g = str(glob or "").strip().lower()
+            hits: List[str] = []
+            for ln in r.stdout.decode("utf-8", "replace").splitlines():
+                parts = ln.split(":", 2)
+                if len(parts) < 3:
+                    continue
+                rel = parts[0].replace("\\", "/")
+                if g and not (rel.lower().endswith(g) or fnmatch.fnmatch(rel.lower(), g)):
+                    continue
+                hits.append(f"{rel}:{parts[1]}: {parts[2].strip()[:220]}")
+                if len(hits) >= max_hits:
+                    break
+            if not hits:
+                return (f"[无命中] 全仓（git 跟踪 + 未跟踪文件，跳过二进制与 .gitignore）"
+                        f"没有匹配 /{pattern}/ 的内容")
+            tail = f"\n…（已达上限 {max_hits} 条）" if len(hits) >= max_hits else ""
+            return f"命中 {len(hits)} 条：\n" + "\n".join(hits) + tail
+        return None
+
+    def _scan_grep(self, pattern: str, g: str, max_hits: int, rx) -> str:
+        """Python 兜底扫描（git 不可用时）。截断必须如实说清「只覆盖文件列表前缀」。"""
+        all_files = self.files()
+        total = len(all_files)
         hits: List[str] = []
         scanned = 0
-        truncated_by_scan = False
-        for rel in self.files():
+        truncated = False
+        for rel in all_files:
+            if scanned >= GREP_SCAN_CAP:
+                truncated = True
+                break
             if g and not (rel.lower().endswith(g) or fnmatch.fnmatch(rel.lower(), g)):
                 continue
-            if scanned >= 6000:
-                truncated_by_scan = True
-                break
             p = self.resolve(rel)
             if p is None or not p.is_file():
                 continue
@@ -368,14 +439,37 @@ class RepoReader:
                         break
             if len(hits) >= max_hits:
                 break
+        trunc_note = (f"（⚠ 仓库共 {total} 个文件，扫描在第 {GREP_SCAN_CAP} 个文件处停止——"
+                      f"以上只覆盖文件列表前缀，后面可能还有命中。请用更精确的 glob 或目录重搜，"
+                      f"不要把本结果当成全仓结论）")
         if not hits:
-            return f"[无命中] 在 {scanned} 个文件里没找到匹配 /{pattern}/ 的内容"
+            msg = f"[无命中] 在 {scanned} 个文件里没找到匹配 /{pattern}/ 的内容"
+            if truncated:
+                msg += trunc_note
+            return msg
         tail = ""
         if len(hits) >= max_hits:
             tail = f"\n…（已达上限 {max_hits} 条）"
-        elif truncated_by_scan:
-            tail = "\n…（已扫描 6000 个文件，可能还有更多）"
+        if truncated:
+            tail += "\n…（⚠ 扫描在上限处停止：" + trunc_note[1:]
         return f"命中 {len(hits)} 条：\n" + "\n".join(hits) + tail
+
+    def grep(self, pattern: str, glob: str = "", max_hits: int = DEFAULT_MAX_HITS) -> str:
+        if not str(pattern or "").strip():
+            return "[错误] pattern 不能为空"
+        try:
+            rx = re.compile(pattern)
+        except re.error as e:
+            return f"[错误] 正则不合法：{e}"
+        try:
+            max_hits = max(1, min(int(max_hits or DEFAULT_MAX_HITS), 200))
+        except Exception:
+            max_hits = DEFAULT_MAX_HITS
+        g = str(glob or "").strip().lower()
+        out = self._git_grep(pattern, g, max_hits)
+        if out is not None:
+            return out
+        return self._scan_grep(pattern, g, max_hits, rx)
 
     def spec(self) -> List[Dict]:
         return TOOL_SPECS if self.tools_enabled else []
@@ -409,7 +503,16 @@ CHAT_SYSTEM = (
     "3. 不确定的地方就说「不确定」，并说明还需要看什么。\n"
     "4. 回答长度按问题来：一句话能说清就别写三段。\n"
     "5. 你**没有写文件的权限**——只能读。需要改动时以提案形式给出（见下），"
-    "由人工确认后才会落到工作区；不要说「我已经改好了」。"
+    "由人工确认后才会落到工作区；不要说「我已经改好了」。\n"
+    "6. ⭐ **不要反问**：用户说要什么就去做，别把能自己查、能自己决定的事丢回给用户。\n"
+    "   - 缺信息就自己用工具查（文件没读全就用 start/end 分段读完），"
+    "**绝不要让用户把文件内容贴给你**——那是把活推回给用户的最后手段，不是第一步；\n"
+    "   - 有多种合理做法时，选一个最贴合仓库现状的直接做，把你的选择和理由写进"
+    "提案的 checklist，让用户 review 时改主意，而不是开工前先问；\n"
+    "   - 常见的默认口径（直接照做，不用问）：改 i18n 文案 → zh-CN / zh-TW / en-US "
+    "**每种语言一起改**；改导出/常量 → 同步改掉所有引用点；改命名 → 同目录同风格统一；\n"
+    "   - 只有「怎么选都会改错、且工具查不出来」时才提问，且**一次问完**，"
+    "不要挤牙膏式地一轮问一个。"
 )
 
 PROPOSAL_RULES = (
@@ -420,16 +523,36 @@ PROPOSAL_RULES = (
     "读够相关文件和调用方，回答里说清改法与影响，然后在回答**最末尾**附一段提案：\n"
     "```\n" + PROPOSAL_OPEN + "\n"
     '{"summary": "一句话说明这次改什么", '
-    '"files": [{"path": "相对仓库根的文件路径", "action": "overwrite 或 create", '
-    '"description": "这个文件改什么", "content": "改完之后的完整文件内容"}], '
+    '"files": [{"path": "相对仓库根的文件路径", "action": "edit / overwrite / create", '
+    '"description": "这个文件改什么", '
+    '"edits": [{"find": "原文片段", "replace": "替换后的片段"}], '
+    '"content": "新建或整体重写时的完整文件内容"}], '
     '"checklist": ["需要人工确认的点", ...]}\n'
     + PROPOSAL_CLOSE + "\n```\n"
     "硬要求：\n"
-    "- `content` 必须是该文件**改完后的完整内容**（不是 diff、不是片段、不要省略号），"
-    "否则人工采纳时会把文件写坏。\n"
+    "- 改**已有文件**一律优先用 `\"action\": \"edit\"` + `edits`（下面第二种写法），"
+    "**尤其文件上百行、或改动只涉及其中一两处时**：不用读完也不用吐出整份文件。\n"
+    "  只有「新建文件」和「小文件整体重写」才用 `overwrite` + `content`。\n"
+    "- 用 `overwrite` 时 `content` 必须是该文件**改完后的完整内容**（不是 diff、不是片段、"
+    "不要省略号），否则人工采纳时会把文件写坏。\n"
+    "- 用 `edit` 时 `find` 必须是文件里**唯一命中**的一段原文（多带一两行上下文来保证唯一），"
+    "`replace` 是替换后的新片段；命中 0 次或多次，采纳时会被整单拒绝——这不是失败，"
+    "照着报错补上下文再来一次即可，**不要因此转去问用户**。\n"
     "- 只包含你确实要改的文件；不要为了「顺便优化」加无关改动。\n"
     "- 提案块之外不要出现 " + PROPOSAL_OPEN + " 字样，也不要解释这个格式。\n"
-    "- 提案只是**建议**：它不会自动写入仓库，用户会在「产出物」里 review 后决定采纳与否。"
+    "- 提案只是**建议**：它不会自动写入仓库，用户会在「产出物」里 review 后决定采纳与否。\n"
+    "- 意图是改代码就**一定要给出提案**；「文件太大 / 没读全」不是不提案的理由"
+    "（用 `edit` 只写改动点即可），更不要改用追问来收场。\n\n"
+    "局部改动（`action: \"edit\"`）的写法：\n"
+    "```\n" + PROPOSAL_OPEN + "\n"
+    '{"summary": "把 personalizationSaved 改成「已保存个性化设置」", '
+    '"files": [{"path": "packages/locale/locales/zh-CN.ts", "action": "edit", '
+    '"description": "改中文文案", '
+    '"edits": [{"find": "personalizationSaved: \'保存成功\'", '
+    '"replace": "personalizationSaved: \'已保存个性化设置\'"}]}], '
+    '"checklist": ["同步改了 zh-TW / en-US", "调用点用的是点分 key，无需改组件"]}\n'
+    + PROPOSAL_CLOSE + "\n```\n"
+    "同一个文件里多处改动就多写几条 `edits`；要改多个语言包就写多个 file 条目。\n"
 )
 
 TOOL_RULES = (
@@ -438,7 +561,25 @@ TOOL_RULES = (
     "需要查的时候，你这一轮的回复**只输出这一个 JSON**（不要有任何其他文字）：\n"
     '{"action": "call", "tool": "工具名", "arguments": {参数}}\n'
     "工具结果会以文本回给你。查到够了就停止调用工具，直接给出最终回答（Markdown 正文）。\n"
-    "不要为了显得完整而反复查同一个文件；也不要假装工具返回了你没看到的内容。"
+    "不要为了显得完整而反复查同一个文件；也不要假装工具返回了你没看到的内容。\n\n"
+    "## 找「定义」而不是只找到「引用」\n"
+    "改文案/常量/配置这类任务，调用点（`$t('a.b.c')`、`SOME_CONST` 的使用处）只是**引用**，"
+    "你要改的往往是**定义**：\n"
+    "- i18n 文案：定义在语言包目录（locales / i18n / lang / *-locale 等），点分 key 的"
+    "**最后一段**才是文件里的字段名（`languages.aiPlatform.personalization.personalizationSaved`"
+    " → 搜 `personalizationSaved`），且通常 zh-CN / zh-TW / en-US 每种语言一份，都要改；\n"
+    "- 常量/枚举/配置：引用在组件里，定义一般在 constants / config / enum 文件里。\n"
+    "搜完务必区分哪些命中是定义（`key: '值'` 形态）、哪些是引用（`$t(` / `import` 形态）。\n"
+    "工具结果若带「截断 / 上限 / 前缀」提示，说明只搜到仓库的一部分——**不得当成全仓结论**，"
+    "换更精确的 glob（如 `locales/**`、`.ts`）或直接列出疑似目录重搜。\n\n"
+    "## 读文件：分段读，不要退回去问用户\n"
+    "- `repo_read` 用 `start` / `end` 定位到目标行附近读一小段就够了——改一两处不必读全文件，"
+    "也**不要因为「文件太大读不完」就让用户把内容贴给你**（用户贴的和仓库里的还可能不一致）。\n"
+    "- 想确认「这个 key 在文件里长什么样」这类局部问题：先用 `repo_grep` 拿到行号，"
+    "再按行号 ±20 行读一个窗口。\n"
+    "- 改文案/常量时，同一次任务里把 zh-CN / zh-TW / en-US **每种语言的定义都改掉**，"
+    "这是默认口径，不需要先问用户「要不要一起改」。\n"
+    "- 轮次有限：先 grep 定位、再按需读窗口、然后直接给结论，不要重复查同一个文件。"
 )
 
 

@@ -24,6 +24,7 @@
 """
 import json
 import shutil
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -185,6 +186,51 @@ def main() -> int:
         rd_off = RepoReader(str(repo), tools_enabled=False)
         check("关掉仓库检索后工具表为空", rd_off.spec() == [])
 
+        # ── 3b. 大仓 grep 引擎：git grep 优先 + 截断诚实化 ──
+        # 真实案例（2026-09-30）：8000+ 文件的单仓，语言包文件排在 ls-files 序的 6000 之后，
+        # 旧实现 6000 处静默截断 → 模型只找到 $t() 引用、找不到定义，还断言「全仓只有引用」。
+        print("\n[3b] repo_grep 大仓引擎（定义 vs 引用）")
+        subprocess.run(["git", "init", "-q"], cwd=str(repo), check=True)
+        subprocess.run(["git", "add", "-A"], cwd=str(repo), check=True)
+        (repo / "packages" / "locale" / "locales").mkdir(parents=True, exist_ok=True)
+        (repo / "packages" / "locale" / "locales" / "zh-CN.ts").write_text(
+            "export default {\n  personalization: {\n    personalizationSaved: '保存成功',\n  },\n};\n",
+            encoding="utf-8")
+        (repo / "packages" / "app" / "pages").mkdir(parents=True, exist_ok=True)
+        (repo / "packages" / "app" / "pages" / "index.vue").write_text(
+            "<script setup>\n"
+            "const tip = $t('languages.aiPlatform.personalization.personalizationSaved');\n"
+            "</script>\n", encoding="utf-8")
+        rd2 = RepoReader(str(repo))  # 新实例：重扫文件清单（含刚加的语言包/页面）
+        gdef = rd2.grep("personalizationSaved")
+        check("定义与引用都命中（语言包 + 调用点）",
+              "locales/zh-CN.ts" in gdef and "pages/index.vue" in gdef,
+              gdef.replace("\n", " | ")[:160])
+        check("定义行带字段名与值", "personalizationSaved: '保存成功'" in gdef)
+        check("git 引擎无扫描截断提示", "⚠" not in gdef and "截" not in gdef)
+        gts = rd2.grep("personalizationSaved", glob=".ts")
+        check("glob 限定扩展名走 pathspec（只剩 .ts 命中）",
+              "zh-CN.ts" in gts and "index.vue" not in gts, gts.replace("\n", " | ")[:120])
+        gvue = rd2.grep("personalizationSaved", glob="packages/app/**")
+        check("glob 限定目录（:(glob) 前缀）",
+              "index.vue" in gvue and "zh-CN.ts" not in gvue, gvue.replace("\n", " | ")[:120])
+        gnone = rd2.grep("不存在的词xyzzy")
+        check("git 引擎无命中时如实报全仓无命中", gnone.startswith("[无命中]") and "全仓" in gnone,
+              gnone[:80])
+        old_cap = chat_mod.GREP_SCAN_CAP
+        chat_mod.GREP_SCAN_CAP = 2
+        orig_git_grep = RepoReader._git_grep
+        RepoReader._git_grep = lambda self, p, g, m: None  # 强制走 Python 兜底
+        try:
+            gtrunc = rd2.grep("personalizationSaved")
+        finally:
+            RepoReader._git_grep = orig_git_grep
+            chat_mod.GREP_SCAN_CAP = old_cap
+        check("兜底扫描截断时如实提示前缀覆盖（不是全仓结论）",
+              "前缀" in gtrunc and "不要把本结果当成全仓结论" in gtrunc,
+              gtrunc.replace("\n", " | ")[:200])
+        check("截断提示带仓库文件总数", "个文件" in gtrunc)
+
         # ── 4/5. 提示词与工具调用解析 ──
         print("\n[4] 提示词与工具调用解析")
         prompt = chat_mod.build_prompt(
@@ -275,6 +321,20 @@ def main() -> int:
               and any(e.get("type") == "ai_delta" and e.get("kind") == "content" for e in events))
         check("系统提示词带上提案规则与「不能写文件」的能力边界",
               "<PROPOSAL>" in ai.systems[0] and "没有写文件的权限" in ai.systems[0])
+        check("提示词带「找定义而不是只找到引用」的检索指引（i18n/截断诚实化）",
+              "$t(" in ai.prompts[0] and "语言包" in ai.prompts[0]
+              and "不要当成全仓结论" in ai.prompts[0])
+        # 「一直在不停询问」的反面：提示词必须明令禁止反问、禁止向用户索要文件内容
+        check("系统提示词明令「不要反问」且禁止让用户贴文件内容",
+              "不要反问" in ai.systems[0] and "贴给你" in ai.systems[0], ai.systems[0][-120:])
+        check("默认口径写进提示词：改 i18n 各语言一起改，不用先问",
+              "zh-TW" in ai.systems[0] and "一起改" in ai.systems[0])
+        check("提案规则给了局部改动写法（大文件不必吐全量内容）",
+              "action" in ai.systems[0] and "edit" in ai.systems[0] and "edits" in ai.systems[0])
+        check("提示词要求「改代码就必须给提案」，堵死用追问收场",
+              "一定要给出提案" in ai.systems[0])
+        check("读文件指引要求分段读而不是退回去问用户",
+              "分段读" in ai.prompts[0] or "start" in ai.prompts[0])
 
         ai2 = FakeAI(['{"action":"call","tool":"repo_list","arguments":{"path":"src"}}'])
         res2 = chat_mod.run_chat(ai2, rd, [], "列一下 src", max_rounds=2)
