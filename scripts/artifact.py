@@ -13,6 +13,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+from .json_store import JsonRecordStore
+
 STATUS_PENDING = "pending"
 STATUS_APPLIED = "applied"
 STATUS_APPLY_FAILED = "apply_failed"
@@ -35,13 +37,11 @@ def _slug(s: str) -> str:
     return re.sub(r"[^0-9A-Za-z._-]+", "-", str(s or "task")).strip("-")[:40] or "task"
 
 
-class ArtifactStore:
-    def __init__(self, base_dir: str):
-        self.base = Path(base_dir).resolve()
-        self.base.mkdir(parents=True, exist_ok=True)
+class ArtifactStore(JsonRecordStore):
+    """一份产出物 = artifacts/<id>.json。读写与加锁语义见 scripts/json_store.py。"""
 
-    def _path(self, aid: str) -> Path:
-        return self.base / f"{_slug(aid)}.json"
+    SLUG_LEN = 40
+    DEFAULT_SLUG = "task"
 
     def create(self, kind: str, title: str, payload: Dict, ctx: Optional[Dict] = None) -> Dict:
         now = datetime.now().isoformat(timespec="seconds")
@@ -72,37 +72,6 @@ class ArtifactStore:
         }
         self._write(artifact)
         return artifact
-
-    def update(self, artifact: Dict) -> Dict:
-        artifact["updated"] = datetime.now().isoformat(timespec="seconds")
-        self._write(artifact)
-        return artifact
-
-    def set_status(self, aid: str, status: str, **extra) -> Optional[Dict]:
-        a = self.get(aid)
-        if not a:
-            return None
-        a["status"] = status
-        a.update(extra)
-        return self.update(a)
-
-    def _write(self, artifact: Dict) -> None:
-        target = self._path(artifact["id"])
-        tmp = target.with_suffix(".json.tmp")
-        tmp.write_text(
-            json.dumps(artifact, ensure_ascii=False, indent=2, default=str),
-            encoding="utf-8",
-        )
-        tmp.replace(target)
-
-    def get(self, aid: str) -> Optional[Dict]:
-        path = self._path(aid)
-        if not path.is_file():
-            return None
-        try:
-            return json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            return None
 
     def list(self, type_filter: Optional[str] = None, status: Optional[str] = None) -> List[Dict]:
         out: List[Dict] = []

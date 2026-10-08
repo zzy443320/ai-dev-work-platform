@@ -16,9 +16,9 @@ from __future__ import annotations
 import json
 import re
 from datetime import datetime
-from pathlib import Path
-from threading import Lock
 from typing import Dict, List, Optional
+
+from .json_store import JsonRecordStore
 
 # 只落盘这些类型的事件（ai_delta 这类高频增量刻意排除）
 PERSIST_TYPES = (
@@ -34,16 +34,19 @@ def _slug(s: str) -> str:
     return re.sub(r"[^0-9A-Za-z._-]+", "-", str(s or "run")).strip("-")[:40] or "run"
 
 
-class TeamRunStore:
-    # 进程级共享锁：服务端每次请求都新建一个 store 实例（见 server._tstore），
-    # 实例级锁保护不了「介入接口线程」与「编排 worker 线程」之间的
-    # 读-改-写竞争——那会让人工介入记录被后写的 agent/plan 更新整片覆盖掉
-    # （丢更新丢得很安静，只有对账时才发现"我明明纠正过它"没留痕）。
-    _lock = Lock()
+class TeamRunStore(JsonRecordStore):
+    """一次长任务作业 = team_runs/<id>.json。
 
-    def __init__(self, base_dir: str):
-        self.base = Path(base_dir).resolve()
-        self.base.mkdir(parents=True, exist_ok=True)
+    锁必须是**进程级**的：服务端每次请求都新建一个 store 实例（见 web/state.py 的
+    _tstore），实例级锁保护不了「介入接口线程」与「编排 worker 线程」之间的
+    读-改-写竞争——那会让人工介入记录被后写的 agent/plan 更新整片覆盖掉
+    （丢更新丢得很安静，只有对账时才发现"我明明纠正过它"没留痕）。
+    这条约束现在由 scripts/json_store.JsonRecordStore 的类级 RLock 统一提供。
+    """
+
+    SLUG_LEN = 40
+    DEFAULT_SLUG = "run"
+    KEEP = MAX_RUNS_KEPT          # 只保留最近 N 份，避免目录无限膨胀
 
     @staticmethod
     def new_id() -> str:
@@ -61,16 +64,11 @@ class TeamRunStore:
         return rid
 
     # ------------------------------------------------------------ 基础
-    def _path(self, rid: str) -> Path:
-        return self.base / f"{_slug(rid)}.json"
-
     def _write(self, run: Dict) -> None:
+        # 沿用本 store 的既有语义：每一次落盘都盖 updated（create 之后还会 _write 一次，
+        # 时间戳因此总是"最后一次写入"的时间）。原子替换与唯一临时名由基类负责。
         run["updated"] = datetime.now().isoformat(timespec="seconds")
-        target = self._path(run["id"])
-        tmp = target.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(run, ensure_ascii=False, indent=2, default=str),
-                       encoding="utf-8")
-        tmp.replace(target)
+        super()._write(run)
 
     def create(self, spec: Dict, roles: List[Dict]) -> Dict:
         now = datetime.now().isoformat(timespec="seconds")
@@ -112,19 +110,6 @@ class TeamRunStore:
         self._prune()
         return run
 
-    def get(self, rid: str) -> Optional[Dict]:
-        path = self._path(rid)
-        if not path.is_file():
-            return None
-        try:
-            return json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            return None
-
-    def update(self, run: Dict) -> Dict:
-        self._write(run)
-        return run
-
     def list(self) -> List[Dict]:
         out: List[Dict] = []
         for f in sorted(self.base.glob("*.json"), key=lambda p: p.name, reverse=True):
@@ -155,14 +140,8 @@ class TeamRunStore:
             "error": run.get("error", ""),
         }
 
-    def _prune(self) -> None:
-        """只保留最近 N 份运行记录，避免目录无限膨胀。"""
-        files = sorted(self.base.glob("*.json"), key=lambda p: p.name, reverse=True)
-        for f in files[MAX_RUNS_KEPT:]:
-            try:
-                f.unlink()
-            except Exception:
-                pass
+    # 基类按 KEEP 做保留清理；保留旧方法名，create() 的调用点不变
+    _prune = JsonRecordStore.prune
 
     # --------------------------------------------------------- 事件/介入
     def _mutate(self, rid: str, fn) -> Optional[Dict]:

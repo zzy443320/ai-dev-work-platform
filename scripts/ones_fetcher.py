@@ -15,7 +15,7 @@ Two auth modes:
 1. email + password  -> auto login / auto refresh (preferred).
 2. token only        -> pasted from the browser; expiry is reported clearly.
 """
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 import requests

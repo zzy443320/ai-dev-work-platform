@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
 from .artifact import safe_rel_path
+from .json_store import JsonRecordStore
 from .task_modules import _files, _str_list  # 复用产出的文件归一化（与其它任务同口径）
 
 MAX_TITLE_CHARS = 40
@@ -84,18 +85,15 @@ def _clip(s: str, n: int) -> str:
 
 
 # ------------------------------------------------------------------ 会话存储
-class ChatStore:
+class ChatStore(JsonRecordStore):
     """一问一答的会话账本：一个会话一个 JSON 文件，追加式更新。
 
     和提案/产出物一样是「人可读、可手工删」的普通文件，没有数据库。
+    读写、原子替换与类级锁都在 scripts/json_store.py 基类里。
     """
 
-    def __init__(self, base_dir: str):
-        self.base = Path(base_dir)
-        self.base.mkdir(parents=True, exist_ok=True)
-
-    def _path(self, sid: str) -> Path:
-        return self.base / f"{_slug(sid)}.json"
+    SLUG_LEN = 40
+    DEFAULT_SLUG = "chat"
 
     def create(self, title: str = "", kind: str = "") -> Dict:
         now = _now()
@@ -112,22 +110,8 @@ class ChatStore:
         return sess
 
     def save(self, sess: Dict) -> Dict:
-        sess["updated"] = _now()
-        target = self._path(sess["id"])
-        tmp = target.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(sess, ensure_ascii=False, indent=2, default=str),
-                       encoding="utf-8")
-        tmp.replace(target)
-        return sess
-
-    def get(self, sid: str) -> Optional[Dict]:
-        path = self._path(sid)
-        if not path.is_file():
-            return None
-        try:
-            return json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            return None
+        """保留旧名字：语义就是基类的「盖上 updated 再原子写」。"""
+        return self.update(sess)
 
     def list(self) -> List[Dict]:
         """会话摘要，按更新时间倒序（最新的在最前）。"""

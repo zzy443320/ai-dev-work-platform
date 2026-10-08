@@ -6,11 +6,10 @@ only code path allowed to call CodeFixer.apply().
 """
 import json
 import re
-import threading
-import uuid
 from datetime import datetime
-from pathlib import Path
 from typing import Dict, List, Optional
+
+from .json_store import JsonRecordStore
 
 STATUS_PENDING = "pending"
 STATUS_GATE_FAILED = "gate_failed"
@@ -27,19 +26,16 @@ def _slug(s: str) -> str:
     return re.sub(r"[^0-9A-Za-z._-]+", "-", str(s or "local")).strip("-")[:60] or "local"
 
 
-class ProposalStore:
-    def __init__(self, base_dir: str):
-        self.base = Path(base_dir).resolve()
-        self.base.mkdir(parents=True, exist_ok=True)
-        # set_status 是「读 → 改 → 写」三步，单个 _write 里的 tmp+rename 只能保证
-        # **不出现半份文件**，挡不住两个请求互相覆盖（A 读到旧版、B 也读到旧版、
-        # 后写的把先写的字段抹掉）。用 RLock 是因为 set_status → update → _write
-        # 是同线程嵌套调用。
-        self._lock = threading.RLock()
+class ProposalStore(JsonRecordStore):
+    """一份提案 = proposals/<id>.json。读写与加锁语义见 scripts/json_store.py。
 
-    # ---------- paths ----------
-    def _path(self, pid: str) -> Path:
-        return self.base / f"{_slug(pid)}.json"
+    注意锁的归属：这里原先用的是**实例级** RLock，而服务端每个请求都新建一个
+    ProposalStore（web/state.py 的 _store()）——实例级锁跨请求根本不共享，等于没加。
+    现在由基类提供类级 RLock。
+    """
+
+    SLUG_LEN = 60
+    DEFAULT_SLUG = "local"
 
     # ---------- write ----------
     def create(self, defect: Dict, analysis: Dict, patch: Dict, gate: Dict,
@@ -70,44 +66,7 @@ class ProposalStore:
             self._write(proposal)
         return proposal
 
-    def update(self, proposal: Dict) -> Dict:
-        with self._lock:
-            proposal["updated"] = datetime.now().isoformat(timespec="seconds")
-            self._write(proposal)
-        return proposal
-
-    def set_status(self, pid: str, status: str, **extra) -> Optional[Dict]:
-        with self._lock:          # 整个「读-改-写」必须在同一把锁里
-            p = self.get(pid)
-            if not p:
-                return None
-            p["status"] = status
-            p.update(extra)
-            return self.update(p)
-
-    def _write(self, proposal: Dict) -> None:
-        target = self._path(proposal["id"])
-        # 临时名必须唯一。原先固定用 "<id>.json.tmp"：两个线程同时写同一份提案时，
-        # 先到的那个 replace 掉文件、后到的还握着句柄 → Windows 上直接
-        # PermissionError(WinError 32)（在无锁对照用例里实测复现）。set_status 的锁
-        # 只是把这条路径串行化了，唯一文件名才是「原子替换」这层本身的正确姿势。
-        tmp = target.with_name(f".{target.name}.{uuid.uuid4().hex[:8]}.tmp")
-        tmp.write_text(
-            json.dumps(proposal, ensure_ascii=False, indent=2, default=str),
-            encoding="utf-8",
-        )
-        tmp.replace(target)
-
     # ---------- read ----------
-    def get(self, pid: str) -> Optional[Dict]:
-        path = self._path(pid)
-        if not path.is_file():
-            return None
-        try:
-            return json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            return None
-
     def list(self, status: Optional[str] = None) -> List[Dict]:
         out: List[Dict] = []
         for f in sorted(self.base.glob("*.json"), key=lambda p: p.name):

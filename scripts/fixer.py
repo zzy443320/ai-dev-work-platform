@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from .apply_ops import restore_written, write_and_gate
-from .patch_engine import Block, build_patch, parse_blocks
+from .patch_engine import build_patch, parse_blocks
 
 
 class RepoNotUsable(Exception):

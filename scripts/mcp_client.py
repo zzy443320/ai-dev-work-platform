@@ -130,7 +130,6 @@ def _kv_lines(text: str) -> Dict[str, str]:
 # ------------------------------------------------------------------ stdio
 class StdioSession:
     def __init__(self, cfg: Dict):
-        import sys
         self.cfg = cfg
         env = dict(os.environ)
         env.setdefault("PYTHONUNBUFFERED", "1")
