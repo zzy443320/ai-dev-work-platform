@@ -15,6 +15,8 @@ config.*.local.yaml
 /chat_sessions/
 /knowledge_base/
 /attachments/
+# 原始知识库的整份 zip 备份（内含真实工单数据，只留本地）
+/kb_backups/
 logs/
 *.log
 

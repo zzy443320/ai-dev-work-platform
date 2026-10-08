@@ -63,6 +63,17 @@ def main():
     p.add_argument("--limit", type=int, default=3)
     p.add_argument("--list-proposals", action="store_true", help="列出待审批提案")
     p.add_argument("--show", default=None, metavar="PROPOSAL_ID", help="打印某个提案的 diff")
+    # 知识库保底三条（knowledge_base/ 不入库，是流水线唯一会增值的资产，必须有备份
+    # 与可提交的脱敏副本）。三条都在建流水线之前处理，不需要 ONES / 模型配置。
+    p.add_argument("--backup-kb", action="store_true",
+                   help="把知识库整份打包成带时间戳的 zip（放 kb_backups/，不入库）")
+    p.add_argument("--export-kb", metavar="OUT", nargs="?",
+                   const="knowledge_base_masked", default=None,
+                   help="导出脱敏副本（默认 knowledge_base_masked/）；会先从凭据行自动"
+                        "补全账号名词表，确认零残留后再提交")
+    p.add_argument("--audit-kb", metavar="DIR", nargs="?",
+                   const="knowledge_base_masked", default=None,
+                   help="比对原件，检查脱敏副本里是否还残留敏感信息（有残留则退出码 1）")
     args = p.parse_args()
 
     if Path(args.config).exists():
@@ -72,6 +83,48 @@ def main():
     else:
         print(f"[config] {args.config} not found; using mock defaults")
         config = json.loads(json.dumps(BASE_CONFIG))
+
+    kb_dir = Path((config.get("knowledge_base") or {}).get("output_dir")
+                  or "./knowledge_base")
+
+    if args.backup_kb:
+        from scripts.kb_backup import backup_zip
+        zp = backup_zip(kb_dir, Path("kb_backups"))
+        print(f"[kb] 备份完成 → {zp}（{zp.stat().st_size // 1024} KB，"
+              f"含整份原始知识库；该目录不入库）")
+        return 0
+
+    if args.export_kb:
+        from scripts.kb_backup import (export_masked, seed_terms_from_credentials,
+                                       summarize, write_keep_template,
+                                       write_term_template)
+        write_term_template(kb_dir)
+        write_keep_template(kb_dir)
+        seeded = seed_terms_from_credentials(kb_dir)
+        if seeded:
+            print(f"[kb] 从凭据行自动补入 {len(seeded)} 个测试账号名到 "
+                  f"{kb_dir / 'mask_terms.txt'}（该文件不入库）")
+        print(summarize(export_masked(kb_dir, Path(args.export_kb))))
+        return 0
+
+    if args.audit_kb:
+        from scripts.kb_backup import audit_masked, redact
+        rep = audit_masked(kb_dir, Path(args.audit_kb))
+        print(f"[kb] 自检：原件抽出 {rep['checked']} 个敏感原子"
+              f"（内网主机名 / 账号口令 / 工单记录号 / 绝对路径），"
+              f"白名单 {rep['kept']} 个")
+        if rep["leaked"]:
+            print(f"[kb] ⚠️ 副本里仍有 {len(rep['leaked'])} 个残留，不能提交：")
+            for item in rep["leaked"][:20]:
+                src = "、".join(item["where"][:3])
+                print(f"     {redact(item['token'])}  ← {src}")
+            if len(rep["leaked"]) > 20:
+                print(f"     …另有 {len(rep['leaked']) - 20} 个")
+            print(f"[kb] 处理：把这些串（或其共同前缀）加进 {kb_dir / 'mask_terms.txt'} "
+                  f"后重新 --export-kb")
+            return 1
+        print("[kb] 零残留，副本可以提交")
+        return 0
 
     pipeline = AIDefectFixerPipeline(config)
 
@@ -155,4 +208,4 @@ def _show(pipeline, pid):
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(int(main() or 0))
