@@ -14,7 +14,10 @@ import { computed, onMounted, ref } from 'vue'
 import { useDefect, PROP_PAGE_SIZE } from '../composables/useDefect.js'
 import { useFold } from '../composables/useFold.js'
 import { useRunModal } from '../composables/useRunModal.js'
+import { useModuleParams } from '../composables/useModuleParams.js'
 import { api } from '../api/client.js'
+import ParamBar from '../components/ParamBar.vue'
+import ParamDrawer from '../components/ParamDrawer.vue'
 import RunLog from '../components/RunLog.vue'
 import ProposalCard from '../components/ProposalCard.vue'
 import ProposalPager from '../components/ProposalPager.vue'
@@ -40,6 +43,21 @@ const {
 
 const { isCollapsed, toggleFold } = useFold()
 const { openRunModal } = useRunModal()
+const { close: closeParams } = useModuleParams()
+
+/** 摘要条：跑之前一眼看清「这次要处理哪些工单、会不会截图」 */
+const summary = computed(() => [
+  { label: '范围', value: mineOnly.value ? '只看我负责的' : '全部工单' },
+  { label: '页面验收', value: skipVerify.value ? '跳过截图' : '会截图验收' },
+  { label: 'Limit', value: String(limit.value ?? '') || '未填', tone: limit.value ? '' : 'todo' },
+  { label: '工单', value: (defectId.value || '').trim() ? '指定 UUID' : '拉最近列表' },
+])
+
+/** 运行 / 试运行都会往主区写日志，先收抽屉再跑，主区整宽看过程 */
+function onStart(kind) {
+  closeParams('defect')
+  start(kind)
+}
 
 /**
  * 放大查看当前「运行结果」日志（旧版 `openRunModal()`：把 #run-log 的 innerHTML
@@ -100,6 +118,11 @@ onMounted(async () => {
 </script>
 
 <template>
+  <!-- 流水线步骤条：由 App.vue 以 #stage-flow 具名插槽注入（id 与状态类都在
+       那边绑好）。放在模块最顶部而不是全局头部 —— 它是**这个模块**的进度条，
+       横在整页头部会把整个版面（含 side 布局的左侧导航）往下挤。 -->
+  <slot name="stage-flow" />
+
   <section class="panel collapsible" id="run-panel" :class="{ collapsed: isCollapsed('run-panel') }">
     <div class="panel-head">
       <h2>
@@ -110,39 +133,9 @@ onMounted(async () => {
         <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9" /></svg>
       </button>
     </div>
-    <div class="run-form">
-      <label class="switch">
-        <input type="checkbox" id="opt-mine" v-model="mineOnly">
-        <span class="track" /><span class="switch-label">只看我负责的</span>
-      </label>
-      <label class="switch">
-        <input type="checkbox" id="opt-skip-verify" v-model="skipVerify">
-        <span class="track" /><span class="switch-label">跳过页面截图</span>
-      </label>
-      <label class="field-inline">
-        <span>Limit</span>
-        <input type="number" id="opt-limit" v-model.number="limit" min="1" max="20">
-      </label>
-      <label class="field-inline grow">
-        <span>工单 UUID（留空 = 拉取列表）</span>
-        <input type="text" id="opt-defect" v-model="defectId"
-               placeholder="填 ONES 工单的 UUID；留空则拉最近工单列表">
-      </label>
-      <el-button type="primary" id="btn-run" :disabled="running" @click="start('run')">
-        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="6 3 20 12 6 21 6 3" /></svg>
-        运行
-      </el-button>
-      <el-button id="btn-probe" :disabled="running" @click="start('probe')"
-              title="只拉取 ONES 工单并 AI 定位问题，不生成提案、不进审批、不写任何文件">
-        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></svg>
-        试运行
-      </el-button>
-      <el-button @click="refreshAll()">
-        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.6-6.3" /><polyline points="21 3 21 9 15 9" /></svg>
-        刷新
-      </el-button>
-    </div>
-    <div class="info-note" id="dry-warn">说明：「试运行」只拉取 ONES 工单并 AI 定位问题（不生成提案、不进审批、不写文件），用来独立验证连通性和定位效果；<br>「运行」走完整流水线产出提案（补丁 + diff + 闸门结果 + 截图），同样不改动目标仓库，人工采纳才写工作区（不 commit、不 push）。<br>运行过程中可实时看到每个阶段的进展，以及大模型的思考与输出。</div>
+    <!-- 主区只放过程与产物：参数摘要条 + 实时运行日志。工单范围、Limit、
+         试运行/运行这些一次性输入搬进了右侧参数抽屉（见文件末尾的 ParamDrawer）。 -->
+    <ParamBar name="defect" action="运行参数" :items="summary" />
 
     <RunLog
       :lines="lines" :live="live" :has-live="hasLive" :replay="replay"
@@ -247,4 +240,47 @@ onMounted(async () => {
               @open-proposal="(id) => emit('open-proposal', id)" />
     </div>
   </section>
+
+  <!-- ── 右侧参数抽屉：一次性输入 + 三个动作 ──
+       「刷新」也留在这里（和运行/试运行同组）：它刷的是提案/统计/知识库三份列表，
+       用的时机就是「准备跑之前先看看现状」。面板头不放按钮是为了不改动
+       .panel-head 那套 h2 + fold + 筛选的既有排布（提案面板就长那样）。 -->
+  <ParamDrawer name="defect" title="运行参数"
+               hint="工单范围与运行方式。点「运行 / 试运行」后抽屉自动收起，主区就是实时日志。">
+    <label class="switch">
+      <input type="checkbox" id="opt-mine" v-model="mineOnly">
+      <span class="track" /><span class="switch-label">只看我负责的</span>
+    </label>
+    <label class="switch">
+      <input type="checkbox" id="opt-skip-verify" v-model="skipVerify">
+      <span class="track" /><span class="switch-label">跳过页面截图</span>
+    </label>
+    <label class="field-inline">
+      <span>Limit</span>
+      <input type="number" id="opt-limit" v-model.number="limit" min="1" max="20">
+    </label>
+    <label class="field">
+      <span>工单 UUID（留空 = 拉取最近列表）</span>
+      <input type="text" id="opt-defect" v-model="defectId"
+             placeholder="填 ONES 工单的 UUID；留空则拉最近工单列表">
+    </label>
+    <div class="info-note" id="dry-warn">说明：「试运行」只拉取 ONES 工单并 AI 定位问题（不生成提案、不进审批、不写文件），用来独立验证连通性和定位效果；<br>「运行」走完整流水线产出提案（补丁 + diff + 闸门结果 + 截图），同样不改动目标仓库，人工采纳才写工作区（不 commit、不 push）。<br>运行过程中可实时看到每个阶段的进展，以及大模型的思考与输出。</div>
+
+    <template #footer>
+      <el-button type="primary" id="btn-run" :disabled="running" @click="onStart('run')">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="6 3 20 12 6 21 6 3" /></svg>
+        运行
+      </el-button>
+      <el-button id="btn-probe" :disabled="running" @click="onStart('probe')"
+              title="只拉取 ONES 工单并 AI 定位问题，不生成提案、不进审批、不写任何文件">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></svg>
+        试运行
+      </el-button>
+      <el-button id="btn-defect-refresh" @click="refreshAll()"
+                 title="重新拉取提案 / 统计 / 知识库列表">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.6-6.3" /><polyline points="21 3 21 9 15 9" /></svg>
+        刷新
+      </el-button>
+    </template>
+  </ParamDrawer>
 </template>

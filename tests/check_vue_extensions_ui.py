@@ -10,6 +10,8 @@
   - MCP 表单：stdio ↔ http 字段互斥切换；假命令测试连接 → 失败路径（表单内
     #mcp-test-result 与卡片 #mcp-out-<id> 两个输出口都验到）
   - 表单关闭状态：#skill-form / #mcp-form / #mcp-test-result 初始都带 hidden
+    （表单搬进右侧参数抽屉后，保存/取消按钮在抽屉动作条里，按 #btn-skill-save /
+     #btn-mcp-save 这类 id 定位，不再用 `#skill-form button.btn-primary` 这种结构选择器）
   - 没有把 undefined / NaN 渲染出来
 
 用法：.venv\\Scripts\\python.exe tests/check_vue_extensions_ui.py
@@ -166,7 +168,7 @@ def run(base: str, *, errors: list, consoles: list) -> None:
         page.fill("#ext-skill-desc", "组件一律函数式")
         page.fill("#ext-skill-content", "1. 组件一律函数式 + hooks；\n2. 样式用 less module。")
         page.check("#ext-skill-scope-reqdev")
-        page.click("#skill-form button.btn-primary")
+        page.click("#btn-skill-save")
         page.wait_for_timeout(900)
         check(f"保存后表单关闭", hidden(page, "#skill-form"))
         cards = page.query_selector_all("#skill-list .ext-card")
@@ -194,7 +196,7 @@ def run(base: str, *, errors: list, consoles: list) -> None:
         check(f"编辑回填内容",
               "hooks" in page.input_value("#ext-skill-content"))
         page.fill("#ext-skill-name", "团队前端规范 v2")
-        page.click("#skill-form button.btn-primary")
+        page.click("#btn-skill-save")
         page.wait_for_timeout(900)
         check(f"改名保存后卡片更新", "团队前端规范 v2" in page.inner_text("#skill-list"))
 
@@ -233,7 +235,7 @@ def run(base: str, *, errors: list, consoles: list) -> None:
               "连接失败" in page.inner_text("#mcp-test-result"))
 
         # ── 5. 保存 MCP → 卡片 + 卡片级测试输出 #mcp-out-<id> ──
-        page.click("#mcp-form button.btn-primary")
+        page.click("#btn-mcp-save")
         page.wait_for_timeout(900)
         check(f"保存后表单关闭", hidden(page, "#mcp-form"))
         mcards = page.query_selector_all("#mcp-list .ext-card")

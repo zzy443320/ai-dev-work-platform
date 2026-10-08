@@ -60,15 +60,48 @@
 
 html { scroll-behavior: smooth; }
 
+/* ===== 「一屏」高度契约（与主题无关，单独放）=====
+   问答这类工作台模块要「占满剩余高度、页面不多出一条滚动条」，其他模块则按内容
+   自然流、整页滚动。两种诉求用同一套机制满足：**把高度从 body 一路传到 pane**，
+   而不是量一个像素常量去减。
+
+   链路（每一环都是「至少占满，装不下就顶长」）：
+     body → #app(flex 列, min-height 100vh, 页面留白)
+       → .topbar(flex: none)
+       → main.layout(flex: 1, grid 行 1fr)
+       → .col-main(grid 行 1fr auto)
+       → #tabs(el-tabs 是 flex 列) → .el-tabs__content(flex-grow:1, grid 行 1fr)
+       → .tabpane.active → pane 里的面板
+
+   留白挂在 #app 而不是 body：Vue 挂在 #app 上，flex 链必须从这一层开始传；
+   顶栏用负外边距抵消这圈留白好让底色横铺满整屏（见 .topbar），所以数值只此一处。
+
+   关键是**只用 `1fr`（等价 minmax(auto,1fr)），不要写 minmax(0,1fr)**：auto 最小值
+   会把内容的固有高度往上传，所以内容比一屏高时整条链一起变长 → 页面正常滚；
+   内容比一屏矮时 `1fr` 又把它撑满视口剩余 → 下方不留死白。
+   反过来写 minmax(0,1fr) 会在第一屏就把长内容裁掉（踩过）。
+
+   ⚠️ `.el-tabs__content` 自带 `overflow: hidden`：那会让它的自动最小尺寸归零，
+   长内容直接被裁而不是把页面顶长，所以这里必须显式改成 `overflow: visible`。
+
+   旧做法是量出 `--fit-chat: 176px` 这类常量再 `100vh - 常量`：换布局（顶栏页签条
+   被藏起来）常量就对不上，实测过 top 布局因此白留 55px 死带，页签条一改动就得重测
+   一遍三档视口。链条化之后这些常量整体删除，一屏对齐由布局本身保证。 */
 body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
     "Microsoft YaHei", sans-serif;
   background: var(--bg);
   color: var(--text);
-  padding: 20px 28px 48px;
-  min-height: 100vh;
   line-height: 1.5;
   transition: background 0.25s, color 0.25s;
+}
+
+#app {
+  padding: 20px 28px 18px;
+  /* min-height（不是 height）+ flex 列：内容矮时 .layout 吃满视口，内容高时整页滚。
+     见文件顶部「一屏高度契约」。 */
+  min-height: 100vh;
+  display: flex; flex-direction: column;
 }
 
 .bg-glow {
@@ -79,13 +112,19 @@ body {
 }
 
 /* ===== Topbar =====
-   吸顶：负 margin 抵消 body padding，滚动后仍可切页签/开关配置。
+   吸顶：负 margin 抵消 #app 的留白，滚动后仍可切页签/开关配置。
+   flex: none —— 顶栏高度由内容决定，不参与 #app 那列的剩余空间分配。
    z-index 58：高于配置遮罩(55)——抽屉打开时顶栏仍可点（齿轮关闭抽屉），
    低于抽屉本体(60)。之前顶栏(40)被遮罩压住，齿轮点不到、抽屉关不掉。 */
 .topbar {
+  /* 上下内边距提成变量：top 布局的页签条要靠负外边距吃掉它们、
+     把下划线压到顶栏底边上（见 .topbar-top .topbar-tabs）。改内边距只改这里。 */
+  --topbar-pt: 18px;
+  --topbar-pb: 12px;
+  flex: none;
   display: flex; justify-content: space-between; align-items: center;
   position: sticky; top: 0; z-index: 58;
-  margin: -20px -28px 16px; padding: 18px 28px 12px;
+  margin: -20px -28px 16px; padding: var(--topbar-pt) 28px var(--topbar-pb);
   background: var(--bg);
   border-bottom: 1px solid var(--border);
 }
@@ -142,20 +181,34 @@ body {
   display: grid; place-items: center; transition: all 0.2s;
 }
 .icon-btn:hover { color: var(--text); border-color: var(--border-strong); }
+/* 顶栏右侧三个图标按钮被拉得太开：Element 给相邻 el-button 加了 12px 左外边距
+   （.el-button + .el-button），叠在 .top-actions 的 10px gap 上就是 22px。
+   只归零顶栏内的这一条，别处 el-button 的间距是既有观感，不动。 */
+.top-actions .el-button + .el-button { margin-left: 0; }
 [data-theme="dark"] .i-sun { display: none; }
 [data-theme="light"] .i-moon { display: none; }
 
-/* ===== Stage flow ===== */
+/* ===== 流水线步骤条 =====
+   2026-09-30 从「顶栏与 main.layout 之间」移进缺陷修复模块内部（DefectPane 的
+   #stage-flow 插槽）。原来它横跨整页宽度（1600 视口下 1544px），把整块版面往下推
+   147px，side 布局下左侧导航也跟着被挤下去；现在它是模块里的一张卡，跟着
+   #pane-defect 的 18px 栅格间距走，所以**不能带外边距**。
+   左侧一条主色竖线把它和下面的「运行流水线」面板串成一组。 */
 .stage-flow {
+  /* display/align/gap 三条不能丢：Element 的 .el-steps 只给了 display:flex，
+     步与步之间的间隔原本就靠这里的 gap。 */
   display: flex; align-items: stretch; gap: 8px;
-  margin-top: 4px; margin-bottom: 20px; padding: 14px 16px;
-  background: var(--panel-solid); border: 1px solid var(--border);
+  margin: 0;
+  padding: 12px 14px;
+  background: var(--panel-solid);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--primary);
   border-radius: 12px;
   overflow-x: auto;
 }
 .stage {
-  flex: 1; min-width: 110px; position: relative;
-  padding: 10px 14px; border-radius: 10px;
+  flex: 1; min-width: 104px; position: relative;
+  padding: 8px 10px; border-radius: 10px;
   background: transparent; transition: background 0.3s, box-shadow 0.3s;
 }
 .stage-num {
@@ -193,72 +246,190 @@ body {
 .stage.off { opacity: 0.38; }
 .stage.off .stage-arrow { opacity: 0.2; }
 
-/* ===== Layout ===== */
+/* ===== Layout =====
+   只有两种布局（见 composables/useLayout.js）：
+     side = 侧边工作台（默认）：左侧分组导航 + 全宽主列
+     top  = 顶部导航：页签搬进顶栏、紧贴品牌右侧，主列直接从内容开始
+   两种布局下右侧配置栏都是**抽屉**（.col-side 固定定位、脱离文档流），
+   所以这里参与排列的只有 .side-nav 与 .col-main 两块。
+
+   `flex: 1` + `grid-template-rows: 1fr` 是文件顶部那条高度链的中间两环：
+   主列至少吃满顶栏以下的剩余视口，内容更长时整条链一起变长（整页滚动）。
+   align-items 默认 stretch：col-main 必须跟着行高长，高度才传得下去；
+   左侧导航自己带 `align-self: start`（吸顶 + 自身限高），不受影响。 */
 .layout {
+  flex: 1;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 330px;
-  gap: 18px; align-items: start;
+  grid-template-columns: 212px minmax(0, 1fr);
+  grid-template-rows: 1fr;
+  gap: 18px;
+  min-width: 0;
   transition: grid-template-columns 0.25s ease;
 }
-/* 收起配置栏：右侧只剩一条竖排展开按钮的宽度，主栏占满 */
-.layout.side-collapsed { grid-template-columns: minmax(0, 1fr) 52px; }
-@media (max-width: 1100px) { .layout { grid-template-columns: 1fr; } }
+.layout.layout-top { grid-template-columns: minmax(0, 1fr); }
+
 /* 轨道同样锁死：col-main 的隐式列 auto 会被 el-tabs（页签条 nowrap 的
-   min-content）撑开，窄窗口下整体右移压进配置栏 —— 与内容无关的页签条宽度。 */
-.col-main, .col-side { display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; min-width: 0; }
+   min-content）撑开，窄窗口下整体右移 —— 与内容无关的页签条宽度。
+   行：默认**不写 grid-template-rows**，让 #tabs 与产出物面板各按内容高，
+   align-content: start 把多余空间留在页面最下方（而不是两块面板中间）。
+   只有 .pane-fill（问答这类占满型页签，名单见 tabs.js 的 FILL_TABS）才给
+   #tabs 一行 1fr 去吃掉剩余高度。
+   隐式行而不是写死 `1fr auto` 也是同一个道理：显式轨道永远存在，面板隐藏时
+   那条空轨道还会额外算一次 gap。 */
+.col-main {
+  display: grid; grid-template-columns: minmax(0, 1fr);
+  gap: 18px; align-content: start; min-width: 0;
+  /* 容器查询的锚点：模块内的双栏阈值要看**主列实际多宽**，不是视口多宽 ——
+     侧边工作台会先吃掉左导航 212 + 间距 18 + 页面留白 56 = 286px，按视口算的
+     `min-width: 1200px` 在 1280 笔记本上会提前劈成两栏，每栏只剩 ~480px。 */
+  container-type: inline-size;
+  container-name: main;
+}
+.col-main.pane-fill { grid-template-rows: 1fr; }
 /* el-tabs 是 col-main 的 grid item，min-width:auto 会把页签条 min-content 传播出去 */
 .col-main > #tabs { min-width: 0; }
 
-/* 收起态：面板整体藏起来，只留竖排「配置栏」按钮（SettingsPanel 渲染） */
-.col-side.collapsed > #settings-panel { display: none; }
-.col-side.collapsed { gap: 0; }
-.side-rail {
-  writing-mode: vertical-rl; letter-spacing: 0.35em;
-  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
-  min-height: 220px; padding: 14px 0; width: 100%;
-  border: 1px solid var(--border); border-radius: 12px;
-  background: var(--panel); color: var(--text-dim);
-  font: inherit; font-size: 12px; font-weight: 600; cursor: pointer;
-  transition: color 0.15s, border-color 0.15s, background 0.15s;
+/* 两种布局各有自己的导航（左侧分组导航 / 顶栏页签条），el-tabs 自带的页签头用不上。
+   但 DOM 仍然渲染：#tabs 是 pane 的容器（内容全在 .el-tabs__content 里），
+   `.el-tabs__item` / `#tab-<name>` / `is-active` 又是一批界面用例的选择器契约 ——
+   所以只把头部藏掉，不摘组件、更不能整表隐藏（那样内容也一起空了）。 */
+#tabs > .el-tabs__header { display: none; }
+
+/* 高度链的最后一环：pane 容器吃掉 #tabs 里除页签头之外的全部剩余高度。
+   Element 默认给 .el-tabs__content 写了 overflow:hidden —— 那等于声明「我可以被裁」，
+   自动最小尺寸归零，长内容就不再往上传、而是直接被切掉。改回 visible，
+   下面那条 `grid-template-rows: 1fr`（= minmax(auto,1fr)）才会真的按内容长。 */
+#tabs > .el-tabs__content {
+  overflow: visible;
+  display: grid; grid-template-rows: 1fr; min-width: 0;
 }
-.side-rail:hover { color: var(--primary); border-color: var(--primary); background: var(--primary-soft); }
-.side-rail svg { transform: rotate(90deg); }
 
-/* ===== 布局模式（useLayout）：tri=默认三栏 / top=顶部导航 / side=侧边工作台 =====
-   top/side 模式下右侧配置栏脱离文档流变成右侧抽屉：DOM 不动（SettingsPanel
-   仍是 .layout 的子元素），只改定位 —— 界面用例跑默认 tri，互不干扰。 */
-.layout.layout-top { grid-template-columns: minmax(0, 1fr); }
-.layout.layout-side { grid-template-columns: 212px minmax(0, 1fr); }
-/* side 布局：导航由左侧 side-nav 承担，只藏页签头，内容体（pane 容器）保留 */
-.layout.layout-side #tabs > .el-tabs__header { display: none; }
-
-.layout.layout-top > .col-side,
-.layout.layout-side > .col-side {
+/* ===== 配置抽屉（唯一的右栏形态）=====
+   脱离文档流：主列因此能占满整宽，抽屉浮在上面。
+   抽屉自己有限高（top/bottom 定位给定的）→ 内容长了在自己框内滚，不参与页面高度。 */
+.col-side {
+  display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; min-width: 0;
   position: fixed; z-index: 60;
   top: 78px; right: 20px; bottom: 20px;
   width: 348px; max-width: calc(100vw - 40px);
-  overflow: auto;
+  overflow-y: auto; overflow-x: hidden; scrollbar-width: thin;
   transform: translateX(calc(100% + 40px));
   visibility: hidden;
   transition: transform 0.25s ease, visibility 0.25s;
 }
-.layout.layout-top.config-open > .col-side,
-.layout.layout-side.config-open > .col-side {
-  transform: translateX(0); visibility: visible;
-}
-/* 抽屉模式与 ui-sidebar 收起态互斥：曾收起过的用户切过来不能看到空抽屉 */
-.layout.layout-top > .col-side.collapsed > #settings-panel,
-.layout.layout-side > .col-side.collapsed > #settings-panel { display: grid; }
-/* 抽屉下的收起态（side-rail 竖排按钮）没有意义，强制展开样式 */
-.layout.layout-top.config-open > .col-side .side-rail,
-.layout.layout-side.config-open > .col-side .side-rail { display: none; }
+.layout.config-open > .col-side { transform: translateX(0); visibility: visible; }
 
 .config-mask {
   position: fixed; inset: 0; z-index: 55;
   background: rgba(8, 11, 20, 0.45);
 }
 
-/* 顶栏布局切换器：三个排列图标按钮，选中态用主色 */
+/* ===== 模块参数抽屉（ParamDrawer / ParamBar）=====
+   六个任务型模块的输入区。形态照配置抽屉（固定右侧浮层 + 自身内滚），但两点不同：
+   · 显隐走 `.hidden`（display:none）而不是 visibility+transform —— 关着的抽屉不该
+     留在可访问性树里抢 Tab 序，界面用例读的也是 `.hidden`；入场动画靠 animation
+     在 display:none → 显示时天然重播。
+   · **默认打开，所以刻意做成非模态**：宽屏下不铺遮罩，改由 `.col-main.params-open`
+     让出右侧 436px，主区的过程与产物始终可见（模态抽屉默认打开等于常年盖住半屏）。
+     窄屏（视口 ≤1100）让不出空间，才退回「遮罩 + 浮层」的模态形态。
+   · 挂在各模块 pane 内部，el-tab-pane 切走时一起消失，不会跨页签残留。
+   · z-index 56/59：压在配置抽屉(60)之下、配置遮罩(55)之上。
+   宽度 420px 比配置抽屉宽一点：里面装的是长文本域（接口文档、代码参考），
+   348px 会把 textarea 压成一列一个字。 */
+.mod-mask {
+  position: fixed; inset: 0; z-index: 56;
+  background: rgba(8, 11, 20, 0.42);
+  display: none;                 /* 宽屏非模态：不要遮罩 */
+}
+.mod-drawer {
+  position: fixed; z-index: 59; top: 78px; right: 20px; bottom: 20px;
+  width: 420px; max-width: calc(100vw - 40px);
+  display: flex; flex-direction: column; min-height: 0;
+  border: 1px solid var(--border); border-radius: 14px;
+  background: var(--panel-solid); box-shadow: var(--shadow);
+  animation: mod-drawer-in 0.2s ease;
+}
+/* 让位量 = 抽屉 420 + 右缘 20 + 与主区之间 24 的呼吸 */
+.col-main.params-open { padding-right: 436px; transition: padding-right 0.25s ease; }
+@media (max-width: 1100px) {
+  /* 视口再窄就腾不出 436px 了：改回模态（出遮罩、主区不让位、点遮罩可关） */
+  .col-main.params-open { padding-right: 0; }
+  .mod-mask { display: block; }
+}
+@keyframes mod-drawer-in {
+  from { opacity: 0; transform: translateX(18px); }
+}
+.mod-drawer-head {
+  flex: none; display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 14px 16px 0;
+}
+.mod-drawer-title {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 13px; font-weight: 600; color: var(--text);
+}
+.mod-drawer-title svg { color: var(--primary); flex: none; }
+.mod-drawer-close {
+  width: 26px; height: 26px; flex: none; display: grid; place-items: center;
+  border: 1px solid var(--border); border-radius: 8px;
+  background: transparent; color: var(--muted); cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+.mod-drawer-close:hover { color: var(--primary); border-color: var(--primary); }
+.mod-drawer-hint {
+  flex: none; margin: 6px 16px 0; padding: 0;
+  font-size: 11.5px; line-height: 1.6; color: var(--text-dim);
+}
+/* 表单区自己滚：抽屉有 top/bottom 定位，高度是定的，长表单不能把底部动作条顶出去 */
+.mod-drawer-body {
+  flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: thin;
+  display: flex; flex-direction: column; gap: 12px;
+  padding: 12px 16px;
+}
+.mod-drawer-foot {
+  flex: none; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 12px 16px 14px; border-top: 1px solid var(--border);
+}
+/* 抽屉里的字段沿用全局 `.field`（grid + 标签在上），这里只补两件事：
+   清掉 .run-form 自带的下边距（间距由 body 的 flex gap 统一给），
+   以及把说明条的下边距收掉（最后一条不该再留一段空）。 */
+.mod-drawer .run-form { flex-wrap: wrap; gap: 10px; margin-bottom: 0; }
+.mod-drawer .info-note { margin-bottom: 0; font-size: 11.5px; }
+
+/* 过程区的状态标题：一行说清「这是什么、现在到哪一步」，
+   省得主区只剩一块灰底占位时看不出是没跑还是跑完了 */
+.src-caption { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+.src-title { font-size: 12.5px; font-weight: 600; color: var(--text-dim); }
+.src-state {
+  font-size: 11px; padding: 2px 8px; border-radius: 999px;
+  background: var(--input-bg); border: 1px solid var(--border); color: var(--text-dim);
+}
+.src-state.ok { color: var(--success); border-color: var(--success-soft); background: var(--success-soft); }
+.src-state.bad { color: var(--danger); border-color: var(--danger-soft); background: var(--danger-soft); }
+
+/* 主区顶部的参数摘要条 */
+.param-bar {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px 10px;
+  margin-bottom: 14px; padding: 9px 12px;
+  border: 1px solid var(--border); border-radius: 10px;
+  background: var(--input-bg);
+}
+.param-bar-label { font-size: 12px; font-weight: 600; color: var(--text-dim); }
+.param-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  max-width: 340px; padding: 3px 9px; border-radius: 999px;
+  background: var(--panel); border: 1px solid var(--border);
+  font-size: 11.5px; color: var(--text);
+}
+.param-chip b { font-weight: 600; color: var(--muted); flex: none; }
+.param-chip i { font-style: normal; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 「还没填」用告警色而不是红：这是提示，不是错误 */
+.param-chip.todo { color: var(--warn); border-color: var(--warn-soft); background: var(--warn-soft); }
+.param-chip.todo b { color: var(--warn); }
+.param-bar .el-button.is-on {
+  color: var(--primary); border-color: var(--primary); background: var(--primary-soft);
+}
+
+/* 顶栏布局切换器：两个排列图标按钮，选中态用主色 */
 .layout-switch {
   display: flex; align-items: center; gap: 2px; padding: 2px;
   border: 1px solid var(--border); border-radius: 10px;
@@ -272,10 +443,120 @@ body {
 .ls-btn:hover { color: var(--text); }
 .ls-btn.active { background: var(--primary-soft); color: var(--primary); }
 
+/* ===== 顶栏内嵌页签（top 布局）=====
+   形态参照「文字型顶部导航」：扁平无底、等宽均分整条可用空间，活动项文字加重 +
+   文字宽度下划线，且下划线压在顶栏底边上。这是导航的第二套语言，跟主列 el-tabs
+   那套「凹槽 + 浮起胶囊」（theme.css 里，如今处于休眠态）不是一回事，别混着改。
+   只有 top 布局渲染它（非 top 时挂 .hidden），side 布局的顶栏一字不变。 */
+.topbar-tabs {
+  position: relative;
+  flex: 1 1 auto; min-width: 0;
+  display: flex; align-items: stretch;
+  margin: 0 6px;
+}
+/* 拉满顶栏高度：负外边距吃掉顶栏的上下内边距与底边框，于是活动页签的下划线正好
+   落在顶栏底边上（参照图的形态）。负外边距算进「外层高度」，所以顶栏不会被撑高；
+   数值来自 .topbar 的 --topbar-pt/--topbar-pb，改内边距时自动跟上。 */
+.topbar-top .topbar-tabs {
+  align-self: stretch;
+  margin-top: calc(-1 * var(--topbar-pt));
+  margin-bottom: calc(-1 * var(--topbar-pb) - 1px);
+}
+/* 品牌与右侧操作组都不许被页签条挤扁（挤扁会让标题折行、顶栏长高） */
+.topbar > .brand,
+.topbar > .top-actions { flex: none; }
+
+.tt-strip {
+  flex: 1 1 auto; min-width: 0;
+  display: flex; align-items: stretch;
+  overflow-x: auto; overflow-y: hidden;
+  /* 滚动条交给箭头与滚轮/触控板，不画原生条：画了会占掉高度且样式不可控 */
+  scrollbar-width: none;
+}
+.tt-strip::-webkit-scrollbar { display: none; }
+
+/* 等宽均分：`flex: 1 1 0` 让 9 项各拿 1/9，统一 min-width 保证「要么全等宽、
+   要么一起溢出」—— basis 0 + 同一个下限，夹紧只会全体一起发生，不会出现
+   有的被压扁、有的还宽着。min-width 取「最长标签（长任务作业）实测 65px +
+   左右内边距 12px + 余量」：低于它文字会被挤出按钮，高于它会在 1440 这种
+   常见宽度上白出滚动条（脚本算的阈值 = 视口 1431px）。 */
+.tt-tab {
+  flex: 1 1 0;
+  min-width: 84px;
+  position: relative;
+  display: inline-flex; align-items: stretch; justify-content: center;
+  padding: 0 6px;
+  border: 0; background: transparent;
+  font: inherit; font-size: 13px; color: var(--text-dim);
+  white-space: nowrap; cursor: pointer;
+  transition: color .18s;
+}
+.tt-tab:hover { color: var(--text); }
+/* 参照图是纯文字导航，顶栏这里不放图标（主列页签与侧边导航仍带图标） */
+.tt-tab svg { display: none; }
+
+/* 标签盒子撑满页签高度：它既是文字的居中容器，也是下划线的定位参照 ——
+   下划线挂在这里，宽度自然等于文字宽度（不是整格宽）。 */
+.tt-label {
+  position: relative; align-self: stretch;
+  display: inline-flex; align-items: center;
+}
+.tt-tab:hover .tt-label::after,
+.tt-tab.active .tt-label::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: 0;
+  height: 2.5px; border-radius: 2px;
+}
+/* 悬停先给一条浅下划线，暗示「点它会选中」；选中的是主色那条 */
+.tt-tab:hover .tt-label::after { background: var(--border-strong); }
+.tt-tab.active { color: var(--primary); font-weight: 600; }
+.tt-tab.active .tt-label::after { background: var(--primary); }
+
+/* 两端渐隐：滚动中半格页签压在箭头下面时，读起来是「后面还有」而不是「字被切了」。
+   挂在容器伪元素上（不是滚动容器）—— 挂在滚动容器里会跟着内容一起滚走。 */
+.topbar-tabs::before,
+.topbar-tabs::after {
+  content: ""; position: absolute; top: 0; bottom: 0; width: 40px;
+  opacity: 0; pointer-events: none; z-index: 1;
+  transition: opacity .18s;
+}
+.topbar-tabs::before {
+  left: 0;
+  background: linear-gradient(90deg, var(--bg) 58%, transparent);
+}
+.topbar-tabs::after {
+  right: 0;
+  background: linear-gradient(270deg, var(--bg) 58%, transparent);
+}
+.topbar-tabs.has-prev::before,
+.topbar-tabs.has-next::after { opacity: 1; }
+
+/* 箭头：**absolute 浮层，不占布局宽度**。
+   占位的话「箭头出现 → 条变窄 → 更该出现」单向自锁，反向又在阈值附近反复翻，
+   ResizeObserver 会被自己触发成死循环；浮层化后显隐不改变任何盒模型。 */
+.tt-arrow {
+  position: absolute; top: 50%; transform: translateY(-50%); z-index: 2;
+  width: 22px; height: 22px; padding: 0; border-radius: 50%;
+  display: grid; place-items: center;
+  border: 1px solid var(--border); background: var(--panel-solid);
+  color: var(--text-dim); cursor: pointer;
+  box-shadow: 0 1px 4px rgba(9, 12, 24, 0.10);
+  transition: color .15s, border-color .15s, background-color .15s;
+}
+.tt-arrow.prev { left: 6px; }
+.tt-arrow.next { right: 6px; }
+.tt-arrow:hover {
+  color: var(--primary); border-color: var(--primary); background: var(--primary-soft);
+}
+
 /* ===== 侧边工作台导航（side 布局） ===== */
 .side-nav {
   display: flex; flex-direction: column; gap: 18px;
-  position: sticky; top: 20px; align-self: start;
+  /* 吸顶位置必须落在顶栏「下面」：顶栏自己 sticky 在视口 0~76 且是不透明底，
+     原来 top:20 会让导航滚上去直接躲进顶栏里（看起来就是「菜单跟着页面滚走了」）。
+     88 = 顶栏 76 + 12 呼吸。限高要同时让开 #app 的 18px 下留白（88 + 18 = 106），
+     否则导航底边会越过主列底边、自己把页面顶出一条滚动条。 */
+  position: sticky; top: 88px; align-self: start;
+  max-height: calc(100vh - 106px); overflow-y: auto; scrollbar-width: thin;
 }
 .nav-group { display: grid; gap: 3px; }
 .nav-group-label {
@@ -295,11 +576,24 @@ body {
   background: var(--primary-soft); color: var(--primary); font-weight: 600;
 }
 .nav-item.active svg { opacity: 1; }
+/* 窄窗口（<1100px）：侧边导航那条 212px 列给不出去，改收成主列上方的一条横排带，
+   主列排在第二行继续吃剩余高度（`grid-template-rows: auto 1fr`）。
+   只给 .layout-side 改行：top 布局本来就没有导航这一块，仍是单行 1fr，
+   跟着改成两行会让主列落进 auto 那一行、拿不到剩余高度（实测矮窗口问答页下方留白）。
+   导航带这里改成 static 跟着页面滚 —— 不是忘了吸顶：sticky 的活动范围是它自己的
+   grid 区域，行高 auto 时区域和自身一样高，吸了也挪不动，留着只会误导后来人。 */
 @media (max-width: 1100px) {
-  /* 窄屏本来就是单列，收起后竖排按钮太高，压到正常按钮高度 */
-  .layout.side-collapsed { grid-template-columns: 1fr; }
-  .side-rail { writing-mode: horizontal-tb; letter-spacing: 0.08em; min-height: 0; padding: 8px 12px; }
-  .side-rail svg { transform: none; }
+  .layout { grid-template-columns: minmax(0, 1fr); }
+  .layout.layout-side { grid-template-rows: auto 1fr; }
+  .side-nav {
+    position: static; max-height: none; overflow: visible;
+    flex-direction: row; flex-wrap: wrap; align-items: center; gap: 6px 10px;
+  }
+  .nav-group { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+  /* 分组名收掉：留着会让横排带按分组各起一行（实测涨到 200px 高），
+     把主列的高度吃掉，问答页反而要多滚一条。窄屏下靠顺序读就够，条目文案已说清是什么。 */
+  .nav-group-label { display: none; }
+  .nav-item { padding: 7px 11px; }
 }
 
 /* ===== Panels =====
@@ -365,6 +659,14 @@ body {
 .field-inline input:not(.el-input__inner):not(.el-select__input):focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-soft); }
 .field-inline input[type="number"] { width: 64px; }
 .field-inline input:not(.el-input__inner)[type="text"] { flex: 1; min-width: 120px; }
+/* 窄窗口（主列被压到 ~430px 以内）：`.run-form` 本身会换行，但「nowrap 的标签 +
+   120px 输入下限」这一组仍可能把整行撑出几像素（实测 720 宽下缺陷筛选行溢出 5px，
+   页面多一条横向滚动条）。让 UUID 这类长字段独占一行、标签可折、输入框下界归零。 */
+@media (max-width: 860px) {
+  .field-inline > span { white-space: normal; }
+  .field-inline.grow { flex-basis: 100%; min-width: 0; }
+  .field-inline input:not(.el-input__inner)[type="text"] { min-width: 0; }
+}
 
 /* ===== 分段选择（Figma 取稿通道等） ===== */
 .seg {
@@ -614,7 +916,9 @@ button { font-family: inherit; }
 .settings-group + .settings-group { margin-top: 10px; }
 .group-title {
   font-size: 11px; font-weight: 700; color: var(--text-dim);
-  text-transform: uppercase; letter-spacing: 0.08em;
+  /* 不用 text-transform: uppercase：中文不吃这条规则，英文词却会被喊成
+     「FIGMA 接入」「ONES 接入」，同一行上两种语言表现不一致。 */
+  letter-spacing: 0;
   display: flex; align-items: center; gap: 6px;
 }
 .group-title::before {
@@ -639,7 +943,154 @@ button { font-family: inherit; }
 .repo-hint.muted { color: var(--muted); }
 .settings-actions { display: flex; gap: 10px; margin-top: 14px; }
 .settings-note { font-size: 11px; color: var(--muted); margin-top: 10px; line-height: 1.6; }
-.settings-note code { background: var(--code-bg); color: var(--text-dim); padding: 1px 5px; border-radius: 4px; font-size: 10.5px; }
+.settings-note code { background: var(--code-bg); color: #d7e0f0; padding: 1px 5px; border-radius: 4px; font-size: 10.5px; }
+
+/* ===== 配置模块（#pane-config，2026-09-30 独立成页签）=====
+   2026-09-30 第二次改版：从「auto-fit 自动多列」改成「三个语义分区 × 12 栏谱系」。
+
+   旧版的问题（实测 viewport 1600：面板 1196，网格视口 681 / 内容 1025）：
+   `repeat(auto-fit, minmax(330px,1fr))` 按最小宽硬切出三列，同排卡片
+   183 / 205 / 443 —— 高度差 2.4 倍，最短的卡片下方 260px 全是空白，
+   读者看不出「哪几项是一组」。
+
+   新版的取舍：
+     · 分区用 .cfg-region 包一层，每区内部是 12 栏网格，卡片用 --span 显式占栏；
+       占位数按内容量定（ONES 六个字段 → 7 栏、Figma 一个字段 → 5 栏），不靠猜。
+     · 同排卡片 align-items: stretch 等高；卡片内的「脚注类元素」margin-top: auto
+       压到底边 —— 高度残差变成有意的脚注位，而不是半张卡片的死白。
+     · 分区标题通栏 + 右侧一条细线（.region-head::after）；用短词，不用 01/02/03。 */
+.config-grid {
+  display: grid; gap: 18px;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+}
+.cfg-region {
+  display: grid; gap: 14px;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+}
+.region-head {
+  grid-column: 1 / -1;
+  display: flex; align-items: center; gap: 10px;
+  font-size: 12px; font-weight: 600; color: var(--text-dim);
+  margin-bottom: -3px;
+}
+/* 通栏细线：分区标题向右跑满，把「这一段开始了」交代清楚，不靠编号 */
+.region-head::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+
+.cfg-region > .settings-group {
+  grid-column: span var(--span, 6);
+  display: flex; flex-direction: column; gap: 10px;
+  padding: 13px 15px; border-radius: 12px;
+  background: var(--input-bg); border: 1px solid var(--border);
+}
+/* 分区间距已由网格 gap 给出；旧的「相邻分组 margin-top」在网格里会和 gap 叠加 */
+.cfg-region > .settings-group + .settings-group { margin-top: 0; }
+
+/* 卡片标题行：标题 + 右侧「必要性 / 生效条件」胶囊 */
+.cfg-region .group-head { display: flex; align-items: center; gap: 8px; }
+.cfg-region .group-title {
+  font-size: 12.5px; font-weight: 600; color: var(--text);
+  text-transform: none;
+}
+.cfg-region .group-title::before {
+  /* 6px 方点 → 3×12 竖条：读起来是「这一段」的标记，不是列表圆点 */
+  width: 3px; height: 12px; border-radius: 2px;
+}
+.group-tag {
+  margin-left: auto; flex: none;
+  font-size: 10.5px; font-weight: 600; line-height: 1.6;
+  padding: 1px 8px; border-radius: 999px;
+  color: var(--muted); background: var(--border);
+}
+/* 只给真正「不填就跑不起来」的那一项上强调色 —— 满屏彩色标签等于没有强调 */
+.group-tag.req { color: var(--primary); background: var(--primary-soft); }
+
+/* 卡片内字段：标签单行不折（成对字段的输入框才能左右对齐）、字阶收到 11.5px */
+.cfg-region .field { gap: 6px; font-size: 11.5px; }
+.cfg-region .field > span {
+  font-weight: 500; color: var(--text-dim);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+/* 成对字段：ONES 六个字段竖排要 443px，两两成对只要约 240px */
+.cfg-region .field-row { gap: 10px 14px; }
+/* 横条卡片：页面验证只有两个控件，铺成一行比单独占一格省掉一整排高度 */
+.cfg-inline { display: flex; align-items: center; gap: 22px; flex-wrap: wrap; }
+.cfg-inline > .field { flex: 1 1 340px; }
+/* 标签挪到控件左侧的横排字段（.field 默认是「标签在上、控件在下」） */
+.field.field-inline-label {
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center; column-gap: 12px;
+}
+
+/* 脚注锚底：卡片被拉高时，说明／预览／按钮贴到底边，而不是在中间留一段空白。
+   卡片没有被拉高（内容本身就比同伴高）时 margin-top: auto 不产生任何效果。 */
+.cfg-region > .settings-group > .info-note,
+.cfg-region > .settings-group > .gate-preview,
+.cfg-region > .settings-group > .repo-hint,
+.cfg-region > .settings-group > .card-note,
+.cfg-region > .settings-group > .settings-actions { margin-top: auto; }
+/* 卡片底部的弱说明：比 .info-note 轻一档，不必每张卡都挂一个灰盒子 */
+.card-note { font-size: 11px; color: var(--muted); line-height: 1.7; }
+/* .info-note 在卡片里已由 flex gap 分隔，别再叠一层下外边距；
+   同时把「描边小盒子」降成「左侧引线脚注」—— 卡片底色和 --input-bg 是同一个值，
+   保留描边就成了同色的框里套框；左侧一条线更轻，也不会跟上方表单控件抢注意力。 */
+.cfg-region .info-note {
+  margin-bottom: 0;
+  background: transparent; border: 0; border-left: 2px solid var(--border-strong);
+  border-radius: 0; padding: 1px 0 1px 11px;
+}
+
+/* 面板底部动作条：顶边细线交代「以上是内容、这里是提交」 */
+.config-foot {
+  flex: none; display: flex; align-items: center; justify-content: space-between;
+  gap: 12px 22px; flex-wrap: wrap;
+  margin-top: 14px; padding-top: 13px; border-top: 1px solid var(--border);
+}
+.config-foot .settings-actions { margin-top: 0; }
+.config-foot .settings-note { margin-top: 0; text-align: right; max-width: 78ch; }
+
+/* 面板右上角的一行操作提示 */
+.cfg-tip { font-size: 12px; color: var(--text-dim); }
+
+/* ── 可读性兜底（改版时实测出来的两个硬伤）──
+   1) code 芯片：--code-bg 在明暗两套都**是深底**（浅色下 #0f172a），而通用规则给芯片
+      配的前景是 --text-dim —— 浅色主题下实测 fg rgb(71,85,105) 对 bg rgb(15,23,42)，
+      黑底写深灰字，读不出来。统一成项目其他地方给深底代码块用的浅前景 #d7e0f0
+      （同 .modal-body pre / .sr-head pre 的配对），明暗两套都成立。
+      补 background 是必需的：.info-note 里的行内 code 原本没有芯片底色，
+      只改前景会让它在浅色主题下变成「白底浅字」，反而更不可读。
+   2) 说明类文字：--muted 在浅色主题下对白底约 2.5:1，够不上可读性基线。这几处承载的
+      是「要不要填、填了会怎样」的真实信息，不是装饰，改用 --text-dim。 */
+.cfg-region code,
+.config-foot code {
+  background: var(--code-bg); color: #d7e0f0;
+  padding: 1px 5px; border-radius: 4px;
+}
+.cfg-region .info-note,
+.cfg-region .card-note,
+.config-foot .settings-note { color: var(--text-dim); }
+
+/* 配置模块不再单独限高内滚，跟其它模块一样按内容自然流、整页滚动：
+   以前给它套 `max-height: clamp(360px, 100vh - 常量, 2200px)` + `.config-grid` 内滚，
+   是为了配合三栏经典里「右栏与问答网格同一条底边、页面一屏装下」。三栏布局去掉之后
+   这条特例只剩坏处 —— 一个只有配置页会出现的内层滚动条，滚轮进到面板里就滚不动页面。
+   面板自身仍是 flex 列（头部固定 + 底部动作条），只是不再被压成一屏。 */
+#config-panel { display: flex; flex-direction: column; }
+#config-panel > .config-grid { flex: 1; }
+
+/* 窄窗口：整区退成单列（12 栏的 span 全部归满行），两列字段也收成一列 */
+@media (max-width: 1240px) {
+  .cfg-region > .settings-group { grid-column: 1 / -1; }
+}
+@media (max-width: 1080px) {
+  .cfg-region .field-row { grid-template-columns: minmax(0, 1fr); }
+  .cfg-region .field > span { white-space: normal; }
+}
+/* 侧栏摘要的只读行（.pm-line 在弹窗里也是这个语义：b=标签 + span=值） */
+#settings-panel .pm-line span { display: inline-flex; align-items: center; gap: 6px; }
+.sum-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.sum-dot.ok { background: var(--success); }
+.sum-dot.off { background: var(--border-strong); }
 
 /* ===== Modal ===== */
 .modal {
@@ -929,6 +1380,12 @@ button { font-family: inherit; }
 }
 .am-toggle-btn:hover { border-color: var(--primary); }
 .diff-lines .dl.blk { display: block; padding: 0 6px; }
+/* 折叠标记：改动上下文视图里「已折叠 N 行未变代码」的占位行 */
+.diff-lines .dl.fold {
+  display: block; text-align: center; color: var(--muted);
+  background: none; font-size: 11.5px; padding: 2px 6px;
+  border-top: 1px dashed var(--border); border-bottom: 1px dashed var(--border);
+}
 .df-bad { font-size: 12px; color: var(--danger); margin: 4px 0 8px; }
 .warn-list { margin: 0 0 8px 18px; font-size: 11.5px; color: var(--warn); line-height: 1.6; }
 .iss-title { font-size: 12px; font-weight: 700; margin: 8px 0 4px; }
@@ -1041,7 +1498,7 @@ button { font-family: inherit; }
 }
 .gate-preview .gp-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; font-weight: 600; }
 .gate-preview .gp-list { list-style: none; display: grid; gap: 4px; margin-bottom: 6px; }
-.gate-preview .gp-list code { background: var(--code-bg); color: var(--text-dim); padding: 1px 6px; border-radius: 4px; }
+.gate-preview .gp-list code { background: var(--code-bg); color: #d7e0f0; padding: 1px 6px; border-radius: 4px; }
 .gate-preview .gp-name { color: var(--primary); font-weight: 700; margin-right: 6px; }
 .gate-preview .hint { color: var(--muted); font-size: 11px; line-height: 1.6; }
 .gate-preview b { color: var(--warn); }
@@ -1224,11 +1681,20 @@ details.adv .adv-body .field:first-child { padding-top: 10px; }
 .tabpane { display: none; }
 /* 轨道锁死 minmax(0,1fr)：否则隐式列 auto 的 min-content 会被统计页的
    ECharts canvas（固定像素宽）撑开且缩不回 —— 表现为切布局后统计页宽度
-   不跟随、横向溢出盖住配置栏（其他模块内容可收缩所以无此问题）。
-   轨道锁死后容器真变窄，EChart.vue 的 ResizeObserver 才能触发 chart.resize()。 */
-.tabpane.active { display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; }
+   不跟随、横向溢出。轨道锁死后容器真变窄，EChart.vue 的 ResizeObserver
+   才能触发 chart.resize()。
+   align-content: start 是刻意压住 grid 的默认 stretch：pane 现在会被上面那条
+   `grid-template-rows: 1fr` 拉到「至少一屏高」，默认的 stretch 会把多出来的空间
+   摊给每一条 auto 行，结果是一屏内容不长的模块里每张卡片都被拉高、中间全是空白。
+   收成 start 之后多出来的空间留在下方，与其它模块（整页自然流）一致。 */
+.tabpane.active {
+  display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px;
+  align-content: start; min-width: 0;
+}
 
-#artifact-panel { margin-top: 18px; }
+/* 产出物面板与模块面板之间的 18px 由 .col-main 的 grid gap 给，
+   这里以前另有一条 margin-top: 18px，两套间距叠成 36px —— 去掉。 */
+#artifact-panel { margin-top: 0; }
 
 /* ===== 扩展能力（技能 / MCP） ===== */
 .ext-form {
@@ -1408,10 +1874,14 @@ details.adv .adv-body .field:first-child { padding-top: 10px; }
 .team-agent.error .team-dot { background: var(--danger); }
 .team-agent.waiting .team-dot { background: var(--warn); }
 .team-agent.working .team-dot { animation: ai-blink 1.1s ease-in-out infinite; }
-.team-agent-emoji { font-size: 13px; }
-.team-agent-name { font-weight: 700; color: var(--text); }
+.team-agent-emoji { font-size: 13px; flex: none; }
+/* 角色名必须整行不折：参数抽屉打开后主列窄了 436px，四张卡各剩 ~265px，
+   名字没有 flex:none 就会被右侧阶段徽标挤成一字一行（「决/策/官」竖排）。
+   让位的是徽标 —— 它是次要信息，且本身可以省略号截断。 */
+.team-agent-name { font-weight: 700; color: var(--text); flex: none; white-space: nowrap; }
 .team-agent-stage {
-  margin-left: auto; flex: none;
+  margin-left: auto; flex: 0 1 auto; min-width: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   padding: 1px 7px; border-radius: 20px;
   font-size: 10.5px; color: var(--muted);
   background: var(--panel); border: 1px solid var(--border);
@@ -1709,6 +2179,180 @@ details.adv .adv-body .field:first-child { padding-top: 10px; }
 /* ================= 问答 ================= */
 .btn-sm { padding: 4px 10px; font-size: 12px; }
 
+/* 两栏工作台：左=会话历史，中=对话区；产出物 / 使用说明改由标题栏按钮打开**浮层**。
+   演进：旧版「chips 横排 → 对话区 → 说明 → 产出物」自上而下堆一列（说明和产出物压在
+   输入框下面，一屏看不全）→ 一度改成三栏，但右栏只有 320px，产出物卡片 + 四行说明都挤
+   在里面，还顺手把对话区压窄了。现在对话区独占剩余宽度与高度。
+
+   高度：不再写 `clamp(360px, calc(100vh - 常量), 2200px)`，改成吃满上面那条高度链传到
+   pane 的剩余空间（`#pane-chat` 那行 `minmax(360px, 1fr)`）。360px 是**最小可用高度**
+   ——标题栏 + 消息区 + 输入区再矮就没法用了，视口不够高时让整页滚，而不是挤扁输入框；
+   它跟旧的 2200px 天花板不同，只兜底、不再封顶，所以高分屏也能占满。
+   两个浮层用 position:fixed 挂在 pane 内，脱离文档流、不参与这条高度分配。 */
+.chat-pane {
+  padding: 12px 14px 14px;
+  display: flex; flex-direction: column; min-height: 0;
+}
+#pane-chat { grid-template-rows: minmax(360px, 1fr); }
+.chat-grid {
+  display: grid;
+  /* 中栏必须是 minmax(0,1fr)：用 1fr 的话消息里的长代码块/表格会把 min-content
+     传播出去，整行被撑开并把侧栏挤没（统计页踩过同一个坑）。 */
+  grid-template-columns: 236px minmax(0, 1fr);
+  gap: 12px; align-items: stretch;
+  flex: 1; min-height: 0;
+  transition: grid-template-columns 0.22s ease;
+}
+.chat-grid.rail-history-collapsed { grid-template-columns: 46px minmax(0, 1fr); }
+
+/* 侧栏本体：一列卡片，各自独立滚动；收起后只留竖排展开条 */
+.chat-rail { display: flex; flex-direction: column; gap: 10px; min-width: 0; min-height: 0; }
+.chat-rail.collapsed { align-items: stretch; }
+.chat-rail.collapsed > .rail-card { display: none; }
+.rail-expand { display: none; }
+.chat-rail.collapsed > .rail-expand {
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  writing-mode: vertical-rl; letter-spacing: 0.28em;
+  flex: 1; padding: 16px 0; border: 1px solid var(--border); border-radius: 12px;
+  background: var(--panel); color: var(--text-dim);
+  font: inherit; font-size: 12px; font-weight: 600; cursor: pointer;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+.chat-rail.collapsed > .rail-expand:hover {
+  color: var(--primary); border-color: var(--primary); background: var(--primary-soft);
+}
+.rail-expand svg { transform: rotate(90deg); }
+
+.rail-card {
+  display: flex; flex-direction: column; gap: 8px; min-height: 0; flex: 1;
+  border: 1px solid var(--border); border-radius: 12px;
+  background: var(--panel); padding: 10px;
+}
+.rail-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.rail-card-title { font-size: 12px; font-weight: 600; color: var(--text-dim); }
+.rail-card-actions { display: flex; align-items: center; gap: 6px; }
+.rail-fold {
+  width: 24px; height: 24px; display: grid; place-items: center;
+  border: 1px solid var(--border); border-radius: 8px;
+  background: transparent; color: var(--muted); cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+.rail-fold:hover { color: var(--primary); border-color: var(--primary); }
+
+/* 会话列表在侧栏里改成竖排可滚（默认是横排 chips 那一套） */
+.chat-sessions.vertical {
+  flex: 1; min-height: 0; flex-direction: column;
+  overflow-x: visible; overflow-y: auto; padding: 2px; gap: 6px;
+  scrollbar-width: thin;
+}
+.chat-sessions.vertical .chat-chip { max-width: 100%; }
+
+/* 中栏：标题栏 + 消息流（吃掉剩余高度）+ 输入条贴底 */
+.chat-main { display: flex; flex-direction: column; gap: 10px; min-width: 0; min-height: 0; }
+.chat-main-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap;
+}
+.chat-main-head .usage-controls { gap: 10px; }
+/* 标题右侧常驻的边界提示（使用说明搬进浮窗后，这行是「只读」语义的可见落点） */
+.chat-head-hint {
+  font-size: 11px; font-weight: 400; color: var(--muted); white-space: nowrap;
+  padding-left: 9px; margin-left: 2px; border-left: 1px solid var(--border);
+}
+/* 浮层入口按钮的「已打开」态 */
+.usage-controls .el-button.is-on {
+  color: var(--primary); border-color: var(--primary); background: var(--primary-soft);
+}
+/* 产出物按钮上的计数角标（待采纳数 > 0 时染主色，起提示作用） */
+.mini-count {
+  min-width: 16px; margin-left: 1px; padding: 0 5px; border-radius: 20px;
+  font-size: 10.5px; font-weight: 700; line-height: 16px; text-align: center;
+  background: var(--border); color: var(--text-dim);
+}
+.mini-count.alert { background: var(--primary); color: #fff; }
+.chat-box { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.chat-main .chat-stream { flex: 1; min-height: 0; max-height: none; }
+
+/* ===== 问答浮层：产出物右侧抽屉 + 使用说明居中浮窗 =====
+   两块内容原来占着右栏（320px，挤）。浮层都挂在 #pane-chat 内做 position:fixed：
+   页签切走时 el-tab-pane 本身是 display:none，浮层跟着隐藏，不会串到别的页签
+   （配置抽屉 .layout-top > .col-side 是同一套思路）。
+   关着时走 .hidden 的 display:none —— 不留一个「盖在内容上但看不见」的遮罩，
+   也让 #pane-chat 的可见文本保持干净（界面用例读它当正文断言）。
+   animation 只在打开时播：display:none → 显示会重新触发动画，天然就是入场动效。 */
+.chat-float-mask {
+  position: fixed; inset: 0; z-index: 61;
+  background: rgba(8, 11, 20, 0.42);
+}
+.chat-drawer {
+  position: fixed; z-index: 62; top: 88px; right: 28px; bottom: 28px; width: 420px;
+  max-width: calc(100vw - 56px);
+  display: flex; flex-direction: column; min-height: 0; min-width: 0;
+  /* 内边距给到抽屉本体：标题栏 / 分隔线 / 内容 / 滚动条一起内缩，
+     不再出现「卡片和文案紧贴描边」（实测改动前内容距边框只有 1px = 边框本身）。 */
+  padding: 14px 16px 16px;
+  border: 1px solid var(--border); border-radius: 14px;
+  background: var(--panel-solid); box-shadow: var(--shadow);
+  animation: chat-float-slide 0.2s ease;
+}
+@keyframes chat-float-slide {
+  from { opacity: 0; transform: translateX(18px); }
+}
+.chat-help {
+  position: fixed; z-index: 63; top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  width: 640px; max-width: calc(100vw - 64px); max-height: min(72vh, 640px); overflow: auto;
+  padding: 16px 18px;
+  border: 1px solid var(--border); border-radius: 14px;
+  background: var(--panel-solid); box-shadow: var(--shadow);
+  animation: chat-float-pop 0.18s ease;
+}
+@keyframes chat-float-pop {
+  from { opacity: 0; transform: translate(-50%, -47%) scale(0.98); }
+}
+.chat-float-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding-bottom: 10px; margin-bottom: 12px; border-bottom: 1px solid var(--border);
+}
+.chat-float-title {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 13px; font-weight: 600; color: var(--text);
+}
+.chat-float-title svg { color: var(--primary); flex: none; }
+.chat-float-close {
+  width: 26px; height: 26px; flex: none; display: grid; place-items: center;
+  border: 1px solid var(--border); border-radius: 8px;
+  background: transparent; color: var(--muted); cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+.chat-float-close:hover { color: var(--primary); border-color: var(--primary); }
+/* 抽屉主体可滚；里面的产出物面板（ArtifactsPanel，id 带 -chat 后缀）由 .panel 自带
+   卡片样式，这里去掉外壳留白只留内容 —— 按结构选，别按 id 选 */
+.chat-drawer-body { flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: thin; }
+.chat-drawer-body > .panel {
+  padding: 0; border: none; background: transparent; box-shadow: none;
+}
+.chat-drawer-body .proposal-grid { grid-template-columns: minmax(0, 1fr); }
+/* 抽屉比页面窄得多，空态/提示文案居左读起来才顺（其他页签的宽面板保持居中） */
+.chat-drawer-body .empty { text-align: left; margin: 0; padding: 4px 2px; }
+.chat-help .info-note { font-size: 12px; line-height: 1.8; margin-bottom: 0; }
+
+@media (max-width: 1240px) {
+  .chat-grid { grid-template-columns: 200px minmax(0, 1fr); }
+  .chat-grid.rail-history-collapsed { grid-template-columns: 46px minmax(0, 1fr); }
+}
+@media (max-width: 1080px) {
+  /* 窄屏别硬塞两栏：单列堆叠 —— 会话历史占一行（限高内滚），对话区吃掉剩余高度。
+     高度不改成 auto：窄窗口也一样「填满一屏、页面不滚」（否则下方会白留一大条）。 */
+  .chat-grid,
+  .chat-grid.rail-history-collapsed {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+  .chat-rail .rail-card { max-height: 240px; }
+  .chat-drawer { top: 76px; left: 16px; right: 16px; bottom: 16px; width: auto; }
+}
+
 /* 会话 chips：横向可滚，最新在前（顺序由后端按 updated 倒序给出） */
 .chat-sessions {
   display: flex; gap: 8px; overflow-x: auto; padding: 4px 2px 10px;
@@ -1815,6 +2459,11 @@ details.adv .adv-body .field:first-child { padding-top: 10px; }
 }
 .chat-body pre code { background: none; padding: 0; }
 .chat-body h1, .chat-body h2, .chat-body h3 { font-size: 13.5px; margin: 10px 0 6px; }
+/* markdown 表格的横向滚动容器（format.js 给每张 <table> 套一层 .md-scroll）：
+   宽表在自己内部滚。不套的话 `.chat-stream` / 弹窗正文会被撑出一条横向滚动条，
+   整列内容跟着左右晃 —— 代码块早就有 `.chat-body pre { overflow-x: auto }`，
+   表格是漏掉的那一类。 */
+.md-scroll { overflow-x: auto; max-width: 100%; scrollbar-width: thin; }
 .chat-body table { border-collapse: collapse; margin: 8px 0; font-size: 12px; }
 .chat-body th, .chat-body td { border: 1px solid var(--border); padding: 4px 8px; text-align: left; }
 .chat-body blockquote {
@@ -1860,10 +2509,11 @@ details.adv .adv-body .field:first-child { padding-top: 10px; }
 }
 .chat-art-note { font-size: 11px; color: var(--text-dim); }
 
+/* 运行状态行：放在消息流内部（ChatPane 模板挂在 #chat-stream 末尾），
+   空闲时整体 hidden。不再做消息区与输入框之间的分隔条。 */
 .chat-live {
-  display: flex; align-items: center; gap: 10px; min-height: 20px;
-  padding: 6px 16px; border-top: 1px solid var(--border);
-  font-size: 11.5px; background: var(--panel);
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  min-height: 18px; font-size: 11.5px; background: transparent;
 }
 .chat-status { color: var(--primary); }
 
@@ -1871,8 +2521,9 @@ details.adv .adv-body .field:first-child { padding-top: 10px; }
    外层 #chat-drop 是拖拽落点：拖进来时整块高亮，让人知道「松手就行」。 */
 
 /* 输入区 = 一体化 composer：外面一圈卡片（.chat-drop 落点即卡片），
-   textarea 无边框融在卡片里，发送按钮居右。整体像主流 AI 对话的输入条。 */
-.chat-input { display: flex; gap: 10px; align-items: flex-end; margin: 10px 12px 12px; }
+   textarea 无边框融在卡片里，发送/停止按钮收在卡片内部右下角。
+   整个 .chat-input 直接贴在消息流下面，中间不再有任何分隔物。 */
+.chat-input { margin: 0 12px 12px; }
 .chat-drop {
   flex: 1; display: flex; flex-direction: column; gap: 6px;
   border: 1px solid var(--input-border); border-radius: 14px;
@@ -1892,13 +2543,14 @@ details.adv .adv-body .field:first-child { padding-top: 10px; }
   border: none; background: transparent; color: var(--text);
 }
 .chat-drop textarea:focus { outline: none; }
-.chat-input-side { display: flex; flex-direction: column; gap: 8px; align-items: stretch; }
-.chat-input-side .btn-primary, .chat-input-side .btn-ghost { justify-content: center; margin: 0; }
-/* 发送按钮：胶囊渐变，与输入卡片底对齐 */
-.chat-input-side .btn-primary { border-radius: 12px; padding: 10px 18px; }
-
 .chat-attach { display: flex; flex-wrap: wrap; gap: 8px; }
+/* 底部行：左侧上传/提示，右侧发送/停止（收在输入卡片内部） */
 .chat-attach-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.chat-send-area { margin-left: auto; display: flex; align-items: center; flex: none; }
+/* Element 给相邻按钮加 12px margin，这里统一用 flex gap 控制；
+   写成相邻选择器是因为「停止」平时 display:none，直接选择器会误伤间距 */
+.chat-send-area .el-button { margin-left: 0; }
+.chat-send-area .el-button + .el-button { margin-left: 8px; }
 .chat-attach-hint { font-size: 11.5px; }
 
 .chat-att-chip {
@@ -1976,3 +2628,89 @@ details.adv .adv-body .field:first-child { padding-top: 10px; }
 #pane-reqdev > .panel > .run-form + *,
 #pane-apidebug > .panel > .run-form + *,
 #pane-codetest > .panel > .run-form + * { margin-top: 0; }
+
+/* ===== 任务模块的「过程区」与主区栅格（2026-09-30 第二次改版）========
+   表单搬进右侧参数抽屉之后，主区只剩三样东西：参数摘要条、过程/产物面板、说明。
+   原来为「左输入 / 右参数」双栏写的那套（#req-panel / #api-panel / #test-panel /
+   #team-run-panel 的 grid-area、.mod-main / .mod-side / .grow-area / .team-params）
+   整体删除 —— 输入不在主区了，再留着就是没人认领的死样式。
+   容器查询（`.col-main` = main）现在只服务两件事：长任务页签的 12 栏谱系、
+   扩展能力页签的两块并排。阈值仍按**主列实际宽度**取 1120px：侧边工作台会先吃掉
+   左导航 212 + 间距 18 + 页面留白 56 = 286px，按视口判定的话 1280 笔记本上主列只有
+   994px，两栏会被挤到没法读。 */
+
+/* 只读过程视窗（#figma-tree 设计稿结构 / #test-preview 目标文件内容）：
+   按 id 选，不再挂在已经消失的 .mod-main / .req-src 结构上。
+   min-height 200px 是必须的：.log 没有内容时只剩一行占位字撑出的 40px 深色细条。 */
+#figma-tree, #test-preview { min-height: 200px; max-height: none; }
+.req-src { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+
+/* 只读预览区的空态：跟 #run-log 一样把占位提示居中。否则一个几百像素高的
+   深色框里顶着左上角一行小字，看着像渲染坏了。 */
+#figma-tree:empty, #test-preview:empty {
+  display: flex; align-items: center; justify-content: center;
+}
+#figma-tree:empty::before, #test-preview:empty::before {
+  color: var(--muted); font-size: 12.5px; line-height: 1.8;
+  text-align: center; white-space: normal; max-width: 30em;
+}
+
+/* 主区里的说明条：从「带框的小卡片」降级成左侧引线式脚注 —— 抽屉里再套卡片
+   会让人分不清哪块是输入区。同时把 --muted 换成 --text-dim：这几段承载的是
+   「要不要填、填了会怎样」的真实信息，浅色主题下 --muted 对白底只有约 2.5:1。 */
+#pane-reqdev .info-note,
+#pane-apidebug .info-note,
+#pane-codetest .info-note {
+  background: transparent; border: 0; border-left: 2px solid var(--border-strong);
+  border-radius: 0; padding: 2px 0 2px 11px; margin-bottom: 0; color: var(--text-dim);
+}
+#pane-reqdev .info-note strong, #pane-apidebug .info-note strong,
+#pane-codetest .info-note strong { color: var(--text); }
+
+/* 抽屉里的扩展表单：.ext-form 自带虚线框 + 内边距，那是「内联展开在列表上方」时
+   的分组手段；抽屉本身已经有描边和标题，别再套一层框。 */
+.mod-drawer .ext-form {
+  border: 0; padding: 0; background: transparent; border-radius: 0;
+  display: flex; flex-direction: column; gap: 12px;
+}
+
+/* 长任务的角色开关：抽屉里排成一列 —— 横着铺在 388px 宽里会折行，
+   开关和名字被拆散比竖排难读得多。 */
+.mod-drawer .team-roles-bar {
+  flex-direction: column; align-items: flex-start; gap: 7px; margin-bottom: 0;
+}
+.role-line { display: flex; align-items: center; gap: 8px; }
+
+/* 看板四张角色卡：原来的 auto-fit minmax(290px) 在 1130px 宽下只切 3 列，
+   四张卡排成 3+1。降到 200px 后 auto-fit 会切出 4 列，空轨道被折叠，
+   四张卡正好平分一行。 */
+.team-agents { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+
+@container main (min-width: 1120px) {
+  /* 长任务的 12 栏谱系：作业表单(摘要条所在)与看板通栏；
+     工作项 | 时间线、人工介入 | 历史作业 两两并排。
+     同排两块 top 相同，不影响 check_panel_fold / check_vue_team_ui 的「顺序递增」断言。 */
+  #pane-team.active { grid-template-columns: repeat(12, minmax(0, 1fr)); }
+  #team-run-panel, #team-board-panel { grid-column: span 12; }
+  #team-plan-panel       { grid-column: span 5; }
+  #team-timeline-panel   { grid-column: span 7; }
+  #team-intervene-panel  { grid-column: span 5; }
+  #team-history-panel    { grid-column: span 7; }
+
+  /* 扩展能力：技能 | MCP 两块本来是各自单列铺满、内容却只有一行，
+     并排之后一眼看完，也顺带把「两块面板长得很像」的重复感压下去。 */
+  #pane-extensions.active { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
+}
+
+/* 空态：36px 内边距在面板里就是一块 100px 高的死白，收一收 */
+#pane-team .empty,
+#pane-extensions .empty,
+#pane-reqdev .empty,
+#pane-apidebug .empty,
+#pane-codetest .empty { padding: 24px 18px; }
+
+/* 长任务面板里的说明条：降低存在感，别和主内容抢（内容承载的是「会写哪、
+   不会写哪」，改用 --text-dim 保证浅色主题下的对比度）。 */
+#pane-team .panel-note { color: var(--text-dim); }
+/* 摘要条与说明条之间要有 12px：上面那条 `.run-form + *` 通配会把间距清成 0。 */
+#pane-team > #team-run-panel > .info-note { margin-top: 12px; margin-bottom: 0; }
