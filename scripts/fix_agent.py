@@ -782,6 +782,17 @@ class FixAgent:
             if page.get("console_errors"):
                 lines.append("- 控制台报错：\n" + _clip(
                     "\n".join(f"  · {e}" for e in page["console_errors"][:12]), 2500))
+            rp = page.get("replay") or {}
+            bad = rp.get("failed_actions") or []
+            if bad:
+                lines.append("- ⚠ **复刻不完整**：以下动作没执行成功，页面不是完整复现后的状态——")
+                for a in bad:
+                    lines.append(f"  · {a.get('op')} {a.get('target')} —— {a.get('error')}")
+                lines.append("  这张图的判读只能当**线索**：有 browser_look 工具时，"
+                             "换路径/换动作自己复现一遍再下结论，别把错页面的判读当结论。")
+            elif rp.get("status") in ("unreachable", "error", "blank"):
+                lines.append(f"- ⚠ 页面验证状态为 {rp['status']}，修复前截图很可能没拍到"
+                             "工单对应的页面；判读只能当线索。")
             if page.get("ai_verdict"):
                 lines.append("- 视觉判读：" + _clip(str(page["ai_verdict"]), 1200))
         rw = seed.get("rework") or {}

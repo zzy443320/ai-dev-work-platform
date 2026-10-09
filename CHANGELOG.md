@@ -505,3 +505,10 @@
 - 做法：① `Sandbox.ensure_server` 常驻 dev server——页面复验与看页面共用一个句柄（原来每次现起现停，一次冷启动要几十秒），句柄失效（端口死了）自动重起，`close()` 统一停并等端口真释放（不停的话进程握着沙箱文件，Windows 上 rmtree 删不掉）。② FixAgent 新增 browser_look：次数预算 `agent.browser_looks`（默认 6，防把轮次烧在看页面上）；截图走 pending 队列**只随下一次模型调用走一次**（无论成败都清空，工具文本仍在上下文，想再看就重新调）；`with_patch=last` 复用最近一份构建过的补丁块。③ `pipeline._page_look_fn` 负责起服务/落补丁/还原：还原放 finally，补丁匹配不上时一个字都不落。④ 坑：提示词小节里有 JSON 花括号，`str.format` 会把它们当格式字段解析直接 KeyError——插值一律改 `replace`。测试全用「假 page_look_fn + 不可达端口」，Playwright 根本不被拉起，用例不依赖浏览器安装。
 - 文件：scripts/sandbox.py、scripts/fix_agent.py、scripts/pipeline.py、tests/check_visual_loop.py
 - 影响：需重启后端。`agent.sandbox_server=auto/on` 且仓库探得出 dev 命令时工具可用；配置 off 或探不出命令时工具对模型隐身，行为与原来完全一致。回归：`check_visual_loop` 新增 26 项全过（常驻服务复用/截图回喂后清空/预算拒绝/with_patch 还原保证/匹配不上零落盘）；`check_fix_agent`、`check_repro`、`check_verify_page`、`test_safety` 全过。
+
+## 2026-10-09 15:10 · 改进 · 复刻失败如实回喂 + 判读三方对齐 + 像素一致护栏
+
+- 内容：① 修复前截图的复刻动作没走成时（选择器点不中、路由推错），失败明细现在结构化进修复循环的种子，并明说「这张图的判读只能当线索」——原来模型拿到的是一份不知道自己残缺的现场转述，会把错页面的判读当结论。② 视觉判读升级为**三方对齐**：判读依据 = 工单现象描述 + 修复前图 + 修复后图，外加两侧 console 报错与复刻动作成败；`describe`/`judge_fix` 都支持附加工单自带截图。③ 新增**像素一致护栏**：判读模型说「现象消失」，但前后两张截图逐像素一致——画面没有任何变化就谈不上「现象消失」，强制降级 unclear，防止假自信把没修好的补丁抬进 verified（纯状态类修复在证据文本里留了出口）。
+- 做法：① `pipeline._page_evidence` 把 `actions_log` 里的失败步折算成 `page.replay.failed_actions` 进种子，`fix_agent._seed_text` 渲染成「⚠ 复刻不完整」段；整页白屏/不可达也单独提醒。② `verifier.judge_fix` 签名加 `extra_images`（工单截图，上限 3 张），prompt 补现象描述（剥 HTML 截 300 字）与两侧失败动作；像素护栏内嵌在 judge_fix 里，用已有的 `compare()`（Pillow 逐像素 diff），Pillow 缺失时静默跳过不误伤。
+- 文件：scripts/verifier.py、scripts/pipeline.py、scripts/fix_agent.py、tests/check_visual_loop.py
+- 影响：需重启后端。回归：`check_visual_loop` 扩到 41 项全过（复刻失败进种子/完整复现不掺水/像素一致降级 gone/画面有变化时 gone 照常成立/现象描述与失败动作进 prompt/工单截图随判读送进模型）；`check_fix_agent`、`check_repro`、`check_verify_page`、`check_apicontract` 全过。

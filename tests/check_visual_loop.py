@@ -300,12 +300,138 @@ def t_look_fn_wiring():
           and "匹配不上" in str(shot2.get("reason")), str(shot2.get("reason"))[:160])
 
 
+def _png_bytes(rgb) -> bytes:
+    """纯 stdlib 造一张 1x1 RGB PNG（像素护栏用例不依赖生成工具）。"""
+    import struct
+    import zlib
+
+    def chunk(tag, data):
+        c = struct.pack(">I", len(data)) + tag + data
+        return c + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
+
+    ihdr = struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0)
+    raw = b"\x00" + bytes(rgb)
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr)
+            + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
+
+
+class JudgeAI:
+    """只服务 verifier 判读的假模型：complete/complete_text 都记账。"""
+
+    mode = "fake"
+    model = "fake"
+
+    def __init__(self, verdict="gone", evidence="现象不见了"):
+        self.cfg = type("C", (), {"is_mock": False})()
+        self.verdict = verdict
+        self.evidence = evidence
+        self.calls = []
+
+    def complete(self, prompt, system="", max_tokens=None, on_delta=None, images=None):
+        self.calls.append({"prompt": prompt, "images": list(images or [])})
+        return {"verdict": self.verdict, "evidence": self.evidence, "error": ""}
+
+    def complete_text(self, prompt, system="", max_tokens=None, on_delta=None,
+                      images=None):
+        self.calls.append({"prompt": prompt, "images": list(images or [])})
+        return {"text": "判读文本", "error": ""}
+
+
+def t_seed_replay_warning():
+    """复刻失败必须进种子并明说「判读只能当线索」；复刻完整时不掺水。"""
+    print("\n[5] 种子里的复刻质量提醒")
+    repo = make_repo()
+    agent = agent_for(repo, ImgAI([patch_reply()]))
+    seed = {"page": {"route": "/plan/list", "status": "error_visible",
+                     "console_errors": ["TypeError: x"], "ai_verdict": "现象出现",
+                     "replay": {"status": "error_visible", "plan_note": "AI 编排",
+                                "route_source": "ticket",
+                                "failed_actions": [
+                                    {"op": "click", "target": ".save-btn",
+                                     "error": "Timeout 10000ms exceeded"}]}}}
+    text = agent._seed_text({"id": "T1", "title": "x"}, seed, {})
+    check("失败动作进了种子", "复刻不完整" in text and ".save-btn" in text, text[-400:])
+    check("明确说判读只能当线索", "只能当**线索**" in text, "")
+    seed_ok = {"page": {"route": "/", "status": "ok", "console_errors": [],
+                        "ai_verdict": "", "replay": {"status": "ok",
+                                                     "failed_actions": []}}}
+    text_ok = agent._seed_text({"id": "T1", "title": "x"}, seed_ok, {})
+    check("复刻完整时不掺水", "复刻不完整" not in text_ok, "")
+    seed_blank = {"page": {"route": "/", "status": "blank", "console_errors": [],
+                           "ai_verdict": "",
+                           "replay": {"status": "blank", "failed_actions": []}}}
+    text_blank = agent._seed_text({"id": "T1", "title": "x"}, seed_blank, {})
+    check("整页白屏也提醒（很可能没拍到工单页面）", "很可能没拍到" in text_blank, "")
+
+
+def t_judge_hardening():
+    """judge_fix：像素一致护栏降级假 gone；现象描述/失败动作进 prompt；工单截图可附。"""
+    print("\n[6] 判读加固：像素护栏 + 三方对齐 + 工单截图")
+    d = _tempdir("judge-")
+    same_png = d / "same.png"
+    diff_png = d / "diff.png"
+    same_png.write_bytes(_png_bytes((255, 0, 0)))
+    diff_png.write_bytes(_png_bytes((0, 0, 255)))
+    before = {"screenshot": str(same_png), "console_errors": [],
+              "actions_log": [{"op": "click", "target": ".save", "ok": False,
+                               "error": "timeout"}]}
+    after = {"screenshot": str(same_png), "console_errors": []}
+
+    from scripts.verifier import ScreenshotVerifier
+
+    ver = ScreenshotVerifier(base_url="http://127.0.0.1:1",
+                             screenshot_dir=str(d / "shots"), ai=JudgeAI("gone"))
+    judged = ver.judge_fix(before, after, {"id": "T1", "title": "x",
+                                           "description": "保存按钮点了没反应"})
+    check("说 gone 但前后逐像素一致 → 强制降级 unclear",
+          judged.get("verdict") == "unclear" and judged.get("pixel_identical") is True,
+          str(judged)[:200])
+    check("降级说明里留了纯状态修复的出口", "纯状态类修复" in str(judged.get("evidence")), "")
+
+    ver2 = ScreenshotVerifier(base_url="http://127.0.0.1:1",
+                              screenshot_dir=str(d / "shots"), ai=JudgeAI("gone"))
+    judged2 = ver2.judge_fix({**before, "screenshot": str(same_png)},
+                             {**after, "screenshot": str(diff_png)},
+                             {"id": "T1", "title": "x", "description": "点保存无反应"})
+    check("画面真有变化时 gone 照常成立",
+          judged2.get("verdict") == "gone" and "pixel_identical" not in judged2,
+          str(judged2)[:160])
+    prompt = ver2.ai.calls[-1]["prompt"]
+    check("工单现象描述进了判读 prompt", "点保存无反应" in prompt, prompt[:200])
+    check("复刻失败动作进了判读 prompt", "动作失败" in prompt and ".save" in prompt, "")
+
+    extras = [{"mime": "image/png", "tag": "工单截图",
+               "data_uri": "data:image/png;base64,AAAA"},
+              {"mime": "image/png", "tag": "工单截图2",
+               "data_uri": "data:image/png;base64,BBBBB"}]
+    ver3 = ScreenshotVerifier(base_url="http://127.0.0.1:1",
+                              screenshot_dir=str(d / "shots"), ai=JudgeAI())
+    ver3.judge_fix({**before, "screenshot": str(same_png)},
+                   {**after, "screenshot": str(diff_png)},
+                   {"id": "T1", "title": "x"}, extra_images=extras)
+    check("工单截图随判读一起送进模型", len(ver3.ai.calls[-1]["images"]) == 4,
+          str(len(ver3.ai.calls[-1]["images"])))
+
+    ver4 = ScreenshotVerifier(base_url="http://127.0.0.1:1",
+                              screenshot_dir=str(d / "shots"), ai=JudgeAI())
+    out = ver4.describe({"screenshot": str(same_png), "route": "/", "page_title": "t",
+                         "console_errors": []}, {"id": "T1", "title": "x"},
+                        extra_images=extras)
+    check("describe 支持 extra_images 且文本返回", out == "判读文本", out[:60])
+    check("describe 的 prompt 说明了附带工单截图",
+          "工单自带截图" in ver4.ai.calls[-1]["prompt"], "")
+    check("describe 的图片数 = 复刻 1 张 + 工单 2 张",
+          len(ver4.ai.calls[-1]["images"]) == 3, "")
+
+
 def main():
     print("== 闭环视觉 agent 行为用例 ==")
     t_persistent_server()
     t_look_feedback_loop()
     t_look_guards()
     t_look_fn_wiring()
+    t_seed_replay_warning()
+    t_judge_hardening()
     print("\n" + ("ALL PASS" if not FAIL else f"{len(FAIL)} FAIL: {FAIL}"))
     sys.exit(1 if FAIL else 0)
 

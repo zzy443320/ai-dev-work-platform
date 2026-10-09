@@ -347,12 +347,15 @@ class ScreenshotVerifier:
         return {**base, "status": "ok" if not errors else "error_visible",
                 "screenshot": str(path)}
 
-    def describe(self, verify: Dict, defect: Dict, on_delta=None) -> str:
+    def describe(self, verify: Dict, defect: Dict, on_delta=None,
+                 extra_images: Optional[List[Dict]] = None) -> str:
         """让人「看」一眼修复前的截图：截图 + 控制台报错 → 一段可读判读。
 
         agentic 修复循环拿不到浏览器运行时（补丁只落在沙箱里，不会起 dev server），
         这张截图与 console 报错就是它能拿到的唯一现场证据。没有它，模型只能凭工单文字
         猜现象；有了它，至少「报错到底还在不在」是个有图有据的判断。
+        `extra_images` 是工单自带截图（汇报人拍的现场），与我们的复刻截图一起判——
+        汇报人的图往往才是现象最清楚的那张。
         返回空串表示没做判读（没截图 / 没配模型 / Mock），调用方据此如实说明。
         """
         path = str(verify.get("screenshot") or "")
@@ -369,13 +372,20 @@ class ScreenshotVerifier:
             return ""     # 过大的图对判读没好处，只浪费 token
         import base64
 
-        image = {"mime": "image/png",
-                 "data_uri": "data:image/png;base64," + base64.b64encode(data).decode()}
+        images = [{"mime": "image/png", "tag": "复刻截图",
+                   "data_uri": "data:image/png;base64," + base64.b64encode(data).decode()}]
+        extras = [im for im in (extra_images or [])
+                  if isinstance(im, dict) and im.get("data_uri")][:3]
+        images.extend(extras)
+        desc = strip_html(str(defect.get("description") or defect.get("desc") or ""))[:300]
         errors = (verify.get("console_errors") or []) + (verify.get("page_errors") or [])
         prompt = (
-            "下面这张截图是**修复前**在真实页面上按工单操作复刻之后拍的。\n"
+            "下面这组图里，第 1 张是**修复前**在真实页面上按工单操作复刻之后拍的"
+            + (f"，另附 {len(extras)} 张工单自带截图（汇报人拍的现场）" if extras else "")
+            + "。\n"
             f"缺陷标题：{str(defect.get('title') or '')[:200]}\n"
-            f"路由：{verify.get('route') or '-'}  页面标题：{verify.get('page_title') or '-'}\n"
+            + (f"工单现象描述：{desc}\n" if desc else "")
+            + f"路由：{verify.get('route') or '-'}  页面标题：{verify.get('page_title') or '-'}\n"
             + ("控制台/页面报错：\n" + "\n".join(f"· {str(e)[:200]}" for e in errors[:15])
                if errors else "控制台与页面均未捕获到报错。\n")
             + "\n请只回答三件事，用中文，尽量短：\n"
@@ -387,18 +397,23 @@ class ScreenshotVerifier:
         try:
             with usage.step("page_read"):
                 res = self.ai.complete_text(prompt, system=_READ_SYSTEM, max_tokens=1500,
-                                            images=[image])
+                                            images=images)
         except Exception as e:
             return f"（截图判读失败：{e}）"
         if res.get("error"):
             return f"（截图判读失败：{res['error']}）"
         return str(res.get("text") or "").strip()
 
-    def judge_fix(self, before: Dict, after: Dict, defect: Dict) -> Dict:
+    def judge_fix(self, before: Dict, after: Dict, defect: Dict,
+                  extra_images: Optional[List[Dict]] = None) -> Dict:
         """把修复前/修复后两张图一起给模型，判「工单描述的现象消失了没有」。
 
         刻意要求它只能给三种结论之一，并且**看不清就说不清**：这类视觉判读最容易
         产生的不是错判而是假自信——一张白屏 + 一句「页面正常」比不看还糟。
+        三方对齐：判读依据 = 工单现象描述 + 修复前图 + 修复后图，外加两侧 console
+        报错与复刻动作的成败。最后一道像素护栏：模型说「现象消失」，但前后两张图
+        **逐像素一致**——画面没有任何变化就谈不上「现象消失」，强制降级 unclear，
+        防止判读模型的假自信把没修好的补丁抬进 verified。
         返回 {"verdict": gone|same|unclear|none, "evidence": str}。
         """
         imgs = []
@@ -415,6 +430,8 @@ class ScreenshotVerifier:
                     imgs.append({"mime": "image/png", "tag": tag,
                                  "data_uri": "data:image/png;base64,"
                                              + base64.b64encode(data).decode()})
+        imgs.extend(im for im in (extra_images or [])
+                    if isinstance(im, dict) and im.get("data_uri"))
         cfg = getattr(getattr(self, "ai", None), "cfg", None)
         if self.ai is None or cfg is None or getattr(cfg, "is_mock", True):
             return {"verdict": "none", "evidence": "未配置可用模型，不做视觉判读"}
@@ -422,13 +439,21 @@ class ScreenshotVerifier:
             return {"verdict": "none", "evidence": "缺少修复前或修复后的截图，无法对比"}
         errors_b = (before.get("console_errors") or []) + (before.get("page_errors") or [])
         errors_a = (after.get("console_errors") or []) + (after.get("page_errors") or [])
+        bad_b = [a for a in (before.get("actions_log") or []) if not a.get("ok")]
+        bad_a = [a for a in (after.get("actions_log") or []) if not a.get("ok")]
+        desc = strip_html(str(defect.get("description") or defect.get("desc") or ""))[:300]
         prompt = (
-            f"两张图按顺序给你：第 1 张是**修复前**，第 2 张是**打上候选补丁后**，"
+            f"图按顺序给你：第 1 张是**修复前**，第 2 张是**打上候选补丁后**，"
             f"同一个页面、同一套复现操作。\n"
             f"缺陷标题：{str(defect.get('title') or '')[:200]}\n"
-            f"修复前报错：{_clip_lines(errors_b, 6)}\n"
-            f"修复后报错：{_clip_lines(errors_a, 6)}\n\n"
-            "只回答 JSON：{\"verdict\": \"gone|same|unclear\", \"evidence\": \"图里看到什么\"}\n"
+            + (f"工单现象描述：{desc}\n" if desc else "")
+            + f"修复前报错：{_clip_lines(errors_b, 6)}\n"
+            f"修复后报错：{_clip_lines(errors_a, 6)}\n"
+            + (f"注意：修复前的复刻本身就有动作失败（{'; '.join(str(a.get('target') or '')[:60] for a in bad_b[:3])}），"
+               "两张图可能都不是完整复现状态，判不准就说 unclear。\n" if bad_b else "")
+            + (f"注意：修复后的重放有动作失败（{'; '.join(str(a.get('target') or '')[:60] for a in bad_a[:3])}）。\n"
+               if bad_a else "")
+            + "只回答 JSON：{\"verdict\": \"gone|same|unclear\", \"evidence\": \"图里看到什么\"}\n"
             "  · gone   = 第 2 张里工单描述的现象确实不见了，说清哪块区域变了；\n"
             "  · same   = 第 2 张里现象仍然在（哪怕是别的新问题）；\n"
             "  · unclear= 两张看不出差别 / 第 2 张是空白页 / 页面没加载出来 / 你根本看不清。\n"
@@ -447,7 +472,18 @@ class ScreenshotVerifier:
         verdict = str(res.get("verdict") or "").strip().lower()
         if verdict not in ("gone", "same", "unclear"):
             verdict = "unclear"
-        return {"verdict": verdict, "evidence": str(res.get("evidence") or "")[:800]}
+        evidence = str(res.get("evidence") or "")[:800]
+        # 像素护栏：说「消失」但画面逐像素一致 → 假自信，降级 unclear。
+        # 纯状态类修复（页面无可见变化）会误伤——所以话里留了出口，提案说明里写清楚。
+        if verdict == "gone":
+            diff = self.compare(before, after)
+            if diff.get("identical"):
+                return {"verdict": "unclear", "pixel_identical": True,
+                        "evidence": (evidence
+                                     + "；但前后两张截图**逐像素一致**——画面没有任何变化就谈不上"
+                                       "「现象消失」，判读按 unclear 处理。若属纯状态类修复"
+                                       "（页面本就没有可见变化），请在最终说明里注明这一点。").strip()}
+        return {"verdict": verdict, "evidence": evidence}
 
     def compare(self, before: Dict, after: Dict) -> Dict:
         b, a = before.get("screenshot", ""), after.get("screenshot", "")

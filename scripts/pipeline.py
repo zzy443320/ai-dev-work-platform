@@ -539,6 +539,18 @@ class AIDefectFixerPipeline:
             "console_errors": (verify.get("console_errors") or [])
             + (verify.get("page_errors") or []),
             "ai_verdict": verdict,
+            # 复刻质量结构化进种子：哪些动作没走成，必须让修复循环知道
+            # 「这张图不是完整复现状态」——否则模型会把错页面的判读当结论。
+            "replay": {
+                "status": verify.get("status") or "",
+                "plan_note": verify.get("plan_note") or "",
+                "route_source": verify.get("route_source") or "",
+                "failed_actions": [
+                    {"op": (a.get("op") or ""), "target": str(a.get("target") or "")[:120],
+                     "error": str(a.get("error") or "")[:120]}
+                    for a in (verify.get("actions_log") or []) if not a.get("ok")
+                ][:6],
+            },
         }
         if not page["console_errors"] and page["status"] in ("unreachable", "error", "blank"):
             page["ai_verdict"] = (page["ai_verdict"]
@@ -767,7 +779,9 @@ class AIDefectFixerPipeline:
                 after_errs = set(shot["console_errors"])
                 shot["new_errors"] = sorted(after_errs - before_errs)[:10]
                 shot["cleared_errors"] = sorted(before_errs - after_errs)[:10]
-                judged = ver.judge_fix(before or {}, after, defect)
+                judged = ver.judge_fix(before or {}, after, defect,
+                                       extra_images=(before or {}).get("ticket_images")
+                                       or None)
                 shot["verdict"] = judged.get("verdict") or "unclear"
                 shot["evidence"] = judged.get("evidence") or ""
                 shot["status"] = "ok"
