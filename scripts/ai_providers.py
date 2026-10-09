@@ -370,20 +370,28 @@ class AIConfig:
             payload = {}
         finish = ""
         reasoning = 0
+        message_keys: List[str] = []
         try:
             choice = payload.get("choices", [{}])[0]
             finish = str(choice.get("finish_reason") or "")
+            message_keys = sorted((choice.get("message") or {}).keys())
             usage = payload.get("usage") or {}
             reasoning = int((usage.get("completion_tokens_details") or {})
                             .get("reasoning_tokens") or 0)
         except (IndexError, TypeError, ValueError, AttributeError):
             pass
 
-        if finish == "length" or reasoning:
+        # 「只有 role、既没 content 也没 reasoning_content」本身就是推理模型被截断的签名：
+        # 不少中继/网关会把 usage.completion_tokens_details 抹平，只盯 reasoning_tokens 就
+        # 永远判不出来，用户看到的是一句"缺少字段 content"的误导提示（其实是额度烧在思考上）。
+        answerless = bool(message_keys) and not (
+            {"content", "reasoning_content", "reasoning"} & set(message_keys))
+
+        if finish == "length" or reasoning or answerless:
             return (
                 f"模型把 max_tokens 全部用在了推理上，正式回答还没开始就被截断，"
                 f"所以响应里没有 {seg!r}（reasoning_tokens={reasoning}，"
-                f"finish_reason={finish or 'length'}）。"
+                f"finish_reason={finish or 'length'}，message 字段={message_keys or '空'}）。"
                 "这不是取值路径的问题：请改用非推理模型（如 gpt-plus / kimi-pro），"
                 "或把 max_tokens 调大（建议 ≥8000）后重试"
             )
@@ -423,6 +431,28 @@ class AIConfig:
                     parts.append(block.get("text", ""))
             return "\n".join(p for p in parts if p)
         return json.dumps(cur, ensure_ascii=False)
+
+
+def _truncation_suffix(payload) -> str:
+    """正文为空时的诊断尾巴——**必须带上 _TRUNCATION_MARKERS 里的原话**，
+    ai_model 靠它判断"这次值得加倍额度重试一次"。
+
+    中继/网关经常把 usage.completion_tokens_details 抹平，所以判据用「message 里
+    既没 content 也没 reasoning_content」+ finish_reason 这两个更稳的信号。
+    """
+    try:
+        choice = (payload or {}).get("choices", [{}])[0]
+    except (AttributeError, IndexError, TypeError):
+        return ""
+    msg = choice.get("message") or choice.get("delta") or {}
+    keys = set(msg.keys()) if isinstance(msg, dict) else set()
+    finish = str(choice.get("finish_reason") or "") if isinstance(choice, dict) else ""
+    answerless = not ({"content", "reasoning_content", "reasoning"} & keys)
+    if finish == "length" or answerless:
+        return ("：模型把 max_tokens 全部用在了推理上，正式回答还没开始就被截断"
+                f"（message 字段={sorted(keys) or '空'}，finish_reason={finish or 'length'}）。"
+                "这不是取值路径的问题，系统会自动加倍 max_tokens 重试一次")
+    return "（响应结构与取值路径不匹配？可用「响应取值路径」指定网关实际返回的结构）"
 
 
 def complete(cfg: AIConfig, prompt: str, system: str = "",
@@ -471,7 +501,8 @@ def complete(cfg: AIConfig, prompt: str, system: str = "",
         raise
     _stash_usage(cfg, payload, prompt, system, text)
     if not text.strip():
-        raise AIError("响应里的目标字段为空", url=url, status=resp.status_code,
+        raise AIError("响应里的目标字段为空" + _truncation_suffix(payload),
+                      url=url, status=resp.status_code,
                       body=raw, seconds=elapsed, kind="parse")
     return text
 
@@ -553,7 +584,8 @@ def complete_stream(cfg: AIConfig, prompt: str, system: str = "",
         text = cfg.extract_text(payload)
         _stash_usage(cfg, payload, prompt, system, text)
         if not text.strip():
-            raise _fail(AIError("响应里的目标字段为空", url=url,
+            raise _fail(AIError("响应里的目标字段为空"
+                                + _truncation_suffix(payload), url=url,
                                 status=resp.status_code, body=raw, kind="parse"))
         if on_delta:
             try:

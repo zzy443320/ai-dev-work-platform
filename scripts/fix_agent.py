@@ -199,13 +199,23 @@ def compare_with_baseline(baseline: Dict[str, bool], after: Dict[str, bool]) -> 
             "all_green": all(after.values()) if after else False}
 
 
-def conclusion_of(verdict: Dict, has_baseline_fail: bool) -> str:
-    """一次验证的结论。返回 CONCLUSION_* 之一。"""
+def conclusion_of(verdict: Dict, has_baseline_fail: bool,
+                  repro_flipped: bool = False) -> str:
+    """一次验证的结论。返回 CONCLUSION_* 之一。
+
+    原先只认「所有命令全绿」，这在**基线本来就红**的仓库里等于宣布 verified 永不可达：
+    云枢这个仓 tsconfig 写了 `"types": ["jest"]` 但全仓没装 @types/jest，`tsc` 未打补丁
+    就是 rc=2，补丁再对也不可能让它变绿。真正该问的是两件事——**有没有弄坏原本好的**、
+    **这条缺陷自己的判据转绿了没有**。所以多给一条出路：无回归 + 复现判据从红转绿，
+    也算 verified（verified_via 会如实标成 repro-*，基线仍红的项在提案里列出来）。
+    """
     if verdict["regressions"]:
         return "regression"
-    if not verdict["all_green"]:
-        return "failing"
-    return CONCLUSION_VERIFIED if has_baseline_fail else CONCLUSION_GREEN
+    if verdict["all_green"]:
+        return CONCLUSION_VERIFIED if has_baseline_fail else CONCLUSION_GREEN
+    if repro_flipped:
+        return CONCLUSION_VERIFIED
+    return "failing"
 
 
 def checks_signature(checks: Dict[str, Dict]) -> str:
@@ -918,9 +928,15 @@ class FixAgent:
         if checks:
             passed = {k: bool(v["ok"]) for k, v in checks.items()}
             verdict = compare_with_baseline(base_pass, passed)
-            concl = conclusion_of(verdict, has_baseline_fail)
+            # 复现判据是否「从红转绿」：命令级基线永久红的仓库，只有这条路能给出 verified
+            repro_flipped = REPRO_CHECK_NAME in verdict.get("fixed", [])
+            concl = conclusion_of(verdict, has_baseline_fail, repro_flipped)
             attempt["verification"] = verdict
             attempt["conclusion"] = concl
+            attempt["repro_flipped"] = repro_flipped
+            if concl == CONCLUSION_VERIFIED and not verdict["all_green"]:
+                attempt["baseline_still_red"] = [
+                    n for n, ok in passed.items() if not ok]
             attempt["rank"] = {CONCLUSION_VERIFIED: RANK_VERIFIED,
                                CONCLUSION_GREEN: RANK_GREEN,
                                "regression": RANK_FAIL,
@@ -1001,6 +1017,10 @@ class FixAgent:
                              + "。这比缺陷没修好更严重，先把它修回去。")
             if verdict.get("still_failing"):
                 lines.append("仍然失败：" + ", ".join(verdict["still_failing"]))
+        if attempt.get("baseline_still_red"):
+            lines.append("说明：这些命令**未打补丁时就是红的**（仓库自身的环境/配置问题，"
+                         "不是你引入的），只要没新增失败项就不算回归；这条缺陷的判据是"
+                         "复现用例，它已经转绿。不要为了把那些历史红项修绿而扩大改动。")
         if REPRO_CHECK_NAME in checks:
             rp = self.repro
             if rp.get("status") == "green":

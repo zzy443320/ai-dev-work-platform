@@ -603,6 +603,55 @@ def t_config_roundtrip():
               and parsed["allow"][0].startswith("^("), str(parsed)[:180])
 
 
+def t_dep_dirs_and_truncation():
+    """两个「静默失效」型坑：子包依赖没链上、推理截断没被认出来。
+
+    都来自 2026-10-09 首批真实工单的实测：沙箱只链了根 node_modules，packages/* 全漏，
+    基线报一片 `Cannot find type definition file for 'jest'`；中继把
+    usage.completion_tokens_details 抹平，空回答被判成「取值路径不对」，
+    于是自动加倍重试没触发，整条工单白跑 600s。
+    """
+    print("\n[13] 子包依赖目录扫描 + 推理截断签名")
+    from scripts.ai_providers import _truncation_suffix
+    from scripts.sandbox import Sandbox
+
+    repo = _tempdir("dep-scan-")
+    (repo / "node_modules" / "vue" / "node_modules" / "deep").mkdir(parents=True)
+    (repo / "packages" / "admin" / "node_modules" / "@types").mkdir(parents=True)
+    (repo / "packages" / "portal" / "node_modules").mkdir(parents=True)
+    (repo / "src").mkdir()
+    (repo / "src" / "a.js").write_text("x\n", encoding="utf-8")
+    found = sorted(Sandbox(repo)._find_dep_dirs())
+    check("根与子包的 node_modules 都找到",
+          "node_modules" in found and "packages/admin/node_modules" in found
+          and "packages/portal/node_modules" in found, str(found))
+    check("绝不下钻进 node_modules 内部（那会有几十万条）",
+          not any(x.startswith("node_modules/") for x in found), str(found))
+    check("结果里没有反斜杠路径", not any("\\" in x for x in found), str(found))
+
+    # 空回答的三种形态：只有 role / finish_reason=length / 正常空串
+    only_role = _truncation_suffix({"choices": [{"message": {"role": "assistant"},
+                                                 "finish_reason": "stop"}]})
+    length = _truncation_suffix({"choices": [{"message": {"role": "assistant",
+                                                          "content": ""},
+                                               "finish_reason": "length"}]})
+    normal = _truncation_suffix({"choices": [{"message": {"role": "assistant",
+                                                          "content": ""},
+                                               "finish_reason": "stop"}]})
+    check("「只有 role」被认出是推理截断", "max_tokens 全部用在了推理上" in only_role,
+          only_role[:90])
+    check("finish_reason=length 被认出", "max_tokens 全部用在了推理上" in length)
+    check("普通空回答不误诊成截断", "max_tokens" not in normal and normal != "", normal[:80])
+    # ai_model 靠这两个标记决定要不要加倍额度重试：改了措辞就会静默失去自愈
+    from scripts.ai_model import _is_reasoning_truncation
+
+    check("尾巴文本能触发既有重试判据",
+          _is_reasoning_truncation("响应里的目标字段为空" + only_role) is True,
+          "重试标记不匹配 → 截断不会自愈")
+    check("误诊分支不会触发重试（不去无脑加倍）",
+          _is_reasoning_truncation("响应里的目标字段为空" + normal) is False)
+
+
 def main():
     print("== agentic 修复循环行为用例 ==")
     t_isolation_and_red_to_green()
@@ -617,6 +666,7 @@ def main():
     t_helpers()
     t_pipeline_wiring()
     t_config_roundtrip()
+    t_dep_dirs_and_truncation()
     print("\n" + ("ALL PASS" if not FAIL else f"{len(FAIL)} FAIL: {FAIL}"))
     sys.exit(1 if FAIL else 0)
 

@@ -110,6 +110,8 @@ gate:
 
 没配命令时，循环会去 `node_modules/.bin` 里看有哪些检查器可用，并把建议原样写进提案说明——照抄一行就能让「验证通过」这件事真正成立。
 
+**仓库的基线本来就是红的怎么办？** 很常见：`tsconfig` 的 `"types"` 里指了没装的包（`@types/jest`）、仓库自带一堆 lint 错。这类命令打什么补丁都不会变绿，所以 `verified` 的判据不是「所有命令全绿」，而是 **没有新增失败项 + 这条缺陷自己的复现判据从红转绿**（`verified_via` 会如实标成 `repro-*`，那些历史红项列在 `baseline_still_red` 里，不与回归混为一谈）。没有复现判据时保守处理：宁可只给 `checks_pass` 以下的结论。当然，把基线修绿更划算——一条 `yarn add -D @types/jest` 就能让 type-check 从"永久红"变成真正的回归防线。
+
 预算与开关都在配置 `agent:` 段（界面「配置 → Agentic 修复」同字段）：`max_rounds: 8`（一次"交补丁 + 拿验证"算一轮）、`deadline_seconds: 360`、`max_stall: 3`（同一验证结果连续出现即认输，不再烧 token）、`sandbox: auto|worktree|copy`、`sandbox_dir`（临时副本放哪）、`link_node_modules`（把源仓依赖目录链进沙箱，关掉会有一大片"找不到模块"的假失败）、`page_read`（让模型看修复前截图与 console 报错）、`repro: auto|on|off` 与 `repro_command`（自定义复现命令，`{file}` 是用例路径，monorepo 常用 `npx vitest run --root packages/xxx {file}`）、`repro_max_rewrite: 2`（复现失败允许重写几次）、`sandbox_server: auto|on|off` 与 `sandbox_server_command` / `sandbox_server_cwd` / `sandbox_server_ready_timeout` / `sandbox_server_max_checks`（页面复验那一路）、`precedents: 3` 与 `precedents_chars: 6000`（同类历史缺陷先例注入）。开复现时轮次预算会自动 +2，因为写用例与修代码抢的是同一份轮次。
 
 沙箱里的命令执行受白名单约束：只放行 npm/npx/node/tsc/eslint/vitest/pytest/git diff 这类**读取与检查**动作；删除类、外发类（curl/ssh）、发布类（npm publish）、改 git 状态类（push/reset/clean）以及解释器内联代码（`python -c` / `node -e`）一律拒绝，并把拒绝原因回给模型。命令超时会被杀整棵进程树（避免 dev server 类常驻进程挂住流水线）。

@@ -642,6 +642,51 @@ def t_rework_channel():
           == first["id"], str((second.get("agent") or {}).get("rework_ref"))[:120])
 
 
+def t_permanent_red_baseline():
+    """基线永久红的仓库：verified 必须靠复现判据转绿，而不是「所有命令变绿」。"""
+    print("\n[14] 基线永久红 + 复现判据转绿 = verified（否则这条路永远到不了）")
+    from scripts.fix_agent import VIA_REPRO_TEST
+
+    repo = F.make_repo()
+    # 一条与补丁无关、永远红的验收命令（模拟 tsc 因缺 @types/jest 而恒定 rc=2）
+    (repo / "always-fail.js").write_text(
+        "console.error('Cannot find type definition file for jest')\nprocess.exit(2)\n",
+        encoding="utf-8")
+    gate = {"commands": [{"name": "typecheck",
+                          "cmd": f"{PY} always-fail.js"}]}
+    conf = {"max_rounds": 5, "deadline_seconds": 150, "max_stall": 2,
+            "per_command_timeout": 60,
+            "repro": {"enabled": "on", "command": f"{PY} {{file}}", "strength": "test"}}
+    ai = F.FakeAI([add_repro_reply(REPRO_GOOD), F.patch_reply("OK")])
+    agent = FixAgent(str(repo), ai, agent_cfg=conf, gate_cfg=gate)
+    res = agent.run({"id": "X1", "title": "label 应为 OK"})
+    check("命令从未变绿，但结论仍是 verified",
+          res["conclusion"] == CONCLUSION_VERIFIED and res["attempts"],
+          f"{res['conclusion']} / {str(res['verification'])[:120]}")
+    best = res["attempts"][-1]
+    check("verified_via 如实标成 repro-test",
+          res.get("verified_via") == VIA_REPRO_TEST, str(res.get("verified_via")))
+    check("永久红的命令被单独记为 baseline_still_red",
+          best.get("baseline_still_red") == ["typecheck"], str(best.get("baseline_still_red")))
+    check("没把它算成回归", best["verification"]["regressions"] == [],
+          str(best["verification"]))
+    # 这条说明只有在「还要继续跑下一轮」时才会进 prompt（跑绿就直接收口了），
+    # 所以直接断言反馈文本本身，而不是去猜第几轮的 prompt。
+    fb = "\n".join(agent._attempt_feedback(best, best["round"]))
+    check("说明写进了验证反馈：历史红项不算回归，别为它扩大改动",
+          "未打补丁时就是红" in fb and "复现用例" in fb, fb[-300:][:150])
+
+    # 没有复现判据时，同样这份补丁不许被算成 verified（宁可保守）
+    conf2 = dict(conf, repro="off")
+    ai2 = F.FakeAI([F.patch_reply("OK"), F.patch_reply("OK"), F.patch_reply("OK")])
+    res2 = FixAgent(str(repo), ai2, agent_cfg=conf2, gate_cfg=gate).run(
+        {"id": "X2", "title": "x"})
+    check("无判据时不冒充 verified", res2["conclusion"] != CONCLUSION_VERIFIED,
+          res2["conclusion"])
+    check("仓库仍然零写入",
+          (repo / "src" / "a.js").read_text(encoding="utf-8") == F.SOURCE_BUGGED)
+
+
 def main():
     print("== 复现环节（先跑红再修）行为用例 ==")
     t_detect()
@@ -657,6 +702,7 @@ def main():
     t_pipeline_end_to_end()
     t_gate_blocks_persists()
     t_rework_channel()
+    t_permanent_red_baseline()
     print("\n" + ("ALL PASS" if not FAIL else f"{len(FAIL)} FAIL: {FAIL}"))
     sys.exit(1 if FAIL else 0)
 

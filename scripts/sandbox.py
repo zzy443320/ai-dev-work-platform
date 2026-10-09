@@ -509,22 +509,53 @@ class Sandbox:
                     "不是补丁写错了，不要据此改代码。")
 
     def _find_dep_dirs(self) -> List[str]:
+        """找出源仓库里所有该带进沙箱的依赖目录（根 + 各子包）。
+
+        ⚠ 这里刻意不用 `Path.glob('*/*/node_modules')`：glob 会老老实实枚举
+        `node_modules/<每个包>/<每个包>` —— 一个真实前端仓那是几十万条目录项，
+        慢且极易抛 OSError（长路径/权限），而异常一旦被我吞掉，表现就是"子包依赖没链上"，
+        tsc 报一片 Cannot find type definition file for 'jest'，模型收到的是与补丁无关的
+        假失败。（实测踩过：只有根 node_modules 链上了，packages/* 全漏。）
+        改成逐层 scandir 并在遇到依赖目录时**不再下钻**。
+        """
         out: List[str] = []
-        root_dep = self.repo_root / DEP_DIR
-        if root_dep.is_dir():
+        if (self.repo_root / DEP_DIR).is_dir():
             out.append(DEP_DIR)
-        for depth in range(1, DEP_SCAN_DEPTH + 1):
-            pattern = "/".join(["*"] * depth) + f"/{DEP_DIR}"
-            try:
-                hits = list(self.repo_root.glob(pattern))
-            except OSError:
-                hits = []
-            for p in hits[:200]:
-                if p.is_dir():
-                    rel = str(p.relative_to(self.repo_root)).replace("\\", "/")
-                    if rel not in out:
-                        out.append(rel)
-            if len(out) > 300:
+        frontier = [self.repo_root]
+        for _ in range(DEP_SCAN_DEPTH):
+            nxt: List[Path] = []
+            for d in frontier:
+                try:
+                    entries = list(os.scandir(d))
+                except OSError:
+                    continue
+                for e in entries:
+                    try:
+                        if not e.is_dir() or e.is_symlink():
+                            continue
+                    except OSError:
+                        continue
+                    name = e.name
+                    # 依赖目录本身不再下钻；点开头的目录（.git/.cache 等）也跳过
+                    if name.startswith(".") or name in _IGNORE_DIRS:
+                        continue
+                    child = Path(e.path)
+                    dep = child / DEP_DIR
+                    if dep.is_dir():
+                        rel = str(child.relative_to(self.repo_root)).replace("\\", "/")
+                        # 收的是依赖目录本身（`packages/admin/node_modules`），不是它的父目录：
+                        # 记成父目录会让 _link_dep_dirs 撞上 worktree 里已存在的源码目录而
+                        # 静默跳过（dst.exists() 为真），结果子包依赖根本没链上。
+                        item = f"{rel}/{DEP_DIR}" if rel != "." else DEP_DIR
+                        if item not in out:
+                            out.append(item)
+                        if len(out) > 300:
+                            break
+                    nxt.append(child)
+                    if len(nxt) >= 400:      # 只扫工作区层，不给超大单目录留机会
+                        break
+            frontier = nxt[:400]
+            if not frontier or len(out) > 300:
                 break
         return out
 
