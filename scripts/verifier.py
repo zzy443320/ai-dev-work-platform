@@ -404,6 +404,45 @@ class ScreenshotVerifier:
             return f"（截图判读失败：{res['error']}）"
         return str(res.get("text") or "").strip()
 
+    def describe_extra(self, extra_images: List[Dict], defect: Dict,
+                       errors: Optional[List[str]] = None) -> str:
+        """只有工单自带截图（我们的复刻没拍到图）时的一眼判读。
+
+        环境不可达、白屏、路由推错都会让复刻截图缺席，但汇报人拍的现场还在——
+        现场证据仍然要让模型看一眼，只是来源换成工单自带，并在话术里说明
+        「这不是复刻截图」，防止它当成我们复现过的状态。
+        返回空串表示没做判读，调用方据此如实说明。
+        """
+        imgs = [im for im in (extra_images or [])
+                if isinstance(im, dict) and im.get("data_uri")][:3]
+        if not imgs or self.ai is None:
+            return ""
+        cfg = getattr(self.ai, "cfg", None)
+        if cfg is None or getattr(cfg, "is_mock", True):
+            return ""
+        errors = errors or []
+        desc = strip_html(str(defect.get("description") or defect.get("desc") or ""))[:300]
+        prompt = (
+            "下面是这条缺陷工单**自带**的截图（汇报人拍的现场，不是系统复刻的）。\n"
+            f"缺陷标题：{str(defect.get('title') or '')[:200]}\n"
+            + (f"工单现象描述：{desc}\n" if desc else "")
+            + ("控制台/页面报错：\n" + "\n".join(f"· {str(e)[:200]}" for e in errors[:15])
+               if errors else "控制台与页面均未捕获到报错。\n")
+            + "\n请只回答两件事，用中文，尽量短：\n"
+              "1. 工单描述的现象在图里**是否出现**（出现 / 未出现 / 看不出来），证据是图里哪个区域；\n"
+              "2. 修复之后应当看到什么。\n"
+              "**看不到就说看不出来，绝不要按工单文字编造图里内容。**"
+        )
+        try:
+            with usage.step("page_read"):
+                res = self.ai.complete_text(prompt, system=_READ_SYSTEM, max_tokens=1500,
+                                            images=imgs)
+        except Exception as e:
+            return f"（工单截图判读失败：{e}）"
+        if res.get("error"):
+            return f"（工单截图判读失败：{res['error']}）"
+        return str(res.get("text") or "").strip()
+
     def judge_fix(self, before: Dict, after: Dict, defect: Dict,
                   extra_images: Optional[List[Dict]] = None) -> Dict:
         """把修复前/修复后两张图一起给模型，判「工单描述的现象消失了没有」。

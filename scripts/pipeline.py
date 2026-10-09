@@ -66,6 +66,13 @@ class AIDefectFixerPipeline:
     def __init__(self, config: Dict):
         self.config = config
         ones_cfg = config["ones"]
+
+        def _apis(v):
+            """附件接口模板：分号/逗号分隔的字符串或列表 → 模板列表。"""
+            if isinstance(v, str):
+                return [x.strip() for x in v.replace(";", ",").split(",") if x.strip()]
+            return [str(x).strip() for x in (v or []) if str(x).strip()] or None
+
         self.ones = OnesClient(
             ones_cfg.get("base_url", ""),
             token=ones_cfg.get("token", ""),
@@ -73,6 +80,8 @@ class AIDefectFixerPipeline:
             team_uuid=ones_cfg.get("team_uuid", ""),
             email=ones_cfg.get("email", ""),
             password=ones_cfg.get("password", ""),
+            attachment_apis=_apis(ones_cfg.get("attachment_apis")),
+            attachment_downloads=_apis(ones_cfg.get("attachment_downloads")),
         )
 
         ai_cfg = dict(config.get("ai", {}) or {})
@@ -504,6 +513,85 @@ class AIDefectFixerPipeline:
             "kb_path": kb_path,
         }
 
+    # --------------------------------------------------------- 工单自带截图
+    def _defect_images(self, defect: Dict) -> Tuple[List[Dict], List[Dict]]:
+        """拉工单附件里的图片（汇报人拍的现场截图），落盘并转成多模态载荷。
+
+        三重 best-effort：① ONES 附件接口拉不到就如实记 note，绝不打断主流程；
+        ② 开关 `agent.ticket_images`（默认开）可整体关闭；③ 图片落盘到
+        `attachments/defect-<编号>/`，**提案里只存路径元数据**，base64 载荷只进
+        模型调用——几 MB 的图存进 JSON 提案是灾难。返回 (元数据列表, 载荷列表)。
+        """
+        if str(self.agent_cfg.get("ticket_images", "on")).strip().lower() \
+                in ("false", "0", "no", "off"):
+            return [], []
+        if not getattr(self.ones, "base_url", ""):
+            return [], []
+        did = str(defect.get("id") or "")
+        if not did:
+            return [], []
+        try:
+            items = self.ones.fetch_attachments(did)
+        except Exception as e:
+            print(f"  [attachments] 工单附件拉取异常（忽略）: {e}")
+            return [], []
+        if not items:
+            return [], []
+        out_dir = Path(self.config.get("attachments", {}).get("output_dir",
+                                                              "./attachments"))
+        sub = out_dir / f"defect-{defect.get('number') or did[:12]}"
+        from .chat_attachments import ext_for
+
+        import base64
+
+        metas: List[Dict] = []
+        payloads: List[Dict] = []
+        for idx, it in enumerate(items[:3], 1):
+            data = bytes(it.get("data") or b"")
+            if not data or len(data) > 8 * 1024 * 1024:
+                continue
+            ext = ext_for(it.get("content_type") or "", it.get("name") or "", "image")
+            try:
+                sub.mkdir(parents=True, exist_ok=True)
+                path = sub / f"ticket-{idx}.{ext}"
+                path.write_bytes(data)
+            except OSError:
+                continue
+            mime = str(it.get("content_type") or "").lower()
+            if not mime.startswith("image/"):
+                mime = f"image/{ext}"
+            if mime.endswith("/jpg"):
+                mime = "image/jpeg"
+            metas.append({"name": str(it.get("name") or path.name),
+                          "path": str(path), "bytes": len(data)})
+            payloads.append({"mime": mime, "tag": "工单截图",
+                             "data_uri": f"data:{mime};base64,"
+                                         + base64.b64encode(data).decode()})
+        return metas, payloads
+
+    @staticmethod
+    def _payloads_of(metas: List[Dict]) -> List[Dict]:
+        """从落盘元数据重建多模态载荷（复验钩子在另一时刻用，文件还在就重建）。"""
+        import base64
+        import mimetypes
+
+        out: List[Dict] = []
+        for m in metas or []:
+            p = Path(str(m.get("path") or ""))
+            if not p.is_file():
+                continue
+            try:
+                raw = p.read_bytes()
+            except OSError:
+                continue
+            if not raw or len(raw) > 4_000_000:
+                continue
+            mime = mimetypes.guess_type(p.name)[0] or "image/png"
+            out.append({"mime": mime, "tag": "工单截图",
+                        "data_uri": f"data:{mime};base64,"
+                                    + base64.b64encode(raw).decode()})
+        return out[:3]
+
     # ------------------------------------------------- 页面现场（修复前证据）
     def _page_evidence(self, did: str, defect: Dict, skip_verify: bool,
                        on_delta, emit) -> Tuple[Dict, Dict]:
@@ -522,16 +610,38 @@ class AIDefectFixerPipeline:
                      "status": "done" if verify.get("status") in ("ok", "error_visible") else "warn",
                      "defect": did,
                      "detail": f"页面验证：{verify.get('status')}（route={verify.get('route')}）"})
+        # 工单自带截图（汇报人拍的现场）与我们的复刻截图并行成证据：
+        # 拉图放在 page_read 开关之前——判读可关，但截图元数据要跟着 verify
+        # 进提案、跟着 before 进复验钩子，人工与复验都还用得上。
+        tmetas, tpayloads = self._defect_images(defect)
+        if tmetas:
+            verify["ticket_images"] = tmetas
+            _emit(emit, {"type": "stage", "stage": "verify", "status": "done",
+                         "defect": did,
+                         "detail": f"工单自带 {len(tmetas)} 张截图，已并入判读素材"})
         if str(self.agent_cfg.get("page_read", True)).strip().lower() in ("false", "0", "no"):
             return verify, {}
         verdict = ""
         if verify.get("screenshot"):
             _emit(emit, {"type": "stage", "stage": "verify", "status": "start",
                          "defect": did, "detail": "让模型看这张修复前截图，判读现象是否出现…"})
-            verdict = self.verifier.describe(verify, defect, on_delta=on_delta)
+            verdict = self.verifier.describe(verify, defect, on_delta=on_delta,
+                                             extra_images=tpayloads or None)
             if verdict:
                 _emit(emit, {"type": "stage", "stage": "verify", "status": "done",
                              "defect": did, "detail": "截图判读完成：" + verdict[:120]})
+        elif tpayloads:
+            # 复刻没拍到图（环境不可达/白屏），但汇报人的截图还在——
+            # 现场证据仍然要让模型看一眼，只是来源换成工单自带。
+            _emit(emit, {"type": "stage", "stage": "verify", "status": "start",
+                         "defect": did, "detail": "复刻截图缺失，仅用工单自带截图判读…"})
+            verdict = self.verifier.describe_extra(
+                tpayloads, defect,
+                errors=(verify.get("console_errors") or [])
+                + (verify.get("page_errors") or []))
+            if verdict:
+                _emit(emit, {"type": "stage", "stage": "verify", "status": "done",
+                             "defect": did, "detail": "工单截图判读完成：" + verdict[:120]})
         verify["ai_verdict"] = verdict
         page = {
             "route": verify.get("route") or "",
@@ -539,6 +649,7 @@ class AIDefectFixerPipeline:
             "console_errors": (verify.get("console_errors") or [])
             + (verify.get("page_errors") or []),
             "ai_verdict": verdict,
+            "ticket_images": [m.get("name") for m in tmetas],
             # 复刻质量结构化进种子：哪些动作没走成，必须让修复循环知道
             # 「这张图不是完整复现状态」——否则模型会把错页面的判读当结论。
             "replay": {
@@ -780,8 +891,9 @@ class AIDefectFixerPipeline:
                 shot["new_errors"] = sorted(after_errs - before_errs)[:10]
                 shot["cleared_errors"] = sorted(before_errs - after_errs)[:10]
                 judged = ver.judge_fix(before or {}, after, defect,
-                                       extra_images=(before or {}).get("ticket_images")
-                                       or None)
+                                       extra_images=self._payloads_of(
+                                           (before or {}).get("ticket_images")
+                                       ) or None)
                 shot["verdict"] = judged.get("verdict") or "unclear"
                 shot["evidence"] = judged.get("evidence") or ""
                 shot["status"] = "ok"

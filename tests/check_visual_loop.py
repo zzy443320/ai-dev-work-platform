@@ -424,6 +424,139 @@ def t_judge_hardening():
           len(ver4.ai.calls[-1]["images"]) == 3, "")
 
 
+def t_ticket_attachments():
+    """工单截图入口：附件拉取容错、图片过滤、落盘与载荷、种子提示、仅工单图判读。"""
+    print("\n[7] 工单自带截图：附件拉取 + 落盘 + 判读接线")
+    from scripts.ones_fetcher import OnesClient
+
+    class FakeResp:
+        def __init__(self, status=200, json_data=None, content=b"", ctype=""):
+            self.status_code = status
+            self._json = json_data
+            self.content = content
+            self.headers = {"Content-Type": ctype} if ctype else {}
+            self.text = ""
+
+        @property
+        def ok(self):
+            return self.status_code < 400
+
+        def json(self):
+            if self._json is None:
+                raise ValueError("no json")
+            return self._json
+
+    class FakeSession:
+        def __init__(self, routes):
+            self.routes = list(routes)
+            self.urls = []
+
+        def get(self, url, timeout=None):
+            self.urls.append(url)
+            return self.routes.pop(0) if self.routes else FakeResp(status=404)
+
+    png = _png_bytes((9, 9, 9))
+    cli = OnesClient(base_url="https://ones.test", token="tok", team_uuid="TM")
+    cli.session = FakeSession([
+        FakeResp(status=404),                                   # 候选一不存在
+        FakeResp(json_data={"data": {"attachments": [           # 候选二给出列表
+            {"uuid": "a1", "name": "现场截图.png"},
+            {"uuid": "doc1", "name": "说明.txt"}]}}),
+        FakeResp(content=png, ctype="image/png"),               # a1 下载成功
+        FakeResp(content=b"not an image", ctype="text/plain"),  # doc1 非图片
+    ])
+    items = cli.fetch_attachments("ISSUE-1")
+    check("非图片附件被过滤，只收图片", len(items) == 1 and items[0]["name"] == "现场截图.png",
+          str(items)[:120])
+    check("拉取结果有如实备注", "1 张" in cli.last_attachment_note,
+          cli.last_attachment_note)
+    check("第一个候选失败后继续试下一个", len(cli.session.urls) >= 3, str(cli.session.urls))
+
+    cli2 = OnesClient(base_url="https://ones.test", token="tok", team_uuid="TM",
+                      attachment_apis=["{base}/custom/api/{team}/{uuid}"])
+    cli2.session = FakeSession([
+        FakeResp(json_data=[{"uuid": "z9", "name": "top.png"}]),   # 顶层列表形状
+        FakeResp(content=png, ctype="image/png"),
+    ])
+    items2 = cli2.fetch_attachments("ISSUE-2")
+    check("配置模板可整体替换候选接口", cli2.session.urls[0].endswith("/custom/api/TM/ISSUE-2"),
+          cli2.session.urls[0])
+    check("顶层列表形状也能解析", len(items2) == 1, str(items2)[:80])
+
+    cli3 = OnesClient(base_url="https://ones.test", token="tok", team_uuid="TM")
+    cli3.session = FakeSession([])
+    check("全部候选失败时返回空且不抛异常",
+          cli3.fetch_attachments("ISSUE-3") == [] and cli3.last_attachment_note != "",
+          cli3.last_attachment_note)
+
+    # pipeline 侧：拉图落盘、载荷生成、开关与短路
+    base = _tempdir("attach-")
+    cfg = {
+        "ones": {"base_url": "https://ones.test", "token": "t", "project_uuid": ""},
+        "ai": {"model": "x", "api_key": ""},
+        "repo": {"path": "", "branch": "main"},
+        "gate": {"commands": []},
+        "agent": {},
+        "playwright": {"base_url": "http://127.0.0.1:1",
+                       "screenshot_dir": str(base / "shots")},
+        "proposals": {"output_dir": str(base / "props")},
+        "knowledge_base": {"output_dir": str(base / "kb")},
+        "artifacts": {"output_dir": str(base / "arts")},
+        "attachments": {"output_dir": str(base / "atts")},
+    }
+    pipeline = AIDefectFixerPipeline(cfg)
+
+    class StubOnes:
+        base_url = "https://ones.test"
+
+        def fetch_attachments(self, did):
+            return [{"uuid": "a", "name": "现场.png", "content_type": "image/png",
+                     "data": png}]
+
+    pipeline.ones = StubOnes()
+    defect = {"id": "uuid-x", "number": 100123, "title": "t"}
+    metas, payloads = pipeline._defect_images(defect)
+    check("图片落盘到 attachments/defect-<编号>/",
+          len(metas) == 1 and "defect-100123" in metas[0]["path"]
+          and Path(metas[0]["path"]).is_file(), str(metas)[:160])
+    check("载荷带 data_uri 且提案元数据不带 base64",
+          payloads[0]["data_uri"].startswith("data:image/png;base64,")
+          and "base64" not in json.dumps(metas), "")
+    again = pipeline._defect_images(defect)
+    check("重复调用可重复取（落盘覆盖不炸）", len(again[0]) == 1, "")
+
+    off = AIDefectFixerPipeline({**cfg, "agent": {"ticket_images": "off"}})
+    off.ones = StubOnes()
+    check("ticket_images=off 时整条短路", off._defect_images(defect) == ([], []), "")
+    pipeline.ones = OnesClient(base_url="", token="")
+    check("没配 ONES 时短路", pipeline._defect_images(defect) == ([], []), "")
+
+    rebuilt = AIDefectFixerPipeline._payloads_of(metas)
+    check("从落盘元数据能重建载荷", len(rebuilt) == 1
+          and rebuilt[0]["data_uri"].startswith("data:image/"), "")
+    check("元数据指向不存在的文件时安全跳过",
+          AIDefectFixerPipeline._payloads_of([{"path": "Z:/no/such.png"}]) == [], "")
+
+    # 种子提示：模型要知道有汇报人截图、且优先对照它
+    repo = make_repo()
+    agent = agent_for(repo, ImgAI([patch_reply()]))
+    text = agent._seed_text(defect, {"page": {"route": "/", "status": "ok",
+                                              "console_errors": [], "ai_verdict": "",
+                                              "replay": {"status": "ok", "failed_actions": []},
+                                              "ticket_images": ["现场.png"]}}, {})
+    check("种子里有工单自带截图提示", "工单自带截图" in text and "现场.png" in text, "")
+
+    from scripts.verifier import ScreenshotVerifier
+
+    ver = ScreenshotVerifier(base_url="http://127.0.0.1:1",
+                             screenshot_dir=str(base / "shots"), ai=JudgeAI())
+    out = ver.describe_extra([{"mime": "image/png", "data_uri": "data:image/png;base64,AA"}],
+                             {"id": "x", "title": "t", "description": "现象描述"})
+    check("仅工单截图时也能判读", out == "判读文本", out[:60])
+    check("话术里说明这是工单自带而非复刻",
+          "自带" in ver.ai.calls[-1]["prompt"] and "不是系统复刻" in ver.ai.calls[-1]["prompt"], "")
+
+
 def main():
     print("== 闭环视觉 agent 行为用例 ==")
     t_persistent_server()
@@ -432,6 +565,7 @@ def main():
     t_look_fn_wiring()
     t_seed_replay_warning()
     t_judge_hardening()
+    t_ticket_attachments()
     print("\n" + ("ALL PASS" if not FAIL else f"{len(FAIL)} FAIL: {FAIL}"))
     sys.exit(1 if FAIL else 0)
 

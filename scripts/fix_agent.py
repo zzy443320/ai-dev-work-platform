@@ -793,6 +793,11 @@ class FixAgent:
             elif rp.get("status") in ("unreachable", "error", "blank"):
                 lines.append(f"- ⚠ 页面验证状态为 {rp['status']}，修复前截图很可能没拍到"
                              "工单对应的页面；判读只能当线索。")
+            tnames = [n for n in (page.get("ticket_images") or []) if n]
+            if tnames:
+                lines.append("- 工单自带截图：" + "、".join(str(n) for n in tnames[:3])
+                             + "（已作为图像输入；汇报人拍的现场往往比复刻截图更接近现象，"
+                               "判读时优先对照它）")
             if page.get("ai_verdict"):
                 lines.append("- 视觉判读：" + _clip(str(page["ai_verdict"]), 1200))
         rw = seed.get("rework") or {}

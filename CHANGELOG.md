@@ -512,3 +512,10 @@
 - 做法：① `pipeline._page_evidence` 把 `actions_log` 里的失败步折算成 `page.replay.failed_actions` 进种子，`fix_agent._seed_text` 渲染成「⚠ 复刻不完整」段；整页白屏/不可达也单独提醒。② `verifier.judge_fix` 签名加 `extra_images`（工单截图，上限 3 张），prompt 补现象描述（剥 HTML 截 300 字）与两侧失败动作；像素护栏内嵌在 judge_fix 里，用已有的 `compare()`（Pillow 逐像素 diff），Pillow 缺失时静默跳过不误伤。
 - 文件：scripts/verifier.py、scripts/pipeline.py、scripts/fix_agent.py、tests/check_visual_loop.py
 - 影响：需重启后端。回归：`check_visual_loop` 扩到 41 项全过（复刻失败进种子/完整复现不掺水/像素一致降级 gone/画面有变化时 gone 照常成立/现象描述与失败动作进 prompt/工单截图随判读送进模型）；`check_fix_agent`、`check_repro`、`check_verify_page`、`check_apicontract` 全过。
+
+## 2026-10-09 15:35 · 新增 · 工单截图入口：ONES 附件里的现场图进种子与判读
+
+- 内容：汇报人附在工单里的截图现在会自动拉取、落盘并参与判读——① 修复前判读时与复刻截图一起送给模型（汇报人拍的现场往往比复刻更接近现象）；② 复刻没拍到图（环境不可达/白屏/路由推错）时，仅用工单自带截图也要判一眼，并明说「这不是系统复刻的」；③ 修复后复验（judge_fix）同样带上工单截图做参照；④ 修复循环的种子里会列出工单截图清单，提示模型「判读时优先对照它」。提案 JSON 里**只存路径元数据**，base64 载荷只进模型调用——几 MB 的图存进提案是灾难。
+- 做法：① `ones_fetcher.fetch_attachments` 走 best-effort 三红线：候选接口逐个试、任何失败吞掉并记 `last_attachment_note` 绝不抛异常打断主流程；只收图片；接口形状与部署相关，`ones.attachment_apis` / `ones.attachment_downloads`（分号分隔模板，占位 {base} {team} {uuid} {att}）可整体替换默认候选——ONES 各部署的附件 API 未逐一证实，默认候选按已验证通道的路径风格给出，部署不一致时改配置即可接上。② `pipeline._defect_images` 落盘到 `attachments/defect-<编号>/ticket-N.<ext>`（上限 3 张、单张 8MB），开关 `agent.ticket_images`（默认开）；`_payloads_of` 在复验时刻从落盘路径重建载荷。③ `verifier.describe_extra` 补上「仅工单截图」的判读入口。
+- 文件：scripts/ones_fetcher.py、scripts/pipeline.py、scripts/verifier.py、scripts/fix_agent.py、tests/check_visual_loop.py
+- 影响：需重启后端。附件接口候选若与部署不符，拉不到只是「无截图」并留下备注，配置模板可替换。回归：`check_visual_loop` 扩到 57 项全过（候选容错/图片过滤/配置模板替换/落盘与载荷/开关短路/元数据重建/种子提示/仅工单图判读）；`check_fix_agent`、`check_repro`、`check_verify_page`、`check_apicontract`、`test_safety`、`check_run_lease` 全过。

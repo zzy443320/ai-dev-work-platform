@@ -43,6 +43,8 @@ class OnesClient:
         email: str = "",
         password: str = "",
         timeout: int = 30,
+        attachment_apis: Optional[List[str]] = None,
+        attachment_downloads: Optional[List[str]] = None,
     ):
         self.base_url = base_url.rstrip("/")
         self.token = token or ""
@@ -53,6 +55,14 @@ class OnesClient:
         self.user_uuid = ""
         self.timeout = timeout
         self.last_filter: Dict = {}
+        # 附件接口的候选模板（工单截图入口）。ONES 各部署的附件 API 形状未逐一
+        # 证实，这里按已验证通道的路径风格给出候选，允许配置整体替换：
+        # ones.attachment_apis / ones.attachment_downloads（分号分隔，可用
+        # {base} {team} {uuid} {att} 占位）。全部候选都失败只意味着「没有截图」，
+        # 绝不影响工单拉取主流程。
+        self.attachment_apis = list(attachment_apis or []) or None
+        self.attachment_downloads = list(attachment_downloads or []) or None
+        self.last_attachment_note: str = ""
         self.session = requests.Session()
         self._apply_headers()
 
@@ -315,3 +325,116 @@ class OnesClient:
         )
         r.raise_for_status()
         return r.json().get("data") or {}
+
+    # ------------------------------------------------------------- 工单附件
+    DEFAULT_ATTACHMENT_APIS = (
+        "{base}/project/api/project/team/{team}/task/{uuid}/attachments",
+        "{base}/project/api/project/task/{uuid}/attachments",
+    )
+    DEFAULT_ATTACHMENT_DOWNLOADS = (
+        "{base}/project/api/project/attachment/download/{att}",
+        "{base}/project/api/project/attachment/{att}/download",
+    )
+
+    def fetch_attachments(self, issue_uuid: str) -> List[Dict]:
+        """尽力拉一条工单的附件图片（汇报人拍的现场截图）。
+
+        **best-effort，三条红线**：① 候选通道逐个试，任何失败都吞掉并记进
+        `last_attachment_note`，绝不抛异常打断修复主流程——附件拉不到只意味着
+        「这次没有截图可看」，不是流水线故障；② 只收图片附件，其它类型直接跳过；
+        ③ 返回项带原始字节，落盘与转多模态载荷是调用方（pipeline）的事。
+        接口形状与部署相关：配置 `ones.attachment_apis` / `ones.attachment_downloads`
+        （分号分隔的 URL 模板，占位 {base} {team} {uuid} {att}）可整体替换候选。
+        """
+        self.last_attachment_note = ""
+        try:
+            self._ensure_auth()
+        except Exception as e:
+            self.last_attachment_note = f"登录态不可用，跳过附件：{e}"
+            return []
+        if not self.base_url:
+            return []
+        base = self.base_url.rstrip("/")
+        team = self.team_uuid or ""
+
+        def fill(tpl: str, uuid: str) -> str:
+            return (str(tpl).replace("{base}", base).replace("{team}", team)
+                    .replace("{uuid}", str(uuid)).replace("{att}", str(uuid)))
+
+        items: List[Dict] = []
+        for tpl in (self.attachment_apis or self.DEFAULT_ATTACHMENT_APIS):
+            url = fill(tpl, issue_uuid)
+            try:
+                r = self.session.get(url, timeout=self.timeout)
+            except Exception as e:
+                self.last_attachment_note = f"附件列表请求失败：{type(e).__name__}"
+                continue
+            if not r.ok:
+                self.last_attachment_note = f"附件列表 HTTP {r.status_code}"
+                continue
+            items = self._parse_attachment_list(r)
+            if items:
+                break
+        if not items:
+            if not self.last_attachment_note:
+                self.last_attachment_note = "各候选接口都没有返回可解析的附件列表"
+            return []
+
+        from .chat_attachments import classify
+
+        out: List[Dict] = []
+        for it in items[:8]:
+            att = str(it.get("uuid") or "")
+            name = str(it.get("name") or f"attachment-{att[:8]}")
+            if not att:
+                continue
+            for dtpl in (self.attachment_downloads or self.DEFAULT_ATTACHMENT_DOWNLOADS):
+                url = fill(dtpl, att)
+                try:
+                    r = self.session.get(url, timeout=max(int(self.timeout), 60))
+                except Exception:
+                    continue
+                if not r.ok or not r.content:
+                    continue
+                ctype = (r.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+                if classify(ctype, name) != "image":
+                    break        # 是附件但不是图片：不再换下载地址，直接跳过
+                out.append({"uuid": att, "name": name, "content_type": ctype,
+                            "data": r.content})
+                break
+        self.last_attachment_note = (f"取到 {len(out)} 张图片附件"
+                                     if out else
+                                     f"附件列表取到 {len(items)} 项，但没有可下载的图片")
+        return out
+
+    @staticmethod
+    def _parse_attachment_list(resp) -> List[Dict]:
+        """把附件列表响应洗成 [{uuid,name}]。各部署返回形状不一，逐层试探。"""
+        try:
+            data = resp.json()
+        except Exception:
+            return []
+        candidates = []
+        if isinstance(data, dict):
+            inner = data.get("data")
+            candidates.append(inner)
+            if isinstance(inner, dict):
+                candidates.extend([inner.get("attachments"), inner.get("list"),
+                                   inner.get("items")])
+        elif isinstance(data, list):
+            candidates.append(data)
+        for cand in candidates:
+            if isinstance(cand, list) and cand and isinstance(cand[0], dict):
+                out = []
+                for it in cand:
+                    if not isinstance(it, dict):
+                        continue
+                    att = str(it.get("uuid") or it.get("id") or "")
+                    if not att:
+                        continue
+                    out.append({"uuid": att,
+                                "name": str(it.get("name") or it.get("fileName")
+                                            or it.get("title") or "")})
+                if out:
+                    return out
+        return []
