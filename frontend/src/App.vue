@@ -39,6 +39,7 @@ import KbModal from './components/KbModal.vue'
 import RunModal from './components/RunModal.vue'
 import AiModal from './components/AiModal.vue'
 import ChangelogModal from './components/ChangelogModal.vue'
+import CommandPalette from './components/CommandPalette.vue'
 import { TABS, DEFAULT_TAB, ARTIFACT_TAB_LABEL, STAGE_FLOW_TAB, FILL_TABS, ICON_PATHS } from './components/tabs.js'
 import { useTheme } from './composables/useTheme.js'
 import { useConfigDrawer } from './composables/useConfigDrawer.js'
@@ -55,6 +56,8 @@ import { useProposalModal } from './composables/useProposalModal.js'
 import { useKbModal } from './composables/useKbModal.js'
 import { useRunModal } from './composables/useRunModal.js'
 import { useChangelog } from './composables/useChangelog.js'
+import { usePalette } from './composables/usePalette.js'
+import { useHotkeys } from './composables/useHotkeys.js'
 
 const { theme, style, styles, toggle: toggleTheme, setStyle } = useTheme()
 // 整体布局模式：side(默认侧边工作台) / top(顶部导航)。两种布局下右侧配置栏都是抽屉。
@@ -88,6 +91,11 @@ const { openRunModal } = useRunModal()
 const { hasUnread, init: initChangelog, open: openChangelog } = useChangelog()
 
 const activeTab = ref(DEFAULT_TAB)
+// ⌘K 命令面板与全局快捷键（j/k 走队列、⌘ 采纳、⌫ 拒绝、⌃` 开合日志、数字键切模块）。
+// 必须排在 activeTab 之后：useHotkeys 收的是**同一个 ref**（数字键切模块要读当前页签），
+// 写在它上面会在 setup 求值时撞上 TDZ —— 表现是整个应用挂载失败、#tabs 根本不出现。
+const { show: showPalette } = usePalette()
+const { attach: attachHotkeys, detach: detachHotkeys } = useHotkeys({ activeTab })
 /** #aimodal 的显隐（旧版 openAiModal/closeAiModal 只切 hidden class） */
 const aiModalVisible = ref(false)
 function openAiModal() { aiModalVisible.value = true }
@@ -178,6 +186,10 @@ function stageStatus(i) {
 // 但状态是全局的，所以按 activeTab 精确关一个，避免误关别的模块的开合状态）。
 function onEsc(e) {
   if (e.key !== 'Escape') return
+  // 面板开着时 Esc 只关面板：它是最上层浮层，先收它才符合「一层 Esc 退一层」的直觉。
+  // 面板自己的 ↑↓↵ 走输入框的 keydown，但焦点可能不在输入框上，所以这里兜一道。
+  const pal = document.getElementById('palette')
+  if (pal && !pal.classList.contains('hidden')) { usePalette().hide(); return }
   if (configOpen.value) { configOpen.value = false; return }
   if (anyOpenFor(activeTab.value)) closeParamsFor(activeTab.value)
 }
@@ -188,10 +200,12 @@ onMounted(() => {
   initChangelog()
   startLeasePoll()
   window.addEventListener('keydown', onEsc)
+  attachHotkeys()
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onEsc)
+  detachHotkeys()
   stopLeasePoll()
 })
 
@@ -317,6 +331,16 @@ const healthText = computed(() => {
           </svg>
         </button>
       </nav>
+
+      <!-- ⌘K 入口：做成一颗「假的搜索框」而不是又一个图标按钮 ——
+           它的视觉形态直接说明「这里能打字」，比放大镜图标少一次猜。 -->
+      <button type="button" class="omni" id="btn-palette" @click="showPalette()"
+              title="搜索模块、动作、工单（⌘K）">
+        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor"
+             stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.2-3.2"/></svg>
+        <span class="omni-ph">搜索模块、动作、工单…</span>
+        <span class="kbd">⌘K</span>
+      </button>
 
       <div class="top-actions">
         <el-tag id="status" class="status-tag" :type="statusType" effect="light" round
@@ -481,5 +505,6 @@ const healthText = computed(() => {
     <RunModal />
     <AiModal :visible="aiModalVisible" @close="closeAiModal" />
     <ChangelogModal />
+    <CommandPalette />
   </el-config-provider>
 </template>

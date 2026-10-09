@@ -362,9 +362,11 @@ body { font-size: 13px; letter-spacing: -0.003em; }
 .cb-toggle:hover { background: var(--surf3); color: var(--txt); }
 .cb-toggle svg { transition: transform .18s; }
 .cb-hint { font-size: 11px; }
-/* 折叠只藏内容、不删 DOM：#run-log 的 :empty::before 占位与 420px 限高契约不受影响 */
+/* 折叠只藏内容、不删 DOM：#run-log 的 :empty::before 占位与 420px 限高契约不受影响。
+   ⚠️ 选择器打在 .log-wrap 上：RunLog 组件的**根**是那个 div，#run-log 是它里面的 <pre>，
+   写 `.console > .log` 匹配不到任何元素（实测折叠后高度仍是 420px）。 */
 .console .log { border: 0; border-radius: 0; }
-.console.console-collapsed > .log { display: none; }
+.console.console-collapsed .log-wrap { display: none; }
 .console.console-collapsed { border-bottom-color: transparent; }
 .console.console-collapsed .console-bar { border-bottom: 0; }
 
@@ -383,3 +385,78 @@ body { font-size: 13px; letter-spacing: -0.003em; }
 .ih-agent.er { background: var(--er-bg); color: var(--er); }
 .ih-gate { display: inline-flex; }
 .ih-gate .gate-badge, .ih-gate span { font-size: 10.5px !important; padding: 2px 7px !important; }
+
+/* ===========================================================================
+   10. ⌘K 命令面板（tier 3）
+   =========================================================================== */
+.kbd {
+  display: inline-grid; place-items: center; min-width: 17px; height: 17px; padding: 0 4px;
+  border-radius: 4px; background: var(--kbd); border: 1px solid var(--line);
+  font: 500 10px/1 var(--mono); color: var(--txt3);
+}
+
+/* 顶栏那颗「假搜索框」 */
+.omni {
+  display: flex; align-items: center; gap: 8px; height: 28px; width: 280px;
+  padding: 0 8px 0 10px; border-radius: var(--r-s);
+  background: var(--surf3); border: 1px solid var(--line); color: var(--txt4);
+  font: inherit; font-size: 12px; cursor: pointer; flex: 0 1 auto; min-width: 0;
+}
+.omni:hover { border-color: var(--line2); color: var(--txt3); background: var(--surf2) }
+.omni .omni-ph { flex: 1; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
+.omni .kbd { margin-left: auto }
+/* 窄屏先让搜索框收缩，再让位（顶栏一行里品牌与状态是刚需） */
+@media (max-width: 1280px) { .omni { width: 180px } }
+@media (max-width: 1100px) { .omni .omni-ph { display: none } .omni { width: 60px } }
+/* top 布局下收成一颗纯图标：那一行里页签条本身就是导航，横向预算要跟它抢。
+   实测放 280px 的搜索胶囊会把页签条挤到溢出 91px（用例「1440 装得下」正卡这条）。
+   留图标是刻意的 —— 全藏掉的话 top 布局就只剩键盘能发现 ⌘K 了。 */
+.topbar-top .omni { width: 30px; padding: 0; justify-content: center; order: 5 }
+.topbar-top .omni .omni-ph, .topbar-top .omni .kbd { display: none }
+/* order:5 把它挪到整条最右端。不这么做的话它夹在页签条与操作组中间，
+   实测那 10+30+10 = 50px 会把「操作组紧接页签条（≤24px）」这条断言顶掉 ——
+   而那条守的是「页签条右边不许出现一大块无主空白」。 */
+
+/* 面板本体 */
+.palette-root { position: fixed; inset: 0; z-index: 70; }
+.palette-root.hidden { display: none; }
+.pl-scrim { position: absolute; inset: 0; background: rgba(6, 8, 12, .55); backdrop-filter: blur(3px) }
+[data-theme="light"] .pl-scrim { background: rgba(20, 24, 32, .30) }
+.pl-box {
+  position: absolute; left: 50%; top: 88px; transform: translateX(-50%);
+  width: min(620px, calc(100vw - 40px)); background: var(--surf);
+  border: 1px solid var(--line2); border-radius: var(--r-l); box-shadow: var(--shadow-pop);
+  overflow: hidden; display: flex; flex-direction: column;
+  animation: pl-in .16s cubic-bezier(.22, .8, .3, 1) both;
+}
+@keyframes pl-in { from { opacity: 0; transform: translateX(-50%) translateY(-6px) } }
+.pl-input { display: flex; align-items: center; gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--line) }
+.pl-input input {
+  flex: 1; min-width: 0; border: 0; background: none; outline: none;
+  color: var(--txt); font: inherit; font-size: 14.5px;
+}
+.pl-input input::placeholder { color: var(--txt4) }
+.pl-list { max-height: 380px; overflow-y: auto; padding: 6px 0 8px; scrollbar-width: thin }
+.pl-group {
+  padding: 9px 16px 5px; font-size: 10px; font-weight: 600; letter-spacing: .12em;
+  color: var(--txt4); text-transform: uppercase;
+}
+.pl-row {
+  display: flex; align-items: center; gap: 11px; width: 100%; padding: 8px 16px;
+  border: 0; background: none; color: var(--txt2); font: inherit; font-size: 13px;
+  text-align: left; cursor: pointer;
+}
+.pl-row .pl-ico { width: 16px; display: grid; place-items: center; color: var(--txt4) }
+.pl-row .pl-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.pl-row .pl-hint { font: 400 11px/1 var(--mono); color: var(--txt4) }
+.pl-row.on { background: var(--ac-bg); color: var(--txt) }
+.pl-row.on .pl-ico { color: var(--ac) }
+.pl-row.off { opacity: .42; cursor: default }
+.pl-none { padding: 26px 16px; text-align: center; font-size: 12.5px; color: var(--txt4) }
+.pl-foot {
+  display: flex; align-items: center; gap: 14px; padding: 9px 16px;
+  border-top: 1px solid var(--line); background: var(--surf2);
+  font-size: 11px; color: var(--txt3);
+}
+.pl-foot .kbd { margin-right: 4px }
+.pl-foot .pl-brand { margin-left: auto; color: var(--txt4) }
