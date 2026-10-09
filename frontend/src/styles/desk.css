@@ -262,3 +262,124 @@ body { font-size: 13px; letter-spacing: -0.003em; }
   .top-meta { display: none; }
 }
 
+
+/* ===========================================================================
+   9. 缺陷修复工作台：队列（master）+ 检视器（detail）+ 控制台（tier 2）
+   =========================================================================== */
+/* #pane-defect 仍是 grid（用例断言 display:grid），只是从单列变成「队列 | 检视器」两列。
+   通栏的那几块显式跨列，其余按内容自然流。 */
+#pane-defect.active { grid-template-columns: minmax(340px, 400px) minmax(0, 1fr); }
+#pane-defect > #run-panel,
+#pane-defect > #stats-panel,
+#pane-defect > #kb-panel,
+#pane-defect > [id^="artifact-panel"] { grid-column: 1 / -1; }
+#pane-defect > #proposal-panel { grid-column: 1; min-width: 0; }
+#pane-defect > #inspector-panel { grid-column: 2; min-width: 0; align-self: start; }
+/* 主列不够宽就退回单列。阈值 900 = 队列 340 + 间距 18 + 检视器还能看 diff 的 542。
+   再窄下去两列各 <500px，补丁整行换行，比一列到底更难读。
+   ⚠️ 用容器查询而不是视口：参数抽屉打开时 .col-main 有 400px 右内边距，
+   按视口判会在「1500 屏 + 抽屉开着」时误判成宽屏（实测主列只剩 942px）。 */
+@container main (max-width: 900px) {
+  #pane-defect.active { grid-template-columns: minmax(0, 1fr); }
+  #pane-defect > #proposal-panel,
+  #pane-defect > #inspector-panel { grid-column: 1; }
+}
+
+/* ---- 队列：卡片排成密行 ---- */
+.prop-queue { display: flex; flex-direction: column; gap: 6px; }
+.prop-queue .prop-pager { margin-top: 8px; }
+/* 复用 ProposalCard（保留 .pcard / .pcard-id / .pcard-meta 全部契约），
+   只是在队列里压成一行：标签与标题并排，根因收成一行省略。 */
+.prop-queue .pcard {
+  position: relative; cursor: pointer; border-radius: var(--r-m);
+  background: var(--surf); border: 1px solid var(--line);
+  transition: border-color .15s, background-color .15s;
+}
+.prop-queue .pcard:hover { border-color: var(--line2); background: var(--surf2); }
+.prop-queue .pcard .pcard-top { gap: 5px; flex-wrap: wrap; }
+.prop-queue .pcard .pcard-title { font-size: 12.5px; font-weight: 500; line-height: 1.45; }
+.prop-queue .pcard .pcard-root {
+  font-size: 11.5px; color: var(--txt3); line-height: 1.5; margin-top: 4px;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+/* 选中态：左侧 2px 主色条 + 主色描边。刻意不整块换底色 ——
+   队列里一次只看一份，底色整块翻会让视线误以为「内容被替换了」。 */
+.prop-queue .pcard.is-sel { border-color: var(--ac-ln); background: var(--ac-bg); }
+.prop-queue .pcard.is-sel::before {
+  content: ''; position: absolute; left: 0; top: 8px; bottom: 8px; width: 2px;
+  border-radius: 2px; background: var(--ac);
+}
+
+/* ---- 检视器 ---- */
+.inspector { display: flex; flex-direction: column; gap: 0; padding: 0 !important; overflow: hidden; }
+.insp-empty {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 8px; padding: 52px 24px; text-align: center; color: var(--txt3);
+}
+.ie-mark { width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center;
+  background: var(--surf3); color: var(--txt4); }
+.ie-t { font-size: 13px; font-weight: 600; color: var(--txt2); }
+.ie-d { font-size: 11.5px; line-height: 1.75; color: var(--txt4); max-width: 380px; }
+.insp-head {
+  display: flex; align-items: flex-start; gap: 12px;
+  padding: 13px 15px 12px; border-bottom: 1px solid var(--line); background: var(--surf2);
+}
+.ih-main { flex: 1; min-width: 0; }
+.ih-title { font-size: 13.5px; font-weight: 600; line-height: 1.45; letter-spacing: -0.005em; }
+.ih-tags { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; margin-top: 7px; }
+.ih-id { font-family: var(--mono); font-size: 11px; color: var(--ac); padding: 1px 6px;
+  border-radius: 5px; background: var(--ac-bg); box-shadow: inset 0 0 0 1px var(--ac-ln); }
+.ih-st { font-size: 10.5px; font-weight: 600; padding: 2px 7px; border-radius: 5px; }
+.ih-meta { font-size: 11px; color: var(--txt4); font-family: var(--mono); }
+.ih-acts { display: flex; align-items: center; gap: 4px; flex: none; }
+.insp-verdict {
+  display: flex; align-items: center; gap: 7px; padding: 8px 15px;
+  font-size: 11.5px; color: var(--txt2); background: var(--surf); border-bottom: 1px solid var(--line3);
+}
+.iv-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ac); flex: none; }
+.insp-body { padding: 13px 15px 15px; overflow: auto; max-height: 62vh; }
+.insp-root { font-size: 12.5px; line-height: 1.7; color: var(--txt2); margin-bottom: 10px;
+  padding: 10px 12px; border-radius: var(--r-s); background: var(--surf2); border: 1px solid var(--line); }
+.insp-sec { margin-bottom: 14px; }
+.insp-loading { font-size: 11.5px; color: var(--txt4); }
+.insp-loading.hidden { display: none; }
+.insp-foot { padding: 11px 15px 13px; border-top: 1px solid var(--line); background: var(--surf2); }
+.insp-actrow { display: flex; align-items: center; gap: 7px; }
+.insp-actrow .is-note { flex: 1; min-width: 0; }
+.insp-actrow .el-button + .el-button { margin-left: 0; }
+
+/* ---- 控制台（运行日志折叠条）---- */
+.console { border: 1px solid var(--line); border-radius: var(--r-m); overflow: hidden; background: var(--term); }
+.console-bar {
+  display: flex; align-items: center; gap: 10px; height: 30px; padding: 0 10px;
+  background: var(--surf2); border-bottom: 1px solid var(--line);
+}
+.cb-toggle {
+  display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 6px;
+  border: 0; border-radius: 5px; background: transparent; cursor: pointer;
+  font: 500 11.5px/1 inherit; color: var(--txt2); letter-spacing: .02em;
+}
+.cb-toggle:hover { background: var(--surf3); color: var(--txt); }
+.cb-toggle svg { transition: transform .18s; }
+.cb-hint { font-size: 11px; }
+/* 折叠只藏内容、不删 DOM：#run-log 的 :empty::before 占位与 420px 限高契约不受影响 */
+.console .log { border: 0; border-radius: 0; }
+.console.console-collapsed > .log { display: none; }
+.console.console-collapsed { border-bottom-color: transparent; }
+.console.console-collapsed .console-bar { border-bottom: 0; }
+
+/* 队列只有 ~400px 宽，面板头那三块（标题+角标 / 折叠钮 / 筛选）必须显式换行，
+   否则 h2 里的中文标题会被压成两行、把「待审批提案」从中间截断。 */
+#proposal-panel .panel-head { flex-wrap: wrap; gap: 8px 10px; }
+#proposal-panel .panel-head h2 { flex: 1 1 auto; min-width: 0; flex-wrap: wrap; }
+#proposal-panel .panel-head .fold-btn { margin-left: 0; }
+#proposal-panel .filter-wrap { flex: 0 0 auto; margin-left: auto; }
+
+/* 表头里的 agent 胶囊与闸门徽标是「塞进 tags 行的外来 HTML」，
+   不给字号就会继承 .insp-head 的 13px，比旁边的 id 胶囊大一号、抢标题的位。 */
+.ih-agent { font-size: 10.5px; font-weight: 600; padding: 2px 7px; border-radius: 5px; }
+.ih-agent.ok { background: var(--ok-bg); color: var(--ok); }
+.ih-agent.wn { background: var(--wn-bg); color: var(--wn); }
+.ih-agent.er { background: var(--er-bg); color: var(--er); }
+.ih-gate { display: inline-flex; }
+.ih-gate .gate-badge, .ih-gate span { font-size: 10.5px !important; padding: 2px 7px !important; }

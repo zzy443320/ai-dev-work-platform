@@ -9,6 +9,9 @@ import { agentLabel, agentTone, gateBadge, proposalTitle, statusBadge } from '..
 
 const props = defineProps({
   p: { type: Object, required: true },
+  // master-detail 的选中态。刻意用「左侧主色条 + 描边」而不是整张卡换底色：
+  // 队列里一次只能看一份，底色整块翻会让视线以为内容变了。
+  active: { type: Boolean, default: false },
 })
 
 const emit = defineEmits(['open'])
@@ -65,7 +68,7 @@ const agentTitle = computed(() => {
   <el-card
     shadow="never"
     class="pcard"
-    :class="`pc-${p.status || 'pending'}`"
+    :class="[`pc-${p.status || 'pending'}`, { 'is-sel': active }]"
     :body-style="{ padding: '0' }"
     @click="emit('open', p.id)"
   >

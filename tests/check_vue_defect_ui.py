@@ -199,18 +199,35 @@ def run(base: str, dirs, *, errors: list) -> None:
         check("面板顺序：运行 → 提案 → 统计 → 知识库",
               tops == sorted(tops), str([round(t) for t in tops]))
 
-        # 相邻面板垂直间隙 >=12px（.tabpane.active 的 grid gap）
+        # 面板间隙 >=12px —— 2026-10-09 三栏改版后必须**按行分组**再量：
+        # 队列(#proposal-panel) 与检视器(#inspector-panel) 是同一行的两列，
+        # 用旧写法「相邻两块 top - 前一块 bottom」会算出负数（-368），
+        # 而这条断言真正要守的是「上下两行之间不许贴死」。
+        # 同时补一条同行不重叠：两列之间必须留正间隙，否则就是栅格塌了。
         gap = page.evaluate("""() => {
           const ps = [...document.querySelectorAll('#pane-defect > .panel')]
             .filter(el => !el.classList.contains('hidden'));
+          const rows = [];
+          for (const el of ps) {
+            const r = el.getBoundingClientRect();
+            const row = rows.find((x) => Math.abs(x.top - r.top) <= 4);
+            if (row) { row.right = Math.max(row.right, r.right); row.els.push(el.id); }
+            else rows.push({ top: r.top, bottom: r.bottom, right: r.right, els: [el.id] });
+          }
           const out = [];
-          for (let i = 1; i < ps.length; i++) {
-            out.push(ps[i].getBoundingClientRect().top - ps[i-1].getBoundingClientRect().bottom);
+          for (let i = 1; i < rows.length; i++) {
+            out.push(Math.round(rows[i].top - rows[i - 1].bottom));
           }
           return out;
         }""")
-        check("面板间距 >= 12px", bool(gap) and min(gap) >= 12,
-              str([round(g) for g in gap]))
+        check("面板行间距 >= 12px", bool(gap) and min(gap) >= 12, str(gap))
+        side = page.evaluate("""() => {
+          const a = document.querySelector('#proposal-panel').getBoundingClientRect();
+          const b = document.querySelector('#inspector-panel').getBoundingClientRect();
+          return { gap: Math.round(b.left - a.right), sameRow: Math.abs(a.top - b.top) <= 4 };
+        }""")
+        check("队列与检视器同行并排、中间留正间隙",
+              side["sameRow"] and side["gap"] >= 12, str(side))
         check("#pane-defect 是 grid 布局",
               page.eval_on_selector("#pane-defect", "el => getComputedStyle(el).display") == "grid")
 

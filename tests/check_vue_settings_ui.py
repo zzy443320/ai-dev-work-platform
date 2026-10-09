@@ -452,11 +452,24 @@ def run(base: str, *, errors: list, consoles: list) -> None:
             "() => document.querySelectorAll('#proposals .pcard').length > 0", timeout=30000)
         check(f"提案列表已刷新",
               len(page.query_selector_all("#proposals .pcard")) > 0)
+        # 2026-10-09 三栏改版：点提案卡不再直接开全屏弹窗，而是**选中进右侧检视器**
+        # （审十几份时不用反复开关弹窗）。弹窗改由检视器右上角「放大」打开 ——
+        # 这里两步都验：先确认 master-detail 生效，再确认放大路径仍然通。
         page.click("#proposals .pcard")
+        page.wait_for_function(
+            "() => { const i = document.querySelector('#inspector-panel');"
+            " return i && !i.querySelector('.insp-empty') }", timeout=15000)
+        check(f"点队列行进检视器（master-detail，不弹全屏窗）",
+              hidden(page, "#pmodal")
+              and len(page.inner_text("#inspector-panel .ih-title").strip()) > 0)
+        check(f"检视器表头带工单号与主操作",
+              not page.evaluate("""() => ['is-btn-approve','is-btn-reject','btn-inspect-expand']
+                .filter(id => !document.getElementById(id))"""))
+        page.click("#btn-inspect-expand")
         page.wait_for_function(
             "() => { const m = document.querySelector('#pmodal');"
             " return m && !m.classList.contains('hidden') }", timeout=15000)
-        check(f"提案详情弹窗打开", not hidden(page, "#pmodal"))
+        check(f"放大后提案详情弹窗打开", not hidden(page, "#pmodal"))
         check(f"弹窗标题非空",
               len(page.inner_text("#pmodal-title").strip()) > 0,
               repr(page.inner_text("#pmodal-title")))

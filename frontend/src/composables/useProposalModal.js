@@ -1,7 +1,11 @@
-// 提案详情弹窗（#pmodal）的状态与副作用。
-// 旧版 app.js:233-245（openProposal）/ 247-252（closePModal）/ 583-660
-// （decide + 四个操作函数）的等价迁移。模块级单例 —— App.vue 的事件接线、
+// 提案详情的状态与副作用（决策 / 返工 / 交接）。模块级单例 —— App.vue 的事件接线、
 // 产出物弹窗里的「查看提案」、KbModal 的关联链接都指向同一份状态。
+//
+// 2026-10-09 三栏改版：详情从「只能开全屏弹窗」变成**两种呈现共用一份状态**：
+//   - 常驻检视器（#inspector-panel）：缺陷页签里点队列行 → selectInline(id)
+//   - 弹窗（#pmodal）：其它入口（问答 / 产出物 / 知识库）与「放大」按钮 → openProposal(id)
+// 所以这里刻意分成两个开关：`pinnedId` 说「检视器现在看的是哪份」，`visible` 说
+// 「弹窗开没开」。数据加载（loadDetail）只有一份 —— 换呈现不该重新拉一次后端。
 import { computed, ref } from 'vue'
 import { api, http } from '../api/client.js'
 import { useToast } from './useToast.js'
@@ -12,11 +16,15 @@ import { renderProposalSections, proposalActions, statusCls, statusLabel, gateBa
 const { toast } = useToast()
 
 const visible = ref(false)
+/** 检视器当前钉住的那份提案 id（null = 没选，检视器显示空态） */
+const pinnedId = ref(null)
 const detail = ref(null)
 const sections = ref(null)
+const loading = ref(false)
+const loadError = ref('')
 const note = ref('')
 const forceConfirm = ref(false)
-/** 后端拒绝时弹窗里那条红色错误（旧版 pmPendingError） */
+/** 后端拒绝时详情区那条红色错误（旧版 pmPendingError） */
 const pendingError = ref('')
 
 // ---- 一键返工（没修好，重修）----
@@ -59,7 +67,10 @@ const preflight = computed(() => {
 
 function escape(s) { return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') }
 
-async function openProposal(id) {
+/** 拉一份提案详情并渲染各分区。两种呈现（检视器 / 弹窗）都走这里，只有一份网络请求。 */
+async function loadDetail(id) {
+  loading.value = true
+  loadError.value = ''
   try {
     const data = await api.proposal(id)
     detail.value = data
@@ -71,15 +82,42 @@ async function openProposal(id) {
     reworkBusy.value = false
     reworkDetail.value = ''
     reworkVerdict.value = 'not_fixed'
-    visible.value = true
+    pendingError.value = ''
+    return true
   } catch (e) {
-    toast(`打开提案详情失败: ${e}`, 'err')
+    loadError.value = String(e)
+    toast(`加载提案详情失败: ${e}`, 'err')
+    return false
+  } finally {
+    loading.value = false
   }
+}
+
+/** 弹窗呈现（其它页签的入口、以及检视器的「放大」按钮） */
+async function openProposal(id) {
+  if (await loadDetail(id)) visible.value = true
+}
+
+/** 检视器呈现：点队列行。不弹窗，详情就地展开。 */
+async function selectInline(id) {
+  if (pinnedId.value === id && detail.value) return
+  pinnedId.value = id
+  await loadDetail(id)
+}
+
+/** 取消选中（Esc / 点关闭）：只收检视器的内容，不动弹窗 */
+function unpin() {
+  pinnedId.value = null
+  if (!visible.value) { detail.value = null; sections.value = null; loadError.value = '' }
 }
 
 function close() {
   visible.value = false
-  detail.value = null
+  // 弹窗关掉后如果检视器还钉着同一份，别把它的详情一起清了
+  if (pinnedId.value && detail.value && detail.value.id !== pinnedId.value) {
+    detail.value = null
+    sections.value = null
+  }
   pendingError.value = ''
 }
 
@@ -193,7 +231,8 @@ async function sendHandoff() {
       toast(`已回写到工单 ${d.defect_id}（${d.chars} 字）`)
       handoffText.value = d.handoff || handoffText.value
       await refreshAfterDecision()
-      await openProposal(detail.value.id)
+      // 就地回读，别用 openProposal —— 那会在检视器模式下硬顶出一个全屏弹窗
+      await loadDetail(detail.value.id)
     } else {
       pendingError.value = d.error || '回写失败'
       if (d.handoff) { handoffText.value = d.handoff; handoffOpen.value = true }
@@ -240,9 +279,14 @@ async function decide(id, action, payloadObj) {
   const { loadProposals, loadStats } = useDefect()
   await Promise.all([loadProposals(), loadStats(), useHealth().loadHealth()])
 
-  if (modalOpen && detail.value && detail.value.id === id) {
+  // 决策后回读详情：弹窗开着、或检视器正钉着这一份，都要刷新成决策后的状态
+  // （状态徽标、可用动作、apply/preflight 都变了）。两种呈现共用 detail，
+  // 所以这里只判「当前是不是正在看这一条」，不判用哪种呈现看的。
+  const showing = (modalOpen || pinnedId.value === id)
+    && detail.value && detail.value.id === id
+  if (showing) {
     if (!ok) pendingError.value = msg
-    await openProposal(id)
+    await loadDetail(id)
     if (!noteValue()) note.value = prevNote
   } else if (!ok) {
     pendingError.value = msg
@@ -251,9 +295,11 @@ async function decide(id, action, payloadObj) {
 
 export function useProposalModal() {
   return {
-    visible, detail, sections, note, forceConfirm, pendingError,
+    visible, pinnedId, detail, sections, loading, loadError,
+    note, forceConfirm, pendingError,
     actions, statusText, statusClass, gateHtml, preflight,
-    openProposal, close, decide, onApprove, onForceApprove, onReject, onUndo,
+    openProposal, selectInline, unpin, loadDetail,
+    close, decide, onApprove, onForceApprove, onReject, onUndo,
     REWORK_OPTIONS, reworkOpen, reworkVerdict, reworkDetail, reworkRerun, reworkBusy,
     openRework, cancelRework, submitRework,
     handoffOpen, handoffText, handoffBusy, previewHandoff, sendHandoff,

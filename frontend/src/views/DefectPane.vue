@@ -17,6 +17,9 @@ import { useFold } from '../composables/useFold.js'
 import { useRunLease } from '../composables/useRunLease.js'
 import { useRunModal } from '../composables/useRunModal.js'
 import { useModuleParams } from '../composables/useModuleParams.js'
+// 检视器与弹窗共用一份详情状态（见 useProposalModal 顶部注释）。这里只取
+// 「选中 / 放大」两个动作，判定逻辑一律留在 composable 里，不在页签内复制一套。
+import { useProposalModal } from '../composables/useProposalModal.js'
 import { api } from '../api/client.js'
 import ParamBar from '../components/ParamBar.vue'
 import ParamDrawer from '../components/ParamDrawer.vue'
@@ -24,6 +27,7 @@ import RunLog from '../components/RunLog.vue'
 import RunLeaseBar from '../components/RunLeaseBar.vue'
 import ArtifactsPanel from '../components/ArtifactsPanel.vue'
 import ProposalCard from '../components/ProposalCard.vue'
+import ProposalInspector from '../components/ProposalInspector.vue'
 import ProposalPager from '../components/ProposalPager.vue'
 import KbCard from '../components/KbCard.vue'
 
@@ -48,6 +52,34 @@ const {
 const { isCollapsed, toggleFold } = useFold()
 const { openRunModal } = useRunModal()
 const { close: closeParams } = useModuleParams()
+const { pinnedId, selectInline } = useProposalModal()
+
+/**
+ * master-detail：点队列行 = 选中并在右侧检视器展开，**不再**直接弹全屏窗。
+ * 列表一直在旁边，审十几份时不用反复开关（旧版每份都要「开 → 看 → 关」三步）。
+ */
+function onPickRow(id) { selectInline(id) }
+
+/** 检视器右上角「放大」：把当前这份升格成弹窗（备注 / 一键返工 / 后端交接都在那里） */
+function onExpand() {
+  if (pinnedId.value) emit('open-proposal', pinnedId.value)
+}
+
+/**
+ * master-detail 的表头数据源：队列里的那一行**摘要**，不是详情接口。
+ *
+ * 为什么不从 detail 里凑：/api/proposals/{id} 的载荷是按区块嵌套的
+ * （analysis.title / patch.blocks / gate.checks / agent.rounds…），而标题、分类、
+ * 优先级、+/- 行数这些在列表摘要里就是平铺好的。检视器表头要的是「这份是什么」，
+ * 正文要的才是「细节」—— 用列表已有的摘要当表头，既不用重新映射一遍嵌套字段，
+ * 也保证队列里看到的和表头说的永远是同一份口径。
+ */
+const selProposal = computed(() => {
+  const id = pinnedId.value
+  if (!id) return null
+  return (proposals.value || []).find((p) => (p.id || p.defect_id) === id) || null
+})
+
 // 服务端占用（可能是外部脚本 / 别的标签页 / 刷新前留下的线程）。本地 `running`
 // 只知道自己这个标签页发起的运行，两者取并集才是「现在能不能点运行」。
 const { busy: leaseBusy, refresh: refreshLease } = useRunLease()
@@ -162,13 +194,31 @@ onMounted(async () => {
          能看到「是谁、到哪了、能不能停」的地方——以前只能干等一句 409。 -->
     <RunLeaseBar />
 
-    <RunLog
-      :lines="lines" :live="live" :has-live="hasLive" :replay="replay"
-      :result-html="resultHtml" :running="running" :title="logTitle"
-      :on-open="openRunModal"
-      @open-proposal="(id) => emit('open-proposal', id)"
-      @expand="(p) => emit('expand-log', p)"
-    />
+    <!-- 控制台区：日志收成一块可折叠的终端面板（IDE 底部面板那个形态）。
+         默认展开 —— #run-log 的 420px 限高与空态占位都由 style.css 锁着，
+         折叠只收内容不删 DOM，所以 :empty::before 那套占位逻辑不受影响。 -->
+    <div class="console" :class="{ 'console-collapsed': isCollapsed('run-console') }">
+      <div class="console-bar">
+        <button type="button" class="cb-toggle" id="btn-console-toggle"
+                :title="isCollapsed('run-console') ? '展开运行日志' : '收起运行日志'"
+                @click="toggleFold('run-console')">
+          <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor"
+               stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"
+               :style="{ transform: isCollapsed('run-console') ? 'rotate(-90deg)' : 'none' }">
+            <polyline points="6 9 12 15 18 9" />
+          </svg>
+          <span>运行日志</span>
+        </button>
+        <span class="cb-hint muted">{{ isCollapsed('run-console') ? '已收起 · 流水线仍在下方推进' : '实时阶段进展与大模型输出' }}</span>
+      </div>
+      <RunLog
+        :lines="lines" :live="live" :has-live="hasLive" :replay="replay"
+        :result-html="resultHtml" :running="running" :title="logTitle"
+        :on-open="openRunModal"
+        @open-proposal="(id) => emit('open-proposal', id)"
+        @expand="(p) => emit('expand-log', p)"
+      />
+    </div>
   </section>
 
   <section class="panel collapsible" id="proposal-panel"
@@ -197,13 +247,17 @@ onMounted(async () => {
     </div>
     <div class="block-banner" :class="{ hidden: !repoBanner }" id="repo-banner"
          v-html="repoBanner" />
-    <div id="proposals" class="proposal-grid">
+    <!-- 队列（master）：卡片排成一列密行而不是一屏三张的网格 ——
+         审提案的动作是「逐份过」，网格逼着人来回找下一张。
+         ⚠️ 卡片必须留在 #proposals 里（用例数 #proposals .pcard 的条数与 .pcard-id 顺序）。 -->
+    <div id="proposals" class="prop-queue">
       <div v-if="proposalsError" class="empty">提案加载失败: {{ proposalsError }}</div>
       <div v-else-if="!proposals.length" class="empty">还没有提案。运行流水线后会在这里等你审阅采纳。</div>
       <div v-else-if="!pageItems.length" class="empty">当前筛选下没有提案。</div>
       <template v-else>
         <ProposalCard v-for="p in pageSlice" :key="p.id" :p="p"
-                      @open="(id) => emit('open-proposal', id)" />
+                      :active="pinnedId === p.id"
+                      @open="onPickRow" />
         <ProposalPager :info="pagerInfo" :nums="pagerNums" :current="curPage"
                        :total-pages="totalPages" :page-size="PROP_PAGE_SIZE"
                        @goto="gotoPropPage" />
@@ -211,6 +265,10 @@ onMounted(async () => {
     </div>
     <p class="panel-note">运行流水线不会写目标仓库，只产出提案；在这里点「采纳」只会把改动写入工作区（不 commit、不 push），由你确认后自行提交。</p>
   </section>
+
+  <!-- 检视器（detail）：与队列并排，点行即换。放在 #proposal-panel 之后、
+       复现用例面板之前 —— 两者在 #pane-defect 的同一行栅格里（见 desk.css）。 -->
+  <ProposalInspector :proposal="selProposal" @expand="onExpand" />
 
   <!-- 复现用例：agentic 修复循环在沙箱里跑红→绿的那份用例（type=repro 的产出物）。
        提案补丁不支持新建文件，所以它单独挂在这里，点采纳才会进仓库。
