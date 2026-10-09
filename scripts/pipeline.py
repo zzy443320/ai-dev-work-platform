@@ -591,6 +591,7 @@ class AIDefectFixerPipeline:
                          precedents=precedents,
                          page_after_hook=self._page_after_hook(
                              defect, did, verify or page),
+                         page_look_fn=self._page_look_fn(defect, did, verify or page),
                          api_probe_fn=self._api_probe_fn())
         try:
             with usage.step("fix_agent"):
@@ -728,7 +729,9 @@ class AIDefectFixerPipeline:
             if int(budget_left or 0) < ready_timeout + 45:
                 return {"status": "skipped",
                         "reason": f"剩余时间预算不足（{budget_left}s），不起 dev server 复验"}
-            handle = sandbox.spawn_server(
+            # ensure_server：整个循环只冷起一次，多个复验钩子轮次复用同一个服务；
+            # 沙箱 close() 统一停（不再每次现起现停，一次冷启动要几十秒）。
+            handle = sandbox.ensure_server(
                 command, ready_timeout=ready_timeout,
                 cwd_rel=str(self.agent_cfg.get("sandbox_server_cwd") or ""))
             if not handle.ready:
@@ -775,10 +778,87 @@ class AIDefectFixerPipeline:
                 shot["status"] = "failed"
                 shot["reason"] = f"{type(e).__name__}: {e}"
                 return shot
-            finally:
-                handle.stop()
 
         return hook
+
+    # ------------------------------------------------------- agent 的浏览器工具
+    def _page_look_fn(self, defect: Dict, did: str, before: Dict):
+        """交给 FixAgent 的 browser_look：agent 自己在沙箱 dev server 上开页面看现场。
+
+        与页面复验钩子的分工：复验是**流水线**在「第一次拿到绿」时拍一次给结论；
+        这个工具是 **agent** 的手眼——它指定路径与动作，截图直接作为图像回喂，
+        由循环里的模型自己判读。dev server 用 ensure_server 常驻（整个循环复用一次
+        冷启动），沙箱 close() 时统一停，不再每次现起现停。
+        """
+        mode = str(self.agent_cfg.get("sandbox_server") or "auto").strip().lower()
+        if mode not in ("auto", "on"):
+            return None
+
+        def look(sandbox, path: str = "", actions=None,
+                 with_patch_blocks=None) -> Dict:
+            from .patch_engine import build_patch
+            from .sandbox import default_server_command
+
+            command = str(self.agent_cfg.get("sandbox_server_command") or "").strip()
+            if not command:
+                command, _cwd = default_server_command(Path(self.repo_path))
+            if not command:
+                return {"status": "unusable",
+                        "reason": "没探出可用的 dev server 启动命令（package.json 里没有"
+                                  " dev/start/serve，或技术栈不认识）。可在配置里填 "
+                                  "agent.sandbox_server_command；此前 browser_look 不可用"}
+            ready_timeout = _as_int(self.agent_cfg.get("sandbox_server_ready_timeout"), 90)
+            handle = sandbox.ensure_server(
+                command, ready_timeout=ready_timeout,
+                cwd_rel=str(self.agent_cfg.get("sandbox_server_cwd") or ""))
+            if not handle.ready:
+                return {"status": "unusable", "reason": handle.note or "服务未就绪",
+                        "command": handle.command, "url": handle.url,
+                        "log_tail": handle.log_tail[-1200:]}
+            # with_patch：先落指定补丁再看。无论看没看成，finally 里必须还原——
+            # 否则下一轮 SEARCH 的基准就从「用户工作区内容」漂移成「补丁残留」。
+            originals: Dict[str, str] = {}
+            if with_patch_blocks:
+                built = build_patch(str(sandbox.root), with_patch_blocks)
+                if not built.ok:
+                    return {"status": "error",
+                            "reason": "补丁在沙箱当前内容上匹配不上，什么都没落："
+                                      + "；".join(list(dict.fromkeys(built.errors))[:4])}
+                originals = {c.file_path: c.original for c in built.changes if c.ok}
+                for c in built.changes:
+                    if c.ok:
+                        sandbox.write(c.file_path, c.patched)
+            try:
+                ver = ScreenshotVerifier(
+                    base_url=handle.url,
+                    headless=bool(self.config.get("playwright", {}).get("headless", True)),
+                    screenshot_dir=self.verifier.screenshot_dir,
+                    auth=self.config.get("playwright", {}).get("auth") or {})
+                route = path or (before or {}).get("route") or "/"
+                acts: List[Tuple[str, str, object]] = [("goto", route, None)]
+                for a in (actions or [])[:10]:
+                    if not isinstance(a, dict):
+                        continue
+                    op = str(a.get("op", "")).lower()
+                    target = str(a.get("target", "") or "")
+                    if op not in ("goto", "click", "fill", "wait", "wait_for"):
+                        continue
+                    if op != "goto" and not target:
+                        continue
+                    acts.append((op, target, a.get("value")))
+                shot = ver.capture(did, "agent-look", defect, route=route, actions=acts)
+                shot["server_url"] = handle.url
+                return shot
+            except Exception as e:
+                return {"status": "failed", "reason": f"{type(e).__name__}: {e}"}
+            finally:
+                for rel, content in originals.items():
+                    try:
+                        sandbox.write(rel, content)
+                    except OSError:
+                        pass
+
+        return look
 
     # ------------------------------------------------------------ 闸门折算
     def _gate_of(self, agent: Dict, patch: Dict) -> Dict:

@@ -172,8 +172,20 @@ GIVE_UP_RULES = """\
 认输不丢人，**假装修好才丢人**。
 """
 
+BROWSER_RULES = """\
+## 看页面（browser_look）
+- 工单描述的是页面现象时，**先亲眼看一次**再动手：{"action":"call","tool":"browser_look",\
+"arguments":{"path":"/路由"}}。截图会作为图像附在下一条系统消息里，判读必须引用图里真实可见的内容。
+- 修复前截图判读说「没拍到现象」时，用 browser_look 换路径 / 换动作自己复现一遍，\
+别拿一张错页面的判读当结论。
+- {"with_patch":"last"} 把上一份补丁先落进沙箱再看（看完自动还原），用来确认补丁的页面\
+效果；不带它看到的是未打补丁的基线页面。别把基线页面的现象当成「补丁没生效」。
+- 一次调用约 10~20 秒，预算 {max_looks} 次：留给关键节点（复现现象、确认修复效果），\
+别拿它当探路石。
+"""
 
-def _tools_text() -> str:
+
+def _tools_text(browser: bool = False) -> str:
     rows = [
         ("repo_list", "列目录：{\"path\": \"packages/app/src\"}"),
         ("repo_read", "读文件：{\"path\": \"…\", \"start\": 120, \"end\": 160}"),
@@ -190,6 +202,13 @@ def _tools_text() -> str:
                     "\"handoff\":\"给后端的话术\",\"cleanup\":\"后端修好后前端该撤什么\"}"),
         ("give_up", "认输转人工：{\"action\":\"give_up\",\"reason\":\"…\"}"),
     ]
+    if browser:
+        rows.insert(5, ("browser_look",
+                        "在沙箱 dev server 里亲眼看一次页面（截图会作为图像发给你）："
+                        "{\"path\": \"/工单路由\", \"actions\": [{\"op\": \"click\", "
+                        "\"target\": \"CSS选择器\"}], \"with_patch\": \"last\"}。"
+                        "actions 可省（只打开页面）；with_patch=last 表示先把上一份已构建的"
+                        "补丁落进沙箱再看，看完自动还原；不带它看到的是**未打补丁**的基线页面"))
     return "\n".join(f"- `{n}` {d}" for n, d in rows)
 
 
@@ -274,6 +293,7 @@ class FixAgent:
                  emit: Optional[Callable[[Dict], None]] = None,
                  should_cancel: Optional[Callable[[], bool]] = None,
                  page_after_hook: Optional[Callable[..., Dict]] = None,
+                 page_look_fn: Optional[Callable[..., Dict]] = None,
                  api_probe_fn: Optional[Callable[[str], Dict]] = None,
                  precedents: str = ""):
         """`page_after_hook(sandbox, budget_left) -> Dict`：补丁已落在沙箱、还没还原回
@@ -281,11 +301,16 @@ class FixAgent:
 
         只有命令级证据就说「修好了」是不诚实的：lint 全绿也可能页面照样白屏。所以给了
         钩子就只跑一次（第一次拿到绿时）；判读为「现象仍在」时这次绿不算收敛，继续改。
+        `page_look_fn(sandbox, path, actions=…, with_patch_blocks=…) -> Dict` 是
+        agent 手里的浏览器工具（browser_look）：agent 自己指定路径与操作，在沙箱
+        dev server 上开一遍，截图作为图像回喂给循环里的模型。没有它，agent 对页面的
+        认知只有流水线开头那一张二手截图——Trae 式的「自己打开浏览器看一眼」就是它。
         `precedents` 是同类历史缺陷的先例文本（scripts/precedents.py 生成），只作参考。
         """
         self.repo_root = Path(repo_path).resolve()
         self.ai = ai
         self.page_after_hook = page_after_hook
+        self.page_look_fn = page_look_fn
         self.api_probe_fn = api_probe_fn
         self.precedents = str(precedents or "")
         # 契约护栏与归因都要读仓库核对引用，所以 reader 是实例状态而不是 run() 局部：
@@ -295,6 +320,11 @@ class FixAgent:
         self.verdict: Dict = {}
         self._shots = 0
         self.page_after: Dict = {}
+        # browser_look 的状态：次数预算、待回喂的截图、最近一份构建过的补丁
+        self.looks_used = 0
+        self.looks_max = _int((agent_cfg or {}).get("browser_looks"), 6, 0, 30)
+        self._pending_images: List[Dict] = []
+        self._last_built_blocks: List = []
         self.cfg = dict(agent_cfg or {})
         # 页面复验最多跑几次：判读说「现象仍在」后，下一版的绿必须重新看一眼页面才算数
         self.shot_max = _int(self.cfg.get("sandbox_server_max_checks"), 2, 1, 5)
@@ -393,6 +423,10 @@ class FixAgent:
                             "content": "", "harness": (self.harness.to_dict()
                                                        if self.harness else {}),
                             "rewrites": 0, "runs": []}
+        # browser_look 的每单状态：截图待回喂队列、已看次数、最近一份构建过的补丁块
+        self._pending_images = []
+        self._last_built_blocks = []
+        self.looks_used = 0
         if str(getattr(self.ai, "mode", "")) == "mock":
             result["conclusion"] = CONCLUSION_DISABLED
             result["notes"].append("Mock 模型不会真的读写代码，agentic 循环无意义，"
@@ -640,6 +674,7 @@ class FixAgent:
                 + str((self.verdict or {}).get("handoff") or "")[:200])
         result["conclusion"] = conclusion
         result["needs_human"] = conclusion in NEEDS_HUMAN
+        result["browser_looks"] = self.looks_used
         result["elapsed_seconds"] = round(self.deadline_seconds
                                           - max(0.0, deadline.left()), 1)
         return result
@@ -666,7 +701,11 @@ class FixAgent:
 
         with usage.step(f"agent_round_{rnd}"):
             res = self.ai.complete_text(prompt, AGENT_SYSTEM, max_tokens=16000,
-                                        on_delta=on_delta)
+                                        on_delta=on_delta,
+                                        images=self._pending_images or None)
+        # 截图只随下一次模型调用走一次：无论成败都清掉，工具结果文本仍留在上下文里，
+        # 模型想再看可以重新调 browser_look——不要让同一张图反复烧上下文预算。
+        self._pending_images = []
         if res.get("error"):
             result["notes"].append(f"模型调用失败：{str(res['error'])[:300]}")
             self._stage(f"模型调用失败：{str(res['error'])[:160]}", status="fail")
@@ -679,10 +718,11 @@ class FixAgent:
     def _prompt(self, reader: RepoReader, context: List[str], rnd: int,
                 deadline: _Deadline) -> str:
         left = int(max(0, deadline.left()))
+        has_browser = self.page_look_fn is not None
         parts = [
             "## 任务\n处理下面这条缺陷工单。你可以用工具查仓库、提交候选补丁、"
             "在沙箱里跑命令。每提交一次补丁，系统都会给你**真实的**验证结果。\n\n"
-            "### 可用工具\n" + _tools_text()
+            "### 可用工具\n" + _tools_text(browser=has_browser)
             + f"\n\n轮次预算：{self.max_rounds} 轮（一次「提交补丁 + 验证」算一轮）。",
             READ_RULES,
             PATCH_RULES,
@@ -691,6 +731,9 @@ class FixAgent:
             + "\n- 工具里的 path 一律用相对仓库根的形式。",
             "\n".join(_fit_notes(context, self.note_budget)),
         ]
+        if has_browser:
+            # 别用 .format：本节里有 JSON 花括号，format 会把它们当格式字段解析
+            parts.insert(5, BROWSER_RULES.replace("{max_looks}", str(self.looks_max)))
         if rnd >= self.max_rounds:
             parts.append("## 最后一轮\n这是本轮缺陷能用的最后一轮。**不要再调用工具**："
                          "要么给出你认为最佳的一份 SEARCH/REPLACE 补丁，要么 give_up 说明卡在哪。")
@@ -877,10 +920,18 @@ class FixAgent:
             result = self._api_probe(str(args.get("url") or args.get("path") or ""))
         elif name in ("repro_add", "repro_write", "add_repro"):
             result = self._add_repro(args, sandbox, rnd)
+        elif name in ("browser_look", "look_page", "browser_open"):
+            result, images = self._browser_look(args, sandbox)
+            if images:
+                self._pending_images.extend(images)
+                # 只留最近 2 张：更早的截图对后续轮次没有增量价值，只烧上下文预算
+                self._pending_images = self._pending_images[-2:]
         else:
-            result = ("[错误] 未知工具 " + repr(name) + "。可用：repo_list / repo_read / "
-                      "repo_grep / repro_add / check_run / patch_try（直接输出 "
-                      "SEARCH/REPLACE 块）/ give_up")
+            known = ("repo_list / repo_read / repo_grep / repro_add / check_run / "
+                     "patch_try（直接输出 SEARCH/REPLACE 块）/ give_up")
+            if self.page_look_fn is not None:
+                known += " / browser_look"
+            result = "[错误] 未知工具 " + repr(name) + "。可用：" + known
         self._tool_event(name, args, result)
         return [f"### 工具 {name} {_json_short(args)}（第 {rnd} 轮）\n"
                 + _clip(result, MAX_FEEDBACK_CHARS)]
@@ -1075,7 +1126,85 @@ class FixAgent:
                 "少了一层的可选链、错误的分支条件），而不是随便挑一段能跑通的代码。"
                 f"（剩余重写次数 {max(0, self.repro_max_rewrite - self.repro['rewrites']) + 1}）")
 
-    # ---------------------------------------------------------------- 补丁尝试
+    # ------------------------------------------------------------- 看页面（agent 的浏览器）
+    def _browser_look(self, args: Dict, sandbox: Sandbox) -> Tuple[str, List[Dict]]:
+        """agent 亲眼看页面：在沙箱 dev server 上按给定路径/动作开一遍，截图回喂。
+
+        这是 Trae 式「自己打开浏览器看一眼」的那块拼图。与 page_after 钩子（流水线
+        拍一次给结论）不同，这里的判读者是循环里的模型本身：截图以图像形式附进下一次
+        模型调用，文本证据（页面文本采样、console 报错、动作留痕）直接进工具结果。
+        """
+        if self.page_look_fn is None:
+            return ("[错误] 浏览器工具未启用（上层未接线，或配置 agent.sandbox_server=off）。"
+                    "页面现象只能靠工单信息与 repo_read 推断。"), []
+        if self.looks_used >= self.looks_max:
+            return (f"[拒绝] browser_look 的次数预算（{self.looks_max}）已用完，"
+                    "把剩下的轮次花在补丁与命令验证上。"), []
+        path = str(args.get("path") or args.get("route") or "").strip()
+        actions = args.get("actions") if isinstance(args.get("actions"), list) else []
+        with_patch = str(args.get("with_patch") or "").strip().lower() in ("last", "true", "1")
+        blocks = list(self._last_built_blocks) if with_patch else None
+        if with_patch and not blocks:
+            return ("[提示] 还没有任何已构建过的补丁，with_patch=last 无从谈起。"
+                    "去掉 with_patch 看基线页面，或先提交一次补丁。"), []
+        self.looks_used += 1
+        self._stage(f"在沙箱里打开页面看现场：{(path or '(默认路由)')[:60]}"
+                    + ("（先落上一份补丁再看）" if with_patch else ""),
+                    stage="看页面", status="start")
+        try:
+            shot = self.page_look_fn(sandbox, path, actions=actions,
+                                     with_patch_blocks=blocks) or {}
+        except Exception as e:
+            return f"[错误] 看页面异常：{type(e).__name__}: {e}", []
+        status = str(shot.get("status") or "")
+        lines = [f"页面状态：{status or '未知'}",
+                 f"最终 URL：{shot.get('final_url') or shot.get('server_url') or '-'}"]
+        if shot.get("page_title"):
+            lines.append(f"页面标题：{shot['page_title']}")
+        if shot.get("page_text_sample"):
+            lines.append("页面文本采样：" + str(shot["page_text_sample"])[:400])
+        errs = (shot.get("console_errors") or []) + (shot.get("page_errors") or [])
+        if errs:
+            lines.append("控制台/页面报错：\n"
+                         + "\n".join(f"· {str(e)[:160]}" for e in errs[:8]))
+        else:
+            lines.append("控制台/页面报错：（无）")
+        log = shot.get("actions_log") or []
+        if log:
+            lines.append("动作留痕：" + "；".join(
+                f"{a.get('op')} {a.get('target') or ''}"
+                + ("" if a.get("ok") else f"（失败：{str(a.get('error'))[:60]}）")
+                for a in log[:8]))
+            if any(not a.get("ok") for a in log):
+                lines.append("⚠ 有动作没执行成功：页面不是完整复现后的状态，"
+                             "据此判「现象在不在」时要打折。")
+        if shot.get("reason"):
+            lines.append("说明：" + str(shot["reason"])[:300])
+        images: List[Dict] = []
+        sp = str(shot.get("screenshot") or "")
+        if sp and Path(sp).is_file():
+            try:
+                data = Path(sp).read_bytes()
+            except OSError:
+                data = b""
+            if 0 < len(data) <= 4_000_000:
+                import base64
+
+                images.append({"mime": "image/png", "tag": "browser_look",
+                               "data_uri": "data:image/png;base64,"
+                                           + base64.b64encode(data).decode()})
+                lines.append("截图已作为图像附在本条结果后（随下一次模型调用给出）——"
+                             "判读必须引用图里真实可见的内容，看不到就明说看不到。")
+            else:
+                lines.append("截图没能回喂（缺失或过大），上面的文本是唯一证据。")
+        else:
+            lines.append("本次没有拿到截图。")
+        self._stage(f"看页面完成：{status}（第 {self.looks_used}/{self.looks_max} 次）",
+                    status="done" if status in ("ok", "error_visible") else "warn",
+                    stage="看页面")
+        return "\n".join(lines), images
+
+    # --------------------------------------------------------------- 补丁尝试
     def _try_patch(self, text: str, blocks: List, sandbox: Sandbox,
                    commands: List[Dict], baseline: Dict, rnd: int) -> Dict:
         attempt: Dict = {
@@ -1128,6 +1257,7 @@ class FixAgent:
 
         # 落进沙箱 → 跑验收 → 还原。还原是必须的：下一轮的 SEARCH 基准仍然是
         # 「用户当前工作区的内容」，不还原的话第二份补丁会打在第一份的残骸上。
+        self._last_built_blocks = list(blocks)   # browser_look with_patch=last 用
         originals: Dict[str, str] = {c.file_path: c.original for c in built.changes if c.ok}
         start = time.time()
         for c in built.changes:

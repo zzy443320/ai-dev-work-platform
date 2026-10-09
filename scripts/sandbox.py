@@ -225,6 +225,9 @@ class Sandbox:
     opened_seconds: float = 0.0
     _worktree: bool = False
     _tmp_parent: Optional[Path] = None
+    # 常驻 dev server（ensure_server 起一次、整个循环里复用、close() 统一停）。
+    # 不进相等比较，进程对象也绝不序列化。
+    _server_handle: Optional[Any] = field(default=None, compare=False, repr=False)
 
     # ------------------------------------------------------------------ 生命周期
     def open(self) -> "Sandbox":
@@ -283,6 +286,9 @@ class Sandbox:
         """删除沙箱。失败要说清楚留在哪，绝不假装删干净了。"""
         if self.root is None:
             return
+        # 常驻 dev server 先停：不然进程还握着沙箱目录里的文件，Windows 上
+        # rmtree 会删不掉，留下一个"删不干净"的假故障。
+        self.stop_server()
         if self._worktree:
             try:
                 subprocess.run(["git", "-C", str(self.repo_root), "worktree",
@@ -653,6 +659,35 @@ class Sandbox:
         if not ready:
             handle.stop()
         return handle
+
+    def ensure_server(self, cmd: str, ready_timeout: int = 90, cwd_rel: str = "",
+                      env_extra: Optional[Dict[str, str]] = None) -> ServerHandle:
+        """常驻 dev server：起一次，整个修复循环里复用，close() 时统一停。
+
+        与每次现起现停的 spawn_server 的区别：页面复验和 agent 的 browser_look
+        都要反复开页面，每次冷起 dev server 要付几十秒，同一个循环里纯属浪费。
+        这里缓存句柄；句柄还在且端口仍通就直接复用，端口死了（进程被外力杀掉
+        之类）才重起。重起失败也如实返回 ready=False，调用方自己决定怎么上报。
+        """
+        h = self._server_handle
+        if h is not None and h.ready and self.root is not None \
+                and port_open("127.0.0.1", h.port, 0.4):
+            return h
+        if h is not None:
+            # 半死的句柄（进程退出 / 端口被占）先收干净，再给重起让路
+            h.stop(wait_seconds=2.0)
+            self._server_handle = None
+        h = self.spawn_server(cmd, ready_timeout=ready_timeout, cwd_rel=cwd_rel,
+                              env_extra=env_extra)
+        self._server_handle = h
+        return h
+
+    def stop_server(self) -> None:
+        """显式停掉常驻 dev server（close() 也会调）。"""
+        h = self._server_handle
+        if h is not None:
+            h.stop()
+            self._server_handle = None
 
     # ---------------------------------------------------------------- 读写接口
     def _resolve(self, rel: str) -> Path:
