@@ -489,13 +489,7 @@ def t_pipeline_end_to_end():
     pipe = _pl.AIDefectFixerPipeline(cfg)
     ai = F.FakeAI([F.patch_reply("OK")])
     pipe.ai = ai
-    pipe.analyzer = type("Stub", (), {"ai": ai, "analyze": lambda self, d, on_delta=None: {
-        "keywords": ["processItem"], "suspect_files": ["src/a.js"], "read_files": [],
-        "truncation": [], "root_cause": "桩", "category": "数据", "explanation": "",
-        "prevention": "", "non_frontend": False, "patch_text": "", "patch_blocks": [],
-        "patch_canonical": "", "parse_errors": [], "block_count": 0,
-        "ai_mode": "fake", "ai_error": "", "locate_empty": False,
-        "defect_id": d.get("id"), "title": d.get("title")}})()
+    pipe.analyzer = F.stub_analyzer(ai, root_cause="桩：缺可选链")
     results = pipe.run(defects=[TEST_DEFECT], skip_verify=True)
     prop = results[0]["proposal"]
     agent = prop["agent"]
@@ -583,6 +577,71 @@ def t_gate_blocks_persists():
     check("正常 verified 不会被这道新规则误伤", g2["ok"] is True, str(g2)[:120])
 
 
+def t_rework_channel():
+    """一键返工：撤销采纳 → 记判据 → 拒旧提案 → 重跑时把判据变成硬要求。"""
+    print("\n[13] 一键返工（自测没修好）")
+    import scripts.pipeline as _pl
+    from fixture_defect import TEST_DEFECT
+
+    _pl.SAMPLE_DEFECTS[:] = [TEST_DEFECT]
+    repo = F.make_repo()
+    props = F._tempdir("rework-props-")
+    cfg = {
+        "ones": {"base_url": "", "token": "", "project_uuid": ""},
+        "ai": {"model": "x", "api_key": ""},
+        "repo": {"path": str(repo), "branch": "main"},
+        "gate": {"commands": [{"name": "check", "cmd": F.CHECK_CMD}]},
+        "agent": {"max_rounds": 4, "deadline_seconds": 120, "max_stall": 2,
+                  "repro": "off", "sandbox_server": "off", "precedents": 3},
+        "playwright": {"base_url": "http://127.0.0.1:1",
+                       "screenshot_dir": str(F._tempdir("rework-shots-"))},
+        "knowledge_base": {"output_dir": str(F._tempdir("rework-kb-"))},
+        "proposals": {"output_dir": str(props)},
+        "artifacts": {"output_dir": str(F._tempdir("rework-arts-"))},
+    }
+    pipe = _pl.AIDefectFixerPipeline(cfg)
+    pipe.ai = F.FakeAI([F.patch_reply("OK")])
+    pipe.analyzer = F.stub_analyzer(pipe.ai)
+    first = pipe.run(defects=[TEST_DEFECT], skip_verify=True)[0]["proposal"]
+    check("第一轮能采纳", pipe.approve(first["id"])["ok"])
+    check("采纳后工作区确实被改了",
+          (repo / "src" / "a.js").read_text(encoding="utf-8") != F.SOURCE_BUGGED)
+
+    r = pipe.rework(first["id"], "not_fixed", "列表还是空的，控制台仍报 processItem undefined")
+    check("返工成功", r["ok"] is True, str(r)[:200])
+    check("返工时先撤销了采纳（工作区还原）", r["undone"] is True
+          and (repo / "src" / "a.js").read_text(encoding="utf-8") == F.SOURCE_BUGGED)
+    check("旧提案变成 rejected（才能进先例）",
+          pipe.proposals.get(first["id"])["status"] == "rejected")
+    saved = pipe.proposals.get(first["id"]).get("rework") or {}
+    check("返工判据被结构化存下", saved.get("verdict") == "not_fixed"
+          and "processItem" in saved.get("detail", ""), str(saved)[:200])
+    check("判据文案进 decision.note", "人工返工" in
+          (pipe.proposals.get(first["id"]).get("decision") or {}).get("note", ""))
+
+    bad = pipe.rework(first["id"], "whatever_x", "")
+    check("未知判据被拒", bad["ok"] is False and "未知的返工判据" in bad["error"],
+          str(bad)[:120])
+    check("latest_rework 只回这条工单的", pipe.latest_rework("TEST-1001").get("verdict")
+          == "not_fixed" and pipe.latest_rework("OTHER-9") == {})
+
+    # 重跑：反馈必须进 prompt，且新提案记下来自哪一版
+    ai2 = F.FakeAI([F.patch_reply("OK")])
+    pipe.ai = ai2
+    pipe.analyzer = F.stub_analyzer(ai2)
+    second = pipe.run(defects=[TEST_DEFECT], skip_verify=True)[0]["proposal"]
+    prompt = ai2.prompts[0]["prompt"]
+    check("返工反馈进了 prompt", "人工返工反馈" in prompt, prompt[:80])
+    check("反馈里的人工观察原文进了 prompt", "列表还是空的" in prompt)
+    check("明确要求复现用例覆盖这条现象", "跑红" in prompt and "不许重演" in prompt,
+          prompt[-1200:][:150])
+    check("上一版的补丁作为先例一起被带回（防重演）",
+          "本工单上一次尝试" in prompt and "人工拒绝" in prompt, prompt[:200])
+    check("新提案记录了返工来源",
+          (second.get("agent") or {}).get("rework_ref", {}).get("proposal_id")
+          == first["id"], str((second.get("agent") or {}).get("rework_ref"))[:120])
+
+
 def main():
     print("== 复现环节（先跑红再修）行为用例 ==")
     t_detect()
@@ -597,6 +656,7 @@ def main():
     t_sandbox_server()
     t_pipeline_end_to_end()
     t_gate_blocks_persists()
+    t_rework_channel()
     print("\n" + ("ALL PASS" if not FAIL else f"{len(FAIL)} FAIL: {FAIL}"))
     sys.exit(1 if FAIL else 0)
 

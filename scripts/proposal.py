@@ -21,6 +21,23 @@ STATUS_REJECTED = "rejected"
 OPEN_STATUSES = (STATUS_PENDING, STATUS_GATE_FAILED, STATUS_INVALID)
 TERMINAL_STATUSES = (STATUS_APPLIED, STATUS_APPLY_FAILED, STATUS_REJECTED)
 
+# 人工自测后「没修好」的四种判据。做成枚举而不是自由文本，是因为这句话要被机器用：
+# 重跑时它进 prompt 当硬判据（复现用例必须覆盖这条现象），事后它还要参与返工率统计。
+# 前端下拉里的四项文案与此一一对应（frontend/src/components/ProposalModal.vue）。
+REWORK_VERDICTS = {
+    "not_fixed": "现象完全没变",
+    "partial": "有变化，但没修对/只修了一半",
+    "regression": "引出别的问题",
+    "cannot_test": "环境或入口原因，我没法自测",
+}
+
+
+def rework_text(verdict: str, detail: str = "") -> str:
+    """把返工判据拼成一句人读的话（同时进 decision.note 与知识卡片）。"""
+    label = REWORK_VERDICTS.get(str(verdict or "").strip(), "自测未通过")
+    body = str(detail or "").strip()
+    return f"【人工返工】{label}" + (f"：{body}" if body else "")
+
 
 def _slug(s: str) -> str:
     return slug(s, maxlen=60, default="local")

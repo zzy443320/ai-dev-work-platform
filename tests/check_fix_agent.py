@@ -151,6 +151,27 @@ def agent_for(repo: Path, ai, **cfg) -> FixAgent:
                     gate_cfg={"commands": [{"name": "check", "cmd": CHECK_CMD}]})
 
 
+def stub_analyzer(ai, category="数据", root_cause="桩：源码里有 BUG 字面量"):
+    """定位阶段的固定桩。
+
+    这批用例测的是「修复阶段接没接上闭环」，不是启发式定位（那部分归
+    check_locate_regression*）。真实 analyzer 需要模型可用，而这里全用假模型。
+    """
+    def analyze(self, defect, on_delta=None):
+        return {
+            "defect_id": defect.get("id"), "title": defect.get("title"),
+            "keywords": ["BUG"], "suspect_files": ["src/a.js"],
+            "read_files": ["src/a.js"], "truncation": [],
+            "root_cause": root_cause, "category": category, "explanation": "",
+            "prevention": "", "non_frontend": False, "patch_text": "",
+            "patch_blocks": [], "patch_canonical": "", "parse_errors": [],
+            "block_count": 0, "ai_mode": "fake", "ai_error": "",
+            "locate_empty": False,
+        }
+
+    return type("StubAnalyzer", (), {"ai": ai, "analyze": analyze})()
+
+
 # ------------------------------------------------------------------ 单测片段
 def t_isolation_and_red_to_green():
     print("\n[1] 隔离性 + 红→绿 + 快照还原")

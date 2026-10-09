@@ -319,6 +319,7 @@ class FixAgent:
             "repro": {},
             "page_after": {},
             "verified_via": "",
+            "rework_ref": {},
             "suggested_commands": [],
             "elapsed_seconds": 0.0,
             "started_at": _now(),
@@ -465,6 +466,7 @@ class FixAgent:
         for a in attempts:
             best = a if best is None or a["rank"] > best["rank"] else best
         result["repro"] = self.repro
+        result["rework_ref"] = dict(seed.get("rework") or {})
         if best:
             result["patch_text"] = best.get("patch_text", "")
             result["verified_via"] = best.get("verified_via", "")
@@ -617,6 +619,28 @@ class FixAgent:
                     "\n".join(f"  · {e}" for e in page["console_errors"][:12]), 2500))
             if page.get("ai_verdict"):
                 lines.append("- 视觉判读：" + _clip(str(page["ai_verdict"]), 1200))
+        rw = seed.get("rework") or {}
+        if rw:
+            detail = str(rw.get("detail") or "").strip()
+            rework_lines = [
+                "## 人工返工反馈（**最高优先级判据**，高于工单原文）",
+                f"- 上一版提案：{rw.get('proposal_id') or '—'}"
+                + ("（当时已采纳后被撤销）" if rw.get("undone") else "（当时未采纳）"),
+                f"- 人工判定：{rw.get('note') or '自测未通过'}",
+            ]
+            if detail:
+                rework_lines.append(f"- 补充描述：{detail}")
+            rework_lines += [
+                "要求：",
+                "1. 这次的「修好了」就等于**这条反馈描述的现象消失**。复现用例必须能把反馈里"
+                "的现象跑红（先红再修）；做不到就在最终说明里写清卡在哪、需要什么信息，"
+                "不要交一份只让命令变绿的补丁了事。",
+                "2. 不许重演上一版的改法（它出现在下面的先例里）。要么改别的地方，"
+                "要么拿仓库证据证明这次和上次不同在哪。",
+                "3. 反馈与工单描述冲突时以反馈为准，并在说明里指出冲突点"
+                "（可能是工单信息不准，也可能是上一版修错了文件）。",
+            ]
+            lines.append("\n".join(rework_lines))
         lines.append(self._repro_seed())
         if baseline:
             fail = [k for k, v in baseline.items() if not v.get("ok")]

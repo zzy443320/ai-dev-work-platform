@@ -442,3 +442,10 @@
 - 做法：`pipeline._gate_of` 在拼沙箱闸门结果时，若 `agent.conclusion == "symptom_persists"` 就补一条失败项 `page-reverify`（`kind: "page"`，`output_tail` 放模型的判读原文，让「为什么没通过」在闸门区直接可见），而不是另开一套状态字段——审批矩阵、强制采纳勾选、角标口径全都自然复用。
 - 文件：scripts/pipeline.py、README.md、tests/check_repro.py（第 12 组：闸门判未通过 / 提案落 gate_failed / 不勾风险后端拒且零写入 / 正常 verified 不被误伤）
 - 影响：行为收紧——以前能直接点的「页面仍有现象」提案，现在要走强制采纳。回归：`check_repro` 12 组全过、`pytest` 14/14。
+
+## 2026-10-09 09:30 · 新增 · 一键返工：自测「没修好」从此是下一次修复的硬判据，不是一条备注
+
+- 内容：提案详情底部加「没修好，重修」按钮。选一个判据（现象完全没变 / 有变化但没修对 / 引出别的问题 / 环境或入口无法自测）+ 一句你实际看到的现象，后端按顺序做四件事：**撤销采纳**（若已采纳）→ 把反馈结构化记进提案（`rework.verdict/detail/note/at/undone`）→ 拒绝旧提案 → 带着这条反馈重跑该工单。重跑时它是**最高优先级判据**：复现用例必须能把反馈里描述的现象跑红，做不到就要在说明里写清卡在哪、需要什么信息，不许交一份「只让命令变绿」的补丁了事；旧版被拒的改法以「本工单上一次尝试」的身份进先例，明令不许重演。新提案记 `agent.rework_ref` 指回被返工的那一版，弹窗里有「人工返工判据」分区。
+- 做法：① 判据做成枚举（`proposal.REWORK_VERDICTS`）而不是自由文本——这句话既进 prompt 当硬要求，又要参与返工率统计，前端下拉与它一一对应。② **顺序不能换**：先撤销采纳再重跑，否则新版补丁会叠在你已收进工作区的旧补丁上，SEARCH 基准就不是原始代码；撤销失败（漂移、分支不对、预检不过）就整体中止返工并返回 `need_undo_first`，宁可什么都不动，也不留「旧补丁还在、旧提案已拒」的半套状态。③ 重跑按**工单号回捞**最近一次返工（`pipeline.latest_rework`），而不是把参数从接口一路传进循环：命令行重跑、界面重跑、隔几天再跑，都会自动带上同一条反馈——返工记录不该只在点按钮那一次生效。④ 前端复用既有 `/api/run/stream`：返工端点只做「记账 + 撤销 + 拒绝」并立即返回，重跑由界面用现有流式通道发起，进度与实时日志全都照旧；流水线正在跑时不抢跑道（409），界面退回提示而不是排队。⑤ 顺带合并了三份重复的定位桩成 `stub_analyzer`（返工用例是第四个需要它的场景）。
+- 文件：scripts/proposal.py（`REWORK_VERDICTS` / `rework_text`）、scripts/pipeline.py（`rework` / `latest_rework` / 注入返工反馈 / `_page_after_hook`）、scripts/fix_agent.py（返工判据段 + `rework_ref`）、web/routers/review.py（`POST /api/proposals/{pid}/rework`）、frontend/src/{composables/useProposalModal.js,components/ProposalModal.vue,utils/proposalRender.js}、README.md、tests/check_repro.py（第 13 组端到端返工）、tests/check_fix_agent.py（共享定位桩）
+- 影响：需重启后端 + 刷新页面。① 新增的写盘动作只有「撤销采纳」这一步，且沿用撤销原有的全部前置检查（分支/漂移/预检）；② 旧提案被拒后仍完整留在 `proposals/` 与知识卡片里，返工率从此可统计；③ 「立刻带这条反馈重跑」默认勾选，会真实消耗模型额度，不想跑就在面板里取消勾选。回归：`check_repro` 13 组全过、`pure.test.mjs` 24/24、`pytest` 14/14、`check_vue_all` 15 个 Playwright 用例全过、eslint 0 error（62 条既有 warning 数不变）、`vite build` 通过。

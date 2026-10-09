@@ -6,6 +6,7 @@ ONES → locate（种子线索）→ **agentic 修复循环**（读代码 → �
 repository. Writing happens only through `approve()`, which is what the Web UI's
 采纳 button calls.
 """
+import json
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -547,6 +548,11 @@ class AIDefectFixerPipeline:
         _emit(emit, {"type": "stage", "stage": "agent", "status": "start",
                      "defect": did,
                      "detail": "进入 agentic 修复循环：自己查代码、改、在沙箱里真跑验收…"})
+        rework = self.latest_rework(did)
+        if rework:
+            _emit(emit, {"type": "stage", "stage": "agent", "status": "warn",
+                         "defect": did,
+                         "detail": "带上人工返工反馈重跑：" + str(rework.get("note") or "")[:120]})
         agent = FixAgent(self.repo_path, self.ai, agent_cfg=self.agent_cfg,
                          gate_cfg=self.gate_cfg, emit=_emit_agent,
                          precedents=precedents,
@@ -554,9 +560,10 @@ class AIDefectFixerPipeline:
                              defect, did, verify or page))
         try:
             with usage.step("fix_agent"):
-                result = agent.run(defect, seed={"analysis": analysis, "page": page,
-                                                 "description": defect.get("description")
-                                                 or defect.get("desc") or ""})
+                result = agent.run(defect, seed={
+                    "analysis": analysis, "page": page,
+                    "rework": rework,
+                    "description": defect.get("description") or defect.get("desc") or ""})
         except Exception as e:
             print(f"  [agent] 异常，退回一次成型结果: {e}")
             _emit(emit, {"type": "stage", "stage": "agent", "status": "fail",
@@ -876,6 +883,75 @@ class AIDefectFixerPipeline:
         self.proposals.update({**proposal, "status": STATUS_REJECTED})
         self.kb.record_from_proposal({**proposal, "status": STATUS_REJECTED})
         return {"ok": True, "status": STATUS_REJECTED, "proposal_id": proposal_id}
+
+    # ---------------------------------------------------- 人工返工（没修好，重修）
+    def rework(self, proposal_id: str, verdict: str = "", detail: str = "",
+               rerun: bool = True) -> Dict:
+        """把「我自测发现没解决」变成一次有结构的返工，而不是一句备注。
+
+        做三件事，顺序不能换：**先撤销采纳**（否则重跑出来的新版补丁会叠在你已经
+        收进工作区的旧补丁上，SEARCH 基准就不是原始代码了）→ 记 `rework` → 拒绝旧提案
+        （让它以「上一次尝试 + 人工备注」的身份进先例，模型重跑时看得见、且不会重演）。
+        撤销失败就整个中止：宁可什么都不动，也不能留下「旧补丁还在、旧提案已拒」的半套状态。
+        """
+        from .proposal import REWORK_VERDICTS, rework_text
+
+        proposal = self.proposals.get(proposal_id)
+        if not proposal:
+            return {"ok": False, "error": f"提案不存在: {proposal_id}"}
+        verdict = str(verdict or "").strip() or "not_fixed"
+        if verdict not in REWORK_VERDICTS:
+            return {"ok": False,
+                    "error": f"未知的返工判据 {verdict!r}，可用："
+                             + "、".join(REWORK_VERDICTS)}
+        note = rework_text(verdict, str(detail or "")[:1000])
+
+        undone = False
+        if proposal["status"] == STATUS_APPLIED:
+            back = self.undo(proposal_id)
+            if not back.get("ok"):
+                return {"ok": False, "need_undo_first": True,
+                        "error": "撤销采纳没成功，旧补丁还在工作区里。这种状态下重跑只会"
+                                 "在旧补丁上叠新补丁，所以先不返工："
+                                 + str(back.get("error") or "")}
+            undone = True
+            proposal = self.proposals.get(proposal_id) or proposal
+
+        self.proposals.update({**proposal, "rework": {
+            "verdict": verdict, "detail": str(detail or "")[:1000],
+            "note": note, "at": _now(), "rerun": bool(rerun),
+            "undone": undone,
+        }})
+        rejected = self.reject(proposal_id, note=note)
+        if not rejected.get("ok"):
+            return {"ok": False, "error": str(rejected.get("error") or "拒绝旧提案失败"),
+                    "undone": undone}
+        return {"ok": True, "proposal_id": proposal_id, "undone": undone,
+                "defect_id": str((proposal.get("defect") or {}).get("id") or ""),
+                "note": note, "rerun": bool(rerun),
+                "verdict_label": REWORK_VERDICTS[verdict]}
+
+    def latest_rework(self, defect_id: str) -> Dict:
+        """这条工单最近一次人工返工反馈（没有就返回空 dict）。
+
+        重跑时按工单号回捞，而不是靠调用方把参数一路传下来：这样命令行重跑、界面重跑、
+        隔几天再跑，都会自动带上同一条反馈——返工记录不该只在点按钮那一次生效。
+        """
+        did = str(defect_id or "")
+        if not did:
+            return {}
+        best: Dict = {}
+        for f in sorted(self.proposals.base.glob("*.json"), key=lambda p: p.name):
+            try:
+                p = json.loads(f.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if str((p.get("defect") or {}).get("id") or "") != did:
+                continue
+            rw = p.get("rework") or {}
+            if rw and str(rw.get("at") or "") >= str(best.get("at") or ""):
+                best = {**rw, "proposal_id": p.get("id")}
+        return best
 
     def undo(self, proposal_id: str) -> Dict:
         """Undo an approved proposal: restore the working-tree files from the

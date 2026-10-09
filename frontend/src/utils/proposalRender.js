@@ -189,6 +189,14 @@ function pmAgent(p) {
     }[a.verified_via] || ''
     if (via) html += `<div class="pm-line"><b>verified 靠什么</b><span>${escapeHtml(via)}</span></div>`
   }
+  const rw = a.rework_ref || p.rework || {}
+  if (rw && (rw.note || rw.verdict)) {
+    html += `<div class="pm-line bad"><b>人工返工判据</b><span>${escapeHtml(rw.note || rw.verdict)}`
+      + (rw.at ? `（${escapeHtml(String(rw.at).replace('T', ' ').slice(0, 19))}）` : '')
+      + '</span></div>'
+    html += '<p class="muted">这一版是带着上面那条反馈重跑的：复现用例必须能把该现象跑红，'
+      + '上一版被拒绝的改法也在先例里，模型不许原样重演。</p>'
+  }
   const pg = a.page_after || {}
   if (Object.keys(pg).length) {
     const v = pg.verdict || ''

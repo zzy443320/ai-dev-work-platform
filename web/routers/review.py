@@ -163,6 +163,23 @@ async def reject_proposal(pid: str, req: Request):
     return JSONResponse(result, status_code=200 if result.get("ok") else 409)
 
 
+@router.post("/api/proposals/{pid}/rework")
+async def rework_proposal(pid: str, req: Request):
+    """人工自测「没修好」的一键返工：撤销采纳（若有）+ 拒绝旧提案 + 带回执重跑。
+
+    和撤销一样要写盘（撤销采纳会还原文件），所以流水线在跑时必须先拒绝服务。
+    """
+    if _RUN_STATE["running"]:
+        return JSONResponse({"error": "流水线正在运行，稍后再返工"}, status_code=409)
+    body = await _body_json(req)
+    pipeline = _fresh_pipeline()
+    result = await run_in_threadpool(
+        pipeline.rework, pid,
+        str(body.get("verdict") or ""), str(body.get("detail") or ""),
+        bool(body.get("rerun", True)))
+    return JSONResponse(result, status_code=200 if result.get("ok") else 409)
+
+
 @router.post("/api/proposals/{pid}/undo")
 async def undo_proposal(pid: str):
     # 撤销也是往目标仓库写文件，所以和采纳一样要先确认流水线没在跑；

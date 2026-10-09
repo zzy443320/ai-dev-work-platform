@@ -8,13 +8,22 @@
 //   - 不使用 append-to-body（默认即内联渲染，不会把 DOM 挪到 body，用例定位稳定）。
 //   - 每个分区（#pm-*）**始终渲染**，只用 :class="{ hidden: ... }" 驱动，绝不用 v-if，
 //     否则旧用例 eval_on_selector("#pm-diff", ...) 会因元素不存在而抛错。
+import { computed } from 'vue'
 import { useProposalModal } from '../composables/useProposalModal.js'
 
 const {
   visible, detail, sections, note, forceConfirm, pendingError,
   actions, statusText, statusClass, gateHtml, preflight,
+  REWORK_OPTIONS, reworkOpen, reworkVerdict, reworkDetail, reworkRerun, reworkBusy,
+  openRework, cancelRework, submitRework,
   close, onApprove, onForceApprove, onReject, onUndo,
 } = useProposalModal()
+
+/**
+ * 「没修好，重修」按钮的可见性：已拒绝（含刚返工过）之外都给。
+ * invalid（没产出补丁）也留着——那条更需要把「为什么不算修好」讲清楚再重跑。
+ */
+const canRework = computed(() => (detail.value || {}).status !== 'rejected')
 </script>
 
 <template>
@@ -74,6 +83,31 @@ const {
         <el-checkbox id="force-confirm" v-model="forceConfirm" />
         <span>我已知悉风险：验收闸门未通过，仍要把这份补丁写进工作区</span>
       </label>
+      <!-- 一键返工：自测没解决时，把「哪儿没对」变成下一次修复的硬判据。
+           后端顺序是撤销采纳（如已采纳）→ 记 rework → 拒绝旧提案 →（可选）带反馈重跑。 -->
+      <div class="rework-form" id="rework-form" :class="{ hidden: !reworkOpen }">
+        <div class="rw-head">
+          <b>这条缺陷自测没通过 —— 哪儿没对？</b>
+          <span class="muted">会撤销采纳（若有）、拒掉这条旧提案，并把你的描述作为下一次的判据带回去</span>
+        </div>
+        <el-select id="rework-verdict" v-model="reworkVerdict" size="small"
+                   class="rw-verdict">
+          <el-option v-for="o in REWORK_OPTIONS" :key="o.value" :label="o.label"
+                     :value="o.value" />
+        </el-select>
+        <el-input id="rework-detail" v-model="reworkDetail" type="textarea" :rows="2"
+                  size="small"
+                  placeholder="补充现象（越具体越好修）：例如「列表还是空的，控制台仍报 processItem undefined」「按钮能点了但跳错页面」" />
+        <label class="rw-rerun">
+          <el-checkbox id="rework-rerun" v-model="reworkRerun" />
+          <span>立刻带这条反馈重跑该工单（会占用模型额度）</span>
+        </label>
+        <div class="rw-actions">
+          <el-button id="btn-rework-submit" type="warning" size="small"
+                     :loading="reworkBusy" @click="submitRework()">提交返工</el-button>
+          <el-button size="small" :disabled="reworkBusy" @click="cancelRework()">取消</el-button>
+        </div>
+      </div>
       <div class="pm-actions" id="pm-actions">
         <el-button id="btn-approve" type="primary" :class="{ hidden: actions.approve.hidden }"
                    :disabled="actions.approve.disabled" :title="actions.approve.title" @click="onApprove()">采纳</el-button>
@@ -83,6 +117,10 @@ const {
                    :disabled="actions.reject.disabled" :title="actions.reject.title" @click="onReject()">拒绝</el-button>
         <el-button id="btn-undo" :class="{ hidden: actions.undo.hidden }"
                    :disabled="actions.undo.disabled" :title="actions.undo.title" @click="onUndo()">撤销采纳</el-button>
+        <el-button id="btn-rework" type="warning" plain :class="{ hidden: !canRework }"
+                   :disabled="reworkBusy"
+                   title="自测发现这条缺陷没修好：撤销采纳 + 记录判据 + 重跑"
+                   @click="openRework()">没修好，重修</el-button>
         <el-button @click="close()">关闭</el-button>
       </div>
     </div>
@@ -129,5 +167,36 @@ h3 {
 .close:hover {
   background: var(--border);
   color: var(--text);
+}
+/* 一键返工面板：贴在动作区上方展开，不开新弹窗（返工是对着这条提案说的话） */
+.rework-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-strong);
+  border-left: 3px solid var(--warn);
+  border-radius: 10px;
+  background: var(--panel);
+}
+.rework-form.hidden {
+  display: none;
+}
+.rework-form .rw-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.rework-form .rw-rerun {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.rework-form .rw-actions {
+  display: flex;
+  gap: 8px;
 }
 </style>

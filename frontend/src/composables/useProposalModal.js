@@ -19,6 +19,21 @@ const forceConfirm = ref(false)
 /** 后端拒绝时弹窗里那条红色错误（旧版 pmPendingError） */
 const pendingError = ref('')
 
+// ---- 一键返工（没修好，重修）----
+// 四个判据必须与后端 scripts/proposal.py 的 REWORK_VERDICTS 一一对应：
+// 这句话既进 prompt 当硬判据，又要参与返工率统计，所以两边不能各写各的。
+const REWORK_OPTIONS = [
+  { value: 'not_fixed', label: '现象完全没变' },
+  { value: 'partial', label: '有变化，但没修对/只修了一半' },
+  { value: 'regression', label: '引出别的问题' },
+  { value: 'cannot_test', label: '环境或入口原因，我没法自测' },
+]
+const reworkOpen = ref(false)
+const reworkVerdict = ref('not_fixed')
+const reworkDetail = ref('')
+const reworkRerun = ref(true)
+const reworkBusy = ref(false)
+
 const actions = computed(() => proposalActions(detail.value || {}))
 const statusText = computed(() => statusLabel(detail.value || {}))
 const statusClass = computed(() => statusCls(detail.value || {}))
@@ -46,6 +61,12 @@ async function openProposal(id) {
     detail.value = data
     sections.value = renderProposalSections(data)
     note.value = ((data.decision || {}).note) || ''
+    // 换一条提案就把返工面板复位：留着上一条的判据和描述，会把反馈写错地方
+    reworkOpen.value = false
+    reworkRerun.value = true
+    reworkBusy.value = false
+    reworkDetail.value = ''
+    reworkVerdict.value = 'not_fixed'
     visible.value = true
   } catch (e) {
     toast(`打开提案详情失败: ${e}`, 'err')
@@ -59,6 +80,66 @@ function close() {
 }
 
 function noteValue() { return (note.value || '').trim() }
+
+/** 打开「没修好，重修」面板（不弹新窗口，就在底部动作区上方展开） */
+function openRework() { reworkOpen.value = true; pendingError.value = '' }
+function cancelRework() { reworkOpen.value = false }
+
+/**
+ * 一键返工：把「我自测发现没解决」变成结构化的下一次判据。
+ *
+ * 后端会做三件事（顺序有意义）：撤销采纳（如已采纳，否则新版补丁会叠在旧补丁上）、
+ * 记下 rework、拒绝旧提案 —— 旧提案于是以「本工单上一次尝试 + 人工备注」的身份进先例，
+ * 重跑时模型必须让复现用例覆盖这里描述的现象。
+ */
+async function submitRework() {
+  if (!detail.value || reworkBusy.value) return
+  const id = detail.value.id
+  const wantRerun = reworkRerun.value
+  const { defectId, start, running } = useDefect()
+  reworkBusy.value = true
+  let ok = false
+  let msg
+  let did = ''
+  try {
+    const data = await api.proposalAction(id, 'rework', {
+      verdict: reworkVerdict.value, detail: reworkDetail.value.trim(), rerun: wantRerun,
+    })
+    ok = data.ok !== false
+    msg = data.error || ''
+    did = data.defect_id || ''
+    if (ok) {
+      toast(data.undone
+        ? '已撤销采纳并标记返工，旧补丁已从工作区还原'
+        : '已标记返工并拒绝该提案')
+    }
+  } catch (e) {
+    msg = `请求失败: ${e}`
+  } finally {
+    reworkBusy.value = false
+  }
+  if (!ok) {
+    pendingError.value = msg || '返工失败'
+    return
+  }
+  reworkOpen.value = false
+  await refreshAfterDecision()
+  if (wantRerun && did) {
+    if (running.value) {
+      toast(`已记录返工。流水线正在跑，等它结束后把工单 ${did} 填进参数再重跑`, 'err')
+      return
+    }
+    defectId.value = did
+    close()
+    await start('run')
+  }
+}
+
+/** 决策后的统一刷新（返工与拒绝/撤销共用一份，别各写一遍） */
+async function refreshAfterDecision() {
+  const { loadProposals, loadStats } = useDefect()
+  await Promise.all([loadProposals(), loadStats(), useHealth().loadHealth()])
+}
 
 function onApprove() {
   if (!detail.value) return
@@ -134,5 +215,7 @@ export function useProposalModal() {
     visible, detail, sections, note, forceConfirm, pendingError,
     actions, statusText, statusClass, gateHtml, preflight,
     openProposal, close, decide, onApprove, onForceApprove, onReject, onUndo,
+    REWORK_OPTIONS, reworkOpen, reworkVerdict, reworkDetail, reworkRerun, reworkBusy,
+    openRework, cancelRework, submitRework,
   }
 }
