@@ -1,0 +1,264 @@
+/* ===========================================================================
+   desk.css —— 三栏工作台外壳层（2026-10-09 高级感改版）
+   加载顺序：web/static/style.css（令牌 + 既有规则）→ element-plus → theme.css
+   （Element 桥接）→ **本文件**。Vite 把 main.js 里 import 的 CSS 打进 v2.*.css，
+   而 v2.html 的 <link> 顺序是 style.css 在前、v2.*.css 在后，所以同权重规则这里赢。
+
+   这一层只干四件事：
+     1. 顶栏收成 46px 细条（原来 76px，品牌 + 副标题 + 三个图标按钮铺得太开）；
+     2. 左侧分组导航 → **52px 图标栏**（文字收进 tooltip，活动项用左侧 2px 主色条）；
+     3. 面板去玻璃感：实底 + 发丝线 + 平（阴影只留给浮层），圆角统一 10；
+     4. 步骤条 → 顶部一条 30px **阶段细轨**，跑起来才有存在感，跑完不占版面。
+
+   ⚠️ 契约：`.topbar` / `.brand` / `.top-actions` / `.layout-switch .ls-btn` /
+   `.side-nav` / `.nav-item` / `#tabs` / `#pane-<name>` / `.tabpane` / `#stage-flow`
+   / `.stage` 这些名字都被 tests/ 下的界面用例锁着，本层**只改外观不改结构**。
+   =========================================================================== */
+
+/* ===== 1. 顶栏：46px 细条 ===== */
+.topbar {
+  --topbar-pt: 0px;
+  --topbar-pb: 0px;
+  height: var(--topbar-h);
+  /* gap 必须 ≤12：用例断言「页签条紧贴品牌右侧」的容差是 12px，
+     顶栏间距再大就会把它顶出容差（原来 14px 就踩了这个线）。 */
+  gap: 10px;
+  margin: -20px -28px 14px;
+  padding: 0 14px 0 16px;
+  background: var(--surf);
+  border-bottom: 1px solid var(--line);
+  /* 顶栏是常驻件，给它一点底噪而不是完全平 —— 深色下与 --bg 只差一档 */
+  box-shadow: none;
+}
+.brand { gap: 10px; min-width: 0; }
+.logo {
+  width: 24px; height: 24px; border-radius: 6px; flex: none;
+  background: linear-gradient(140deg, var(--primary), var(--primary-2));
+  box-shadow: none;
+}
+.logo svg { width: 13px; height: 13px; }
+/* 品牌名单行、副标题挪成品牌右侧的单行摘要：46px 装不下两行 */
+.title-block { min-width: 0; }
+.title-block h1 { font-size: 13px; font-weight: 600; letter-spacing: -0.01em; white-space: nowrap; }
+.title-block .subtitle { display: none; }
+.top-actions { gap: 8px; }
+/* 46px 的顶栏是「一行」，右侧操作组全部按 28px 高一档收 */
+.top-actions .icon-btn,
+.top-actions > .el-button.is-circle { width: 28px; height: 28px; border-radius: var(--r-s); }
+.icon-btn { border-color: var(--line); background: transparent; color: var(--txt3); }
+.icon-btn:hover { color: var(--txt); background: var(--surf3); border-color: transparent; }
+.top-actions > .el-select.style-picker { --el-select-width: 92px; width: 92px; }
+.style-picker .el-select__wrapper { min-height: 28px; height: 28px; }
+.layout-switch { border-radius: var(--r-s); border-color: var(--line); background: transparent; }
+.ls-btn { width: 26px; height: 24px; border-radius: 5px; }
+.ls-btn.active { background: var(--ac-bg); color: var(--ac); }
+
+/* 健康摘要：品牌右侧单行等宽小字（原来是标题下第二行 .subtitle）。
+   等宽是因为它会随 AI 模式 / 仓库状态变长变短，比例字会让顶栏轻微抖动。
+   必须限宽并允许收缩：top 布局下页签条要 ≥756px 才不会在 1440 上溢出，
+   摘要不限宽就会把页签条挤成滚动态（用例「1440 装得下」正是断言这个）。 */
+.mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.top-meta {
+  font-family: var(--mono); font-size: 11px; color: var(--txt4);
+  padding-left: 10px; border-left: 1px solid var(--line);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  flex: 0 1 auto; min-width: 0; max-width: 230px;
+}
+/* top 布局下页签条优先，摘要让位（右侧状态药丸仍在，信息没丢） */
+.topbar-top .top-meta { display: none; }
+
+/* 状态药丸：从「大胶囊」收成小徽标，脉冲只保留在 running 上 */
+.status-tag.el-tag { height: 24px; padding: 0 9px; font-size: 11.5px; font-weight: 500; border-radius: 6px; }
+
+/* 页签条的水平外边距归零：style.css 给了 `margin: 0 6px`，而顶栏现在自带 10px gap，
+   两者相加 16px 会顶破「页签条紧贴品牌右侧 ≤12px」这条容差。间距交给 gap 一处管。 */
+.topbar-tabs { margin-left: 0; margin-right: 0; }
+
+/* ===== 2. 图标栏（原分组导航）===== */
+.layout {
+  grid-template-columns: 52px minmax(0, 1fr);
+  gap: 14px;
+}
+.layout.layout-top { grid-template-columns: minmax(0, 1fr); }
+.side-nav {
+  position: sticky;
+  top: calc(var(--topbar-h) + 14px + 20px);
+  align-self: start;
+  gap: 2px;
+  padding: 4px 0;
+  max-height: calc(100vh - var(--topbar-h) - 62px);
+  overflow-y: auto; scrollbar-width: none;
+}
+.side-nav::-webkit-scrollbar { width: 0; }
+/* 分组名在 52px 宽的轨道里放不下 —— 降级成一条分隔线。
+   保留 DOM 与文字（用例数的是 .nav-item，无障碍树里也需要分组语义）。 */
+.nav-group { display: flex; flex-direction: column; gap: 2px; }
+.nav-group-label {
+  font-size: 0; color: transparent; padding: 0; margin: 6px 16px 6px;
+  height: 1px; min-height: 1px; background: var(--line); overflow: hidden;
+}
+.nav-item {
+  position: relative;
+  width: 36px; height: 34px; margin: 0 auto; padding: 0;
+  display: grid; place-items: center; border-radius: 8px;
+  color: var(--txt3); font-size: 0;   /* 文字靠 tooltip，不占宽度 */
+}
+.nav-item svg { width: 16px; height: 16px; opacity: 1; }
+.nav-item > span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+.nav-item:hover { background: var(--surf3); color: var(--txt); }
+.nav-item.active { background: var(--ac-bg); color: var(--ac); font-weight: 400; }
+.nav-item.active::before {
+  content: ''; position: absolute; left: -8px; top: 9px; bottom: 9px; width: 2px;
+  border-radius: 2px; background: var(--ac);
+}
+
+/* ===== 3. 面板：实底 + 发丝线 + 平 ===== */
+.panel {
+  background: var(--surf);
+  border: 1px solid var(--line);
+  border-radius: var(--r-m);
+  padding: 14px 16px 15px;
+  box-shadow: none;
+}
+.panel h2 { font-size: 13px; font-weight: 600; letter-spacing: -0.005em; gap: 7px; }
+.panel h2 svg { width: 14px; height: 14px; color: var(--txt3); }
+.panel-head { margin-bottom: 12px; }
+.fold-btn { width: 24px; height: 24px; border-radius: 6px; color: var(--txt4); }
+.fold-btn:hover { color: var(--txt2); background: var(--surf3); border-color: transparent; }
+
+/* 控件统一：28px 高、7px 圆角、发丝描边、聚焦一圈软光环 */
+.el-button { border-radius: var(--r-s); font-weight: 500; }
+.el-button:not(.el-button--primary):not(.is-text):not(.is-link) {
+  background: var(--surf3); border-color: var(--line); color: var(--txt2);
+}
+.el-button:not(.el-button--primary):not(.is-text):not(.is-link):hover {
+  background: var(--surf2); border-color: var(--line2); color: var(--txt);
+}
+.el-button--primary { background: var(--ac); border-color: var(--ac); box-shadow: none; }
+.el-input__wrapper, .el-textarea__inner, .el-select__wrapper { border-radius: var(--r-s); }
+.el-tag { border-radius: 5px; font-weight: 500; }
+
+/* ===== 4. 阶段细轨（#stage-flow）===== */
+/* 原来是一张 12px 内边距的卡，占掉 74px 高度。收成一条 ~30px 的轨：
+   每步一个胶囊，标题 + 副标题并排（「拉取 · ONES 工单」），步与步之间一条 1px 连接线。
+   胶囊打在 .el-step__main 上而不是 .el-step__title 上 —— title 与 description 是
+   两个兄弟块，只有共同包一层才能把它们装进同一个背景框。
+   ⚠️ 保留 el-steps 结构与 .stage + 状态类（用例数 5 个 .stage、断言第 1 步带 done）。
+   ⚠️ <el-steps> 上不能开 align-center：那会让 Element 给每个 el-step 写内联
+      flex-basis:20%，内联样式压不住，细轨会摊成五等分大盒子（踩过）。 */
+.stage-flow {
+  display: flex; align-items: center; gap: 0; flex-wrap: wrap;
+  margin: 0 0 4px; padding: 0; background: transparent; border: 0; border-radius: 0;
+  overflow: visible;
+}
+.stage-flow .el-step {
+  /* !important 是被迫的：Element 在水平模式下给每个 el-step 写**内联**
+     flex-basis: 25%，内联样式权重高于任何选择器。不用 !important 压不住，
+     细轨就会摊成等宽大盒子（实测 el-step 236px 而胶囊只有 108px，
+     中间全是空白，连接线被甩到胶囊外很远的地方）。 */
+  position: relative; display: block; flex: 0 0 auto !important; min-width: 0;
+  margin: 0 14px 0 0;
+}
+.stage-flow .el-step:last-child { margin-right: 0; }
+.stage-flow .el-step__head, .stage-flow .el-step__line { display: none; }
+.stage-flow .el-step__main {
+  display: inline-flex; align-items: baseline; gap: 6px; white-space: nowrap;
+  height: 26px; padding: 0 10px; border-radius: 6px; background: var(--surf3);
+  transition: color .18s, background-color .18s, box-shadow .18s;
+}
+.stage-flow .el-step__title {
+  display: inline-flex; align-items: baseline; padding: 0; margin: 0; background: none;
+  font-size: 11.5px; font-weight: 500; line-height: 26px; letter-spacing: .01em;
+  color: var(--txt3);
+}
+.stage-flow .el-step__description {
+  display: inline-flex; align-items: baseline; margin: 0; padding: 0;
+  font-size: 10.5px; font-weight: 400; line-height: 26px; color: var(--txt4);
+}
+.stage-flow .el-step__description::before { content: '·'; margin-right: 6px; opacity: .7; }
+/* 连接线画在 el-step 上，落在 14px 右外边距的正中（-11 → -3，中心 -7） */
+.stage-flow .el-step:not(:last-child)::after {
+  content: ''; position: absolute; right: -11px; top: 50%; width: 8px; height: 1px;
+  background: var(--line2);
+}
+.stage-flow .el-step.done:not(:last-child)::after { background: var(--success); opacity: .45; }
+
+.stage-flow .stage.done .el-step__main { background: var(--success-soft); }
+.stage.done .el-step__title { color: var(--success); }
+.stage.done .el-step__description { color: var(--success); opacity: .7; }
+.stage-flow .stage.active .el-step__main {
+  background: var(--ac-bg); box-shadow: inset 0 0 0 1px var(--ac-ln);
+  animation: stage-breathe 1.9s ease-in-out infinite;
+}
+.stage.active .el-step__title { color: var(--ac); font-weight: 600; }
+.stage.active .el-step__description { color: var(--ac); opacity: .75; }
+.stage-flow .stage.fail .el-step__main { background: var(--danger-soft); }
+.stage.fail .el-step__title, .stage.fail .el-step__description { color: var(--danger); }
+.stage-flow .stage.warn .el-step__main { background: var(--warn-soft); }
+.stage.warn .el-step__title, .stage.warn .el-step__description { color: var(--warn); }
+.stage.off { opacity: .45; }
+/* 呼吸灯只动 box-shadow 的扩散圈：避开「同色不同 alpha」的插值脏边，
+   也让主色跟着 data-style 预设自动变。 */
+@keyframes stage-breathe {
+  0%, 100% { box-shadow: inset 0 0 0 1px var(--ac-ln); }
+  50%      { box-shadow: inset 0 0 0 1px var(--ac-ln), 0 0 0 3px var(--ac-bg); }
+}
+
+
+/* ===== 5. 排版与数字 ===== */
+body { font-size: 13px; letter-spacing: -0.003em; }
+.muted { font-size: 11.5px; color: var(--txt3); }
+.count-badge, .stat-total, .usage-card-value, .num { font-variant-numeric: tabular-nums; }
+.stat-card, .usage-card { border-radius: var(--r-m); border-color: var(--line); }
+
+/* ===== 6. 克制的入场与悬停（丰富动效但不吵）===== */
+/* 面板级联淡入上浮：只在页签刚切进来时跑一次，总时长压在 400ms 内。
+   用 .tabpane.active 当触发器 —— el-tabs 切页会重挂 active 类。 */
+.tabpane.active > .panel { animation: desk-rise .26s cubic-bezier(.22, .8, .3, 1) both; }
+.tabpane.active > .panel:nth-child(2) { animation-delay: .04s; }
+.tabpane.active > .panel:nth-child(3) { animation-delay: .08s; }
+.tabpane.active > .panel:nth-child(4) { animation-delay: .12s; }
+.tabpane.active > .panel:nth-child(5) { animation-delay: .16s; }
+@keyframes desk-rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+/* 键盘可达性：统一一圈软光环，替代浏览器默认描边 */
+:where(button, a, input, select, textarea, [tabindex]):focus-visible {
+  outline: none; box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--ac-ln); border-radius: var(--r-s);
+}
+@media (prefers-reduced-motion: reduce) {
+  .tabpane.active > .panel { animation: none; }
+  .stage.active .el-step__title { animation: none; }
+  *, *::before, *::after { transition-duration: .01ms !important; }
+}
+
+/* ===== 7. 背景光晕：从「两团彩色」收成一条极淡的顶光 ===== */
+.bg-glow {
+  background:
+    radial-gradient(1200px 520px at 50% -8%, var(--bg-glow-1), transparent 62%),
+    radial-gradient(900px 460px at 88% 4%, var(--bg-glow-2), transparent 60%);
+}
+
+/* ===== 8. 三档 PC 视口 ===== */
+/* 大屏不是把字放大，是把宽度还给内容：留白加一档、图标栏略放宽。 */
+@media (min-width: 1920px) {
+  #app { padding: 22px 32px 20px; }
+  .topbar { margin: -22px -32px 16px; padding: 0 16px; }
+  .layout { grid-template-columns: 56px minmax(0, 1fr); gap: 16px; }
+  .panel { padding: 16px 18px 17px; }
+}
+/* 小屏笔电：轨道收到 48、面板留白收一档、阶段轨允许横向滚而不是换行 */
+@media (max-width: 1400px) {
+  #app { padding: 16px 18px 16px; }
+  .topbar { margin: -16px -18px 12px; padding: 0 12px; gap: 10px; }
+  .layout { grid-template-columns: 48px minmax(0, 1fr); gap: 12px; }
+  .nav-item { width: 34px; height: 32px; }
+  .panel { padding: 13px 14px 14px; }
+  .stage-flow { overflow-x: auto; scrollbar-width: none; padding-bottom: 2px; }
+  .stage-flow::-webkit-scrollbar { height: 0; }
+}
+/* 顶栏窄屏优先保导航与操作：页签条本来就自带横向滚动 + 两端箭头，
+   所以这里**不**藏布局切换器 —— 藏了会让「操作组宽度跨视口不变」这条断言失效，
+   而且用户会突然找不到切布局的按钮。 */
+@media (max-width: 1200px) {
+  .top-meta { display: none; }
+}
+

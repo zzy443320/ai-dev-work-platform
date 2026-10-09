@@ -262,8 +262,11 @@ const healthText = computed(() => {
         </div>
         <div class="title-block">
           <h1>ONES 前端研发助手</h1>
-          <div class="subtitle" id="health">{{ healthText }}</div>
         </div>
+        <!-- 健康摘要：原来挂在标题下的第二行（.subtitle）。顶栏收成 46px 之后
+             两行放不下，改成品牌右侧的单行摘要 —— 信息一个字没少，只是换了位置。
+             id="health" 保留（既有用例与手工排查都按它找）。 -->
+        <div class="top-meta mono" id="health">{{ healthText }}</div>
       </div>
 
       <!-- 顶部导航布局（top）专用：页签搬到顶栏、紧贴品牌右侧（主列里的页签头
@@ -377,13 +380,18 @@ const healthText = computed(() => {
       <nav class="side-nav" v-show="layoutMode === 'side'" aria-label="模块导航">
         <div v-for="g in NAV_GROUPS" :key="g.label" class="nav-group">
           <div class="nav-group-label">{{ g.label }}</div>
-          <button v-for="name in g.items" :key="name" type="button" class="nav-item"
-                  :class="{ active: activeTab === name }" @click="switchTab(name)">
-            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"
-                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-                 v-html="ICON_PATHS[tabBy[name].icon]" />
-            <span>{{ tabBy[name].label }}</span>
-          </button>
+          <!-- 图标栏只有 52px，文字靠 tooltip 给（desk.css 把 .nav-item 里的
+               <span> 收成 1px 剪贴区：无障碍名与用例要的文字都还在 DOM 里）。
+               el-tooltip 不额外插包装元素，所以 .side-nav .nav-item 仍是 9 个。 -->
+          <el-tooltip v-for="name in g.items" :key="name" :content="tabBy[name].label" placement="right" :offset="10">
+            <button type="button" class="nav-item"
+                    :class="{ active: activeTab === name }" @click="switchTab(name)">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"
+                   stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                   v-html="ICON_PATHS[tabBy[name].icon]" />
+              <span>{{ tabBy[name].label }}</span>
+            </button>
+          </el-tooltip>
         </div>
       </nav>
 
@@ -435,7 +443,10 @@ const healthText = computed(() => {
                    也跟着被挤下去。v-show 留在 el-steps 自己身上（不是外层包一层），
                    因为 check_vue_shell_ui 读的就是 #stage-flow 自身的 computed display。 -->
               <template #stage-flow>
-                <el-steps v-show="showStageFlow" id="stage-flow" class="stage-flow" align-center>
+                <!-- 不给 align-center：Element 在 align-center 下会给每个 el-step
+                     写**内联** flex-basis: 20%，内联样式压不住，细轨就摊成五等分大盒子。
+                     收成小胶囊后宽度由内容决定，正好也不需要居中分配。 -->
+                <el-steps v-show="showStageFlow" id="stage-flow" class="stage-flow">
                   <el-step
                     v-for="(s, i) in STAGES"
                     :key="s.name"

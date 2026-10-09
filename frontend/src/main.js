@@ -11,6 +11,9 @@ import { TABS, DEFAULT_TAB } from './components/tabs.js'
 // ---------------------------------------------------------------------------
 import 'element-plus/theme-chalk/dark/css-vars.css'
 import './styles/theme.css'
+// 三栏工作台外壳层（2026-10-09 高级感改版）。必须在 theme.css 之后：
+// 它要覆盖的是 style.css / theme.css 里的外壳与控件观感，靠「后加载者生效」赢。
+import './styles/desk.css'
 
 const app = createApp(App)
 app.mount('#app')

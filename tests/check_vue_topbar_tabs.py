@@ -7,7 +7,7 @@
 顶栏底边上（页面右下角那三个图标按钮之间的 22px 大间距也在这一轮修掉了）。
 
 这里锁的是几何与交互契约（不碰仓库、不调模型）：
-  ① 页签条真的落在顶栏内、紧贴品牌右侧，且没把 76px 的顶栏撑高；
+  ① 页签条真的落在顶栏内、紧贴品牌右侧，且没把顶栏撑高（高度按 --topbar-h 声明值比）；
   ② 装得下：9 项等宽、正好铺满整条；活动项下划线落在顶栏底边上；
   ③ 装不下：等宽不减、每项都不小于 min-width、文字没被挤出按钮，并浮出箭头
      （箭头只在「还能往那个方向滚」时出现，切页签后活动项自己滚进可视区）；
@@ -88,6 +88,14 @@ GEO = """() => {
     underlineBottom: actLabel ? Math.round(actLabel.getBoundingClientRect().bottom) : null,
     docOverflowX: document.documentElement.scrollWidth - window.innerWidth,
     barH: bar ? Math.round(bar.getBoundingClientRect().height) : null,
+    // 顶栏高度**不写死字面量**：读设计令牌 --topbar-h 的声明值。
+    // 这条断言的意图是「页签条不会把顶栏撑高」，而不是「顶栏必须是某个像素数」——
+    // 写死 76 的话，改版把顶栏收成 46 就得改测试，而真正该抓的「被撑高」反而照样漏过。
+    barHDeclared: (() => {
+      const raw = getComputedStyle(document.documentElement).getPropertyValue('--topbar-h').trim();
+      const px = Number.parseFloat(raw);
+      return Number.isFinite(px) ? Math.round(px) : null;
+    })(),
     gaps,
   };
 }"""
@@ -125,8 +133,9 @@ def main() -> int:
                   f"tabsLeft={g['tabs'] and g['tabs']['left']} brandRight={g['brand'] and g['brand']['right']}")
             check("顶部导航：页签条竖直落在顶栏内、顶栏没被撑高",
                   g["tabs"]["top"] >= g["bar"]["top"] and g["tabs"]["bottom"] <= g["bar"]["bottom"] + 1
-                  and g["barH"] == 76,
-                  f"tabs={g['tabs']['top']}~{g['tabs']['bottom']} barH={g['barH']}")
+                  and g["barH"] == g["barHDeclared"],
+                  f"tabs={g['tabs']['top']}~{g['tabs']['bottom']} "
+                  f"barH={g['barH']} 声明={g['barHDeclared']}")
             check("顶部导航：右侧操作组紧接页签条（中间无大空隙）",
                   g["actions"]["left"] - g["tabs"]["right"] <= 24,
                   f"gap={g['actions']['left'] - g['tabs']['right']}")
@@ -229,9 +238,10 @@ def main() -> int:
                   and abs(g7["items"][-1]["right"] - g7["strip"]["right"]) <= 2
                   and g7["tabMinW"] > g["tabMinW"],
                   f"每项 {g7['tabMinW']}~{g7['tabMaxW']}（1440 时 {g['tabMinW']}）")
-            check("1920 宽：顶栏高度仍是 76、下划线仍压在底边",
-                  g7["barH"] == 76 and abs(g7["underlineBottom"] - g7["bar"]["bottom"]) <= 1,
-                  f"barH={g7['barH']} 下划线底={g7['underlineBottom']}")
+            check("1920 宽：顶栏高度仍等于声明值、下划线仍压在底边",
+                  g7["barH"] == g7["barHDeclared"]
+                  and abs(g7["underlineBottom"] - g7["bar"]["bottom"]) <= 1,
+                  f"barH={g7['barH']} 声明={g7['barHDeclared']} 下划线底={g7['underlineBottom']}")
             page.screenshot(path=str(SHOTS / "topbar_tabs_1920.png"))
 
             page.set_viewport_size({"width": 1100, "height": 900})
@@ -264,8 +274,8 @@ def main() -> int:
                   and page.locator(".side-nav").is_visible(),
                   str(page.locator(".side-nav .nav-item").count()))
             check("切到侧边工作台：顶栏高度不变、图标间距同样收紧",
-                  g9["barH"] == 76 and max(g9["gaps"]) <= 12,
-                  f"barH={g9['barH']} gaps={g9['gaps']}")
+                  g9["barH"] == g9["barHDeclared"] and max(g9["gaps"]) <= 12,
+                  f"barH={g9['barH']} 声明={g9['barHDeclared']} gaps={g9['gaps']}")
             page.screenshot(path=str(SHOTS / "topbar_tabs_side.png"))
 
             page.locator(".layout-switch .ls-btn").nth(1).click()     # 回到顶部导航

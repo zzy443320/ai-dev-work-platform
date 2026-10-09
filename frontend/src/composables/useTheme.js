@@ -20,13 +20,17 @@ const STYLE_KEY = 'fixer-style'
 /**
  * 可切换的风格。primary 是强调色，accent 用于渐变、图表第二条系列与选中态点缀。
  * key 会写进 `data-style`，可以拿它写 CSS 覆盖（`[data-style="amber"] .xxx`）。
+ *
+ * 2026-10-09 改版：整套提亮一档并降一点饱和度。原来那组（#6366f1 等）在
+ * 新的中性底色 #0e1015 上偏闷，且大面积铺渐变时显得「AI 面板脸」；现在
+ * 强调色只出现在选中态 / 主按钮 / 进度三处，所以色本身要更干净、更不刺眼。
  */
 export const STYLES = [
-  { key: 'indigo', label: '靛青', primary: '#6366f1', accent: '#8b5cf6' },
-  { key: 'blue', label: '海蓝', primary: '#2563eb', accent: '#38bdf8' },
-  { key: 'teal', label: '松石', primary: '#0d9488', accent: '#22d3ee' },
-  { key: 'amber', label: '琥珀', primary: '#d97706', accent: '#f59e0b' },
-  { key: 'rose', label: '玫瑰', primary: '#e11d48', accent: '#fb7185' },
+  { key: 'indigo', label: '靛青', primary: '#7c8cff', accent: '#9d7bff', onLight: '#4a54d6' },
+  { key: 'blue', label: '海蓝', primary: '#4c8dff', accent: '#5ce1ff', onLight: '#1f5fd0' },
+  { key: 'teal', label: '松石', primary: '#2bb5a8', accent: '#4fd6c2', onLight: '#0f7f76' },
+  { key: 'amber', label: '琥珀', primary: '#d69526', accent: '#f0c060', onLight: '#a06a10' },
+  { key: 'rose', label: '玫瑰', primary: '#e0567a', accent: '#ff8aa3', onLight: '#c0384a' },
 ]
 
 export const DEFAULT_STYLE = 'indigo'
@@ -95,25 +99,34 @@ function applyStyle(key, mode) {
   const root = document.documentElement
   const set = (k, v) => root.style.setProperty(k, v)
   const mixBase = mode === 'dark' ? DARK_MIX_BASE : LIGHT_MIX_BASE
+  // 浅色下换一档更深的强调色：#7c8cff 这类亮色在白底上做正文/链接对比度不够，
+  // 做选中态底又几乎看不出来。深色用 primary，浅色用 onLight，其余派生逻辑不变。
+  const primary = mode === 'dark' ? st.primary : (st.onLight || st.primary)
 
   root.dataset.style = st.key
 
   // Element Plus：主色 + 6 个派生色
-  set('--el-color-primary', st.primary)
+  set('--el-color-primary', primary)
   for (const n of [3, 5, 7, 8, 9]) {
-    set(`--el-color-primary-light-${n}`, mixHex(mixBase, st.primary, n / 10))
+    set(`--el-color-primary-light-${n}`, mixHex(mixBase, primary, n / 10))
   }
-  set('--el-color-primary-dark-2', mixHex('#000000', st.primary, 0.2))
+  set('--el-color-primary-dark-2', mixHex('#000000', primary, 0.2))
 
   // 项目自己的强调色变量
-  set('--primary', st.primary)
+  set('--primary', primary)
   set('--primary-2', st.accent)
-  set('--primary-soft', rgba(st.primary, mode === 'dark' ? 0.16 : 0.10))
+  set('--primary-soft', rgba(primary, mode === 'dark' ? 0.10 : 0.07))
+  // desk.css 那一层读的新名字，与上面是同一批色的别名，必须一起写
+  set('--ac', primary)
+  set('--ac2', st.accent)
+  set('--ac-bg', rgba(primary, mode === 'dark' ? 0.10 : 0.07))
+  set('--ac-ln', rgba(primary, mode === 'dark' ? 0.28 : 0.22))
   // 图表第二条系列（style.css 的 .usage-chart 读它）
   set('--accent-2', st.accent)
-  // 背景光晕跟着主色走，换风格时整页色调一致
-  set('--bg-glow-1', rgba(st.primary, mode === 'dark' ? 0.16 : 0.10))
-  set('--bg-glow-2', rgba(st.accent, mode === 'dark' ? 0.12 : 0.08))
+  // 背景光晕跟着主色走，换风格时整页色调一致。
+  // 改版后压到 5% 以下：光晕只负责「底色不平板」，不再负责「看起来像 AI 面板」。
+  set('--bg-glow-1', rgba(primary, mode === 'dark' ? 0.05 : 0.045))
+  set('--bg-glow-2', rgba(st.accent, mode === 'dark' ? 0.04 : 0.035))
 }
 
 /** 启动即落地一次，避免首帧先闪默认配色再跳到用户选的那套 */

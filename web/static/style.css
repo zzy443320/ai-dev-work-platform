@@ -1,60 +1,123 @@
-/* ONES 前端研发助手 (Frontend Dev Copilot) — modern dark/light theme */
+/* ONES 前端研发助手 (Frontend Dev Copilot) — 设计令牌层
+ *
+ * 这一层只放**变量**，不放规则。改版后的口径：中性灰阶分层 + 1px 发丝线 +
+ * 单一克制强调色，阴影只给浮层，面板一律平。
+ *
+ * 两套明暗共用同一组语义槽位，所以换主题不会「一半新一半旧」：
+ *   - 旧名字（--bg / --panel / --border / --text / --primary ...）全部保留，
+ *     下面那两千多条既有规则照常读它们，改配色只改这一处；
+ *   - 新名字（--surf* / --txt* / --line* / --ac* / --term / --kbd）是给
+ *     frontend/src/styles/desk.css 那套三栏工作台用的，语义更直白。
+ *     两套是**同一批色的两个别名**，不是两套色 —— 谁改都得跟着改另一套。
+ */
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root, [data-theme="dark"] {
-  --bg: #0b0f1a;
-  --bg-glow-1: rgba(99, 102, 241, 0.16);
-  --bg-glow-2: rgba(168, 85, 247, 0.12);
-  --panel: rgba(255, 255, 255, 0.04);
-  --panel-solid: #121828;
-  --border: rgba(255, 255, 255, 0.09);
-  --border-strong: rgba(255, 255, 255, 0.16);
-  --text: #e6eaf2;
-  --text-dim: #98a2b8;
-  --muted: #6b7688;
-  --primary: #6366f1;
-  --primary-2: #8b5cf6;
-  --primary-soft: rgba(99, 102, 241, 0.16);
-  --success: #34d399;
-  --success-soft: rgba(52, 211, 153, 0.14);
-  --warn: #fbbf24;
-  --warn-soft: rgba(251, 191, 36, 0.12);
-  --danger: #f87171;
-  --danger-soft: rgba(248, 113, 113, 0.14);
-  --code-bg: rgba(0, 0, 0, 0.35);
-  --input-bg: rgba(255, 255, 255, 0.07);
-  /* 输入控件专用描边：暗色下通用 --border(9%) 太弱，输入框会和面板糊成一块 */
-  --input-border: rgba(255, 255, 255, 0.17);
-  --input-border-hover: rgba(255, 255, 255, 0.30);
-  --shadow: 0 8px 32px rgba(0, 0, 0, 0.35);
+  /* 表面：底 → 面板 → 浮起，三档冷灰，不用纯黑（纯黑下描边会显脏） */
+  --bg: #0e1015;
+  --panel: rgba(255, 255, 255, 0.035);
+  --panel-solid: #161a21;
+  --bg-glow-1: rgba(124, 140, 255, 0.05);
+  --bg-glow-2: rgba(157, 123, 255, 0.04);
+  --surf: #161a21;      /* 面板 */
+  --surf2: #1a1f28;     /* 面板内的次级面（表头、代码框外框） */
+  --surf3: #202631;     /* 控件底、分段槽 */
+
+  /* 描边：发丝线三档。旧 --border 抬到 7%（原来 9% 偏亮，面板之间像被框住） */
+  --border: rgba(255, 255, 255, 0.07);
+  --border-strong: rgba(255, 255, 255, 0.11);
+  --line: rgba(255, 255, 255, 0.07);
+  --line2: rgba(255, 255, 255, 0.11);
+  --line3: rgba(255, 255, 255, 0.04);
+
+  /* 文字：四级。层级主要靠字重与色阶，不靠字号乱跳 */
+  --text: #e7eaf0;
+  --text-dim: #a4adbd;
+  --muted: #6d7789;
+  --txt: #e7eaf0;
+  --txt2: #a4adbd;
+  --txt3: #6d7789;
+  --txt4: #4c5566;
+
+  /* 强调色：兜底值。实际由 useTheme 按 data-style 以 inline style 写在 <html> 上 */
+  --primary: #7c8cff;
+  --primary-2: #9d7bff;
+  --primary-soft: rgba(124, 140, 255, 0.10);
+  --ac: #7c8cff;
+  --ac2: #9d7bff;
+  --ac-bg: rgba(124, 140, 255, 0.10);
+  --ac-ln: rgba(124, 140, 255, 0.28);
+
+  /* 语义色：饱和度收一档，深色下不再刺眼；soft 是它们的 10% 底 */
+  --success: #43c98b; --success-soft: rgba(67, 201, 139, 0.10);
+  --warn:    #dfa63f; --warn-soft:    rgba(223, 166, 63, 0.10);
+  --danger:  #e5697a; --danger-soft:  rgba(229, 105, 122, 0.10);
+  --ok: var(--success); --wn: var(--warn); --er: var(--danger);
+
+  --code-bg: #0b0d12;
+  --term: #0b0d12;                       /* 控制台抽屉底色 */
+  --kbd: rgba(255, 255, 255, 0.06);      /* 键帽底 */
+  --input-bg: rgba(255, 255, 255, 0.05);
+  /* 输入控件专用描边：暗色下通用 --border(7%) 太弱，输入框会和面板糊成一块 */
+  --input-border: rgba(255, 255, 255, 0.13);
+  --input-border-hover: rgba(255, 255, 255, 0.22);
+  /* 阴影只给浮层（弹窗 / 下拉 / 抽屉）。面板用描边分层，不靠投影 */
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.40), 0 12px 32px -12px rgba(0, 0, 0, 0.60);
+  --shadow-pop: 0 24px 64px -16px rgba(0, 0, 0, 0.70), 0 0 0 1px rgba(255, 255, 255, 0.06);
+
+  /* 形状与节奏：4px 栅格，控件 7 / 面板 10 / 浮层 14 */
+  --r-s: 7px; --r-m: 10px; --r-l: 14px;
+  --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-5: 22px;
+  --topbar-h: 46px;
+  --mono: ui-monospace, "SF Mono", "Cascadia Mono", Consolas, monospace;
   color-scheme: dark;
 }
 
 [data-theme="light"] {
-  --bg: #f3f5fa;
-  --bg-glow-1: rgba(99, 102, 241, 0.05);
-  --bg-glow-2: rgba(168, 85, 247, 0.04);
-  --panel: rgba(255, 255, 255, 0.85);
+  --bg: #f7f7f8;
+  --panel: rgba(17, 20, 26, 0.028);
   --panel-solid: #ffffff;
-  --border: rgba(15, 23, 42, 0.08);
-  --border-strong: rgba(15, 23, 42, 0.16);
-  --text: #1e293b;
-  --text-dim: #475569;
-  --muted: #94a3b8;
-  --primary: #4f46e5;
-  --primary-2: #7c3aed;
-  --primary-soft: rgba(79, 70, 229, 0.10);
-  --success: #059669;
-  --success-soft: rgba(5, 150, 105, 0.10);
-  --warn: #b45309;
-  --warn-soft: rgba(180, 83, 9, 0.10);
-  --danger: #dc2626;
-  --danger-soft: rgba(220, 38, 38, 0.10);
-  --code-bg: #0f172a;
-  --input-bg: rgba(255, 255, 255, 0.7);
-  --input-border: rgba(15, 23, 42, 0.20);
-  --input-border-hover: rgba(15, 23, 42, 0.34);
-  --shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
+  --bg-glow-1: rgba(74, 84, 214, 0.045);
+  --bg-glow-2: rgba(123, 75, 216, 0.035);
+  --surf: #ffffff;
+  --surf2: #fbfbfc;
+  --surf3: #f2f3f6;
+
+  --border: rgba(17, 20, 26, 0.09);
+  --border-strong: rgba(17, 20, 26, 0.15);
+  --line: rgba(17, 20, 26, 0.09);
+  --line2: rgba(17, 20, 26, 0.15);
+  --line3: rgba(17, 20, 26, 0.05);
+
+  --text: #16181d;
+  --text-dim: #4e5563;
+  --muted: #7d8595;
+  --txt: #16181d;
+  --txt2: #4e5563;
+  --txt3: #7d8595;
+  --txt4: #a8afbc;
+
+  --primary: #4a54d6;
+  --primary-2: #7b4bd8;
+  --primary-soft: rgba(74, 84, 214, 0.07);
+  --ac: #4a54d6;
+  --ac2: #7b4bd8;
+  --ac-bg: rgba(74, 84, 214, 0.07);
+  --ac-ln: rgba(74, 84, 214, 0.22);
+
+  --success: #1f8f5f; --success-soft: rgba(31, 143, 95, 0.08);
+  --warn:    #a06a10; --warn-soft:    rgba(160, 106, 16, 0.08);
+  --danger:  #c0384a; --danger-soft:  rgba(192, 56, 74, 0.07);
+  --ok: var(--success); --wn: var(--warn); --er: var(--danger);
+
+  --code-bg: #14161c;
+  --term: #14161c;
+  --kbd: rgba(17, 20, 26, 0.06);
+  --input-bg: #ffffff;
+  --input-border: rgba(17, 20, 26, 0.15);
+  --input-border-hover: rgba(17, 20, 26, 0.26);
+  --shadow: 0 1px 2px rgba(17, 20, 26, 0.05), 0 8px 24px -14px rgba(17, 20, 26, 0.22);
+  --shadow-pop: 0 24px 64px -16px rgba(17, 20, 26, 0.30), 0 0 0 1px rgba(17, 20, 26, 0.07);
   color-scheme: light;
 }
 
@@ -2693,7 +2756,15 @@ details.adv .adv-body .field:first-child { padding-top: 10px; }
    四张卡正好平分一行。 */
 .team-agents { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
 
-@container main (min-width: 1120px) {
+/* 多栏谱系的总闸：问「主列有多宽」，不问「视口有多宽」。
+ *
+ * 阈值从 1120 抬到 1240，因为 2026-10-09 三栏改版把左导航从 212px 的分组导航
+ * 换成了 48~52px 的图标栏 —— 同一个 1280 视口下主列从 ~994px 涨到 ~1184px，
+ * 旧阈值会被提前触发：劈成两栏后每栏只剩 ~583px，正是当初这条容器查询
+ * 要避免的「读不了」宽度。1240 = 两栏各 ~600px 的下限，留一档余量。
+ * 换算：1280 视口 → 主列 1184（<1240，单栏）；1600 视口 → 主列 ~1504（≥1240，双栏）。
+ * 改版后 check_layout_ui 那两个采样点（1280 关 / 1600 开）仍然成立。 */
+@container main (min-width: 1240px) {
   /* 长任务的 12 栏谱系：作业表单(摘要条所在)与看板通栏；
      工作项 | 时间线、人工介入 | 历史作业 两两并排。
      同排两块 top 相同，不影响 check_panel_fold / check_vue_team_ui 的「顺序递增」断言。 */
@@ -2701,6 +2772,7 @@ details.adv .adv-body .field:first-child { padding-top: 10px; }
   #team-run-panel, #team-board-panel { grid-column: span 12; }
   #team-plan-panel       { grid-column: span 5; }
   #team-timeline-panel   { grid-column: span 7; }
+
   #team-intervene-panel  { grid-column: span 5; }
   #team-history-panel    { grid-column: span 7; }
 
