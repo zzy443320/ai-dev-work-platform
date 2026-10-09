@@ -10,7 +10,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 
-from web.state import _RUN_STATE, _applier, _astore, _body_json, _fresh_pipeline, _load_settings, _store, _pipeline_preflight
+from web.state import _applier, _astore, _body_json, _busy_gate, _fresh_pipeline, _load_settings, _store, _pipeline_preflight
 from scripts.artifact import diff_against_repo  # noqa: E402
 
 router = APIRouter()
@@ -54,8 +54,9 @@ async def diff_artifact(aid: str):
 
 @router.post("/api/artifacts/{aid}/approve")
 async def approve_artifact(aid: str, req: Request):
-    if _RUN_STATE["running"]:
-        return JSONResponse({"error": "任务正在运行，稍后再采纳"}, status_code=409)
+    r = _busy_gate("采纳产出物")
+    if r is not None:
+        return r
     body = await _body_json(req)
     force = bool(body.get("force_gate"))
     note = str(body.get("note") or "")
@@ -103,8 +104,9 @@ async def reject_artifact(aid: str, req: Request):
 @router.post("/api/artifacts/{aid}/undo")
 async def undo_artifact(aid: str):
     # 与 proposals/undo 对齐：撤销会写目标仓库，流水线在跑时不能插队。
-    if _RUN_STATE["running"]:
-        return JSONResponse({"error": "流水线正在运行，稍后再撤销"}, status_code=409)
+    r = _busy_gate("撤销产出物")
+    if r is not None:
+        return r
     store = _astore()
     artifact = store.get(aid)
     if not artifact:
@@ -141,8 +143,9 @@ async def get_proposal(pid: str):
 
 @router.post("/api/proposals/{pid}/approve")
 async def approve_proposal(pid: str, req: Request):
-    if _RUN_STATE["running"]:
-        return JSONResponse({"error": "流水线正在运行，稍后再采纳"}, status_code=409)
+    r = _busy_gate("采纳提案")
+    if r is not None:
+        return r
     body = await _body_json(req)
     force = bool(body.get("force_gate"))
     note = str(body.get("note") or "")
@@ -169,8 +172,9 @@ async def rework_proposal(pid: str, req: Request):
 
     和撤销一样要写盘（撤销采纳会还原文件），所以流水线在跑时必须先拒绝服务。
     """
-    if _RUN_STATE["running"]:
-        return JSONResponse({"error": "流水线正在运行，稍后再返工"}, status_code=409)
+    r = _busy_gate("返工这条提案")
+    if r is not None:
+        return r
     body = await _body_json(req)
     pipeline = _fresh_pipeline()
     result = await run_in_threadpool(
@@ -204,8 +208,9 @@ async def post_handoff(pid: str, req: Request):
 async def undo_proposal(pid: str):
     # 撤销也是往目标仓库写文件，所以和采纳一样要先确认流水线没在跑；
     # undo 现在会跑 preflight（内含 git 子进程），因此同样放工作线程。
-    if _RUN_STATE["running"]:
-        return JSONResponse({"error": "流水线正在运行，稍后再撤销"}, status_code=409)
+    r = _busy_gate("撤销提案")
+    if r is not None:
+        return r
     pipeline = _fresh_pipeline()
     result = await run_in_threadpool(pipeline.undo, pid)
     return JSONResponse(result, status_code=200 if result.get("ok") else 409)

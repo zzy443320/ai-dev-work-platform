@@ -21,7 +21,8 @@ def _sse(gen_fn):
     )
 
 
-def _queue_stream(loop, worker, state: Optional[dict] = None) -> StreamingResponse:
+def _queue_stream(loop, worker, state: Optional[dict] = None,
+                  on_finish=None) -> StreamingResponse:
     """SSE 桥：同步 worker 线程把事件经 call_soon_threadsafe 放进 asyncio.Queue，
     异步生成器持续吐出（15s 无事件发心跳注释防中间层掐断）。
 
@@ -32,12 +33,20 @@ def _queue_stream(loop, worker, state: Optional[dict] = None) -> StreamingRespon
     ⚠ `state` 是「占用标记」的归属字典，默认缺陷流水线的 `_RUN_STATE`。问答等
     独立流程必须传自己的字典，否则它跑完会把流水线的占用标记清掉（两条流程
     互不相干，共用一个标记会互相误放行）。
+    ⚠ 走「租约」模型的调用方（缺陷流水线）改传 `on_finish`：解除占用必须比对是
+    哪一份租约，否则被「强制解除占用」的僵尸线程收尾时会把**新一次运行**的占用清掉。
     """
     st = state if state is not None else _RUN_STATE
     aq: asyncio.Queue = asyncio.Queue()
 
     def emit(evt: dict) -> None:
         loop.call_soon_threadsafe(aq.put_nowait, dict(evt))
+
+    def finish() -> None:
+        if on_finish is not None:
+            on_finish()
+        else:
+            st["running"] = False
 
     def job():
         try:
@@ -49,12 +58,12 @@ def _queue_stream(loop, worker, state: Optional[dict] = None) -> StreamingRespon
             except RuntimeError:
                 pass  # 服务退出时 loop 已关，事件发不出去就算了
         finally:
-            st["running"] = False
+            finish()
 
     try:
         threading.Thread(target=job, daemon=True, name="pipeline-stream").start()
     except Exception:
-        st["running"] = False  # 线程没起来也要解除占用
+        finish()  # 线程没起来也要解除占用
         raise
 
     async def gen():

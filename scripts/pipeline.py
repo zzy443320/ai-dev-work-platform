@@ -40,6 +40,16 @@ def _emit(emit, evt: Dict) -> None:
         pass
 
 
+def _cancelled(should_cancel) -> bool:
+    """读取消信号。None / 抛异常一律当「没被取消」——中断机制不能反过来搞挂流水线。"""
+    if should_cancel is None:
+        return False
+    try:
+        return bool(should_cancel())
+    except Exception:
+        return False
+
+
 def _ai_on_delta(emit, defect_id: str):
     """把 AI 流式增量（reasoning/content）转成 ai_delta 事件。"""
     if emit is None:
@@ -171,7 +181,14 @@ class AIDefectFixerPipeline:
         mine_only: bool = True,
         defects: Optional[List[Dict]] = None,
         emit=None,
+        should_cancel=None,
     ) -> List[Dict]:
+        """跑完整流水线。`should_cancel` 是一个无参谓词（如 threading.Event.is_set）：
+        在**工单之间**检查，被请求停止就不再处理后续工单并返回已有结果。
+
+        刻意不在模型调用/沙箱命令中途硬砍：那会留下半截沙箱与半截提案。要立刻腾出
+        槽位由调用方 `_release_run(force)` 负责（见 web/routers/pipeline.py 的 cancel）。
+        """
         _emit(emit, {"type": "stage", "stage": "fetch", "status": "start",
                      "detail": "正在拉取 ONES 工单…"})
         if defects:
@@ -189,6 +206,12 @@ class AIDefectFixerPipeline:
         results: List[Dict] = []
         total = len(defects)
         for i, d in enumerate(defects):
+            if _cancelled(should_cancel):
+                _emit(emit, {"type": "stage", "stage": "stopped", "status": "warn",
+                             "detail": f"已按请求停止：剩余 {total - i} 条工单未处理"
+                                       f"（前 {i} 条的提案已落盘，可直接去审批）"})
+                print(f"  [stopped] 按请求中断，剩余 {total - i} 条未处理")
+                break
             did = str(d.get("id") or "local")
             _emit(emit, {"type": "defect", "index": i + 1, "total": total,
                          "id": did, "title": str(d.get("title", ""))[:80]})
@@ -197,7 +220,8 @@ class AIDefectFixerPipeline:
             with usage.task("defect", run_id=did,
                             title=str(d.get("title", ""))[:80]):
                 try:
-                    r = self._process_one(d, skip_verify=skip_verify, emit=emit)
+                    r = self._process_one(d, skip_verify=skip_verify, emit=emit,
+                                          should_cancel=should_cancel)
                 except Exception as e:
                     print(f"  [error] {d.get('id')} 处理失败: {e}")
                     _emit(emit, {"type": "stage", "stage": "proposal", "status": "fail",
@@ -219,6 +243,7 @@ class AIDefectFixerPipeline:
         days: int = 0,
         mine_only: bool = True,
         emit=None,
+        should_cancel=None,
     ) -> Dict:
         """Trial run: fetch defects (and optionally AI-locate them) WITHOUT
         creating proposals, patches, gate runs or any writes. Used to verify
@@ -302,6 +327,11 @@ class AIDefectFixerPipeline:
         results: List[Dict] = []
         total = len(defects)
         for i, d in enumerate(defects):
+            if _cancelled(should_cancel):
+                _emit(emit, {"type": "stage", "stage": "stopped", "status": "warn",
+                             "detail": f"已按请求停止：剩余 {total - i} 条未定位"
+                                       f"（前 {i} 条的结果已返回）"})
+                break
             item: Dict = {"defect": d}
             did = str(d.get("id") or "local")
             _emit(emit, {"type": "defect", "index": i + 1, "total": total,
@@ -372,7 +402,7 @@ class AIDefectFixerPipeline:
 
     # --------------------------------------------------------- single defect
     def _process_one(self, defect: Dict, skip_verify: bool = False,
-                     emit=None) -> Dict:
+                     emit=None, should_cancel=None) -> Dict:
         did = str(defect.get("id") or "local")
         on_delta = _ai_on_delta(emit, did)
 
@@ -408,7 +438,8 @@ class AIDefectFixerPipeline:
             # 唯一能拿到的运行时证据（循环本身只跑静态命令，不起 dev server）。
             verify, page = self._page_evidence(did, defect, skip_verify, on_delta, emit)
 
-            agent = self._run_agent(defect, analysis, page, did, emit, verify)
+            agent = self._run_agent(defect, analysis, page, did, emit, verify,
+                                    should_cancel=should_cancel)
             art_id = self._repro_artifact(defect, agent)
             if art_id:
                 agent.setdefault("repro", {})["artifact_id"] = art_id
@@ -517,7 +548,8 @@ class AIDefectFixerPipeline:
 
     # ------------------------------------------------------- agentic 修复循环
     def _run_agent(self, defect: Dict, analysis: Dict, page: Dict, did: str,
-                   emit, verify: Optional[Dict] = None) -> Dict:
+                   emit, verify: Optional[Dict] = None,
+                   should_cancel=None) -> Dict:
         """跑一次修复循环。任何意外都退回到「一次成型」的结果，而不是让整条流水线红。"""
         if not self.agent_enabled or str(self.ai.mode) == "mock":
             return {"enabled": False, "conclusion": "agent_disabled",
@@ -555,6 +587,7 @@ class AIDefectFixerPipeline:
                          "detail": "带上人工返工反馈重跑：" + str(rework.get("note") or "")[:120]})
         agent = FixAgent(self.repo_path, self.ai, agent_cfg=self.agent_cfg,
                          gate_cfg=self.gate_cfg, emit=_emit_agent,
+                         should_cancel=should_cancel,
                          precedents=precedents,
                          page_after_hook=self._page_after_hook(
                              defect, did, verify or page),

@@ -10,7 +10,10 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 
-from web.state import SCREENSHOT_DIR, _RUN_STATE, _as_bool, _astore, _body_json, _extensions, _load_settings, _mcp_toolkit, _pipeline_config, _skills_text
+from web.state import (SCREENSHOT_DIR, _acquire_run, _as_bool, _astore,
+                       _body_json, _busy_detail, _extensions, _load_settings,
+                       _mcp_toolkit, _pipeline_config, _release_run,
+                       _run_snapshot, _skills_text)
 from scripts import usage  # noqa: E402
 from scripts.ai_model import AIModel  # noqa: E402
 from scripts.artifact import ArtifactStore  # noqa: E402
@@ -186,8 +189,11 @@ _TASK_KINDS = ("reqdev", "apidebug", "codetest")
 @router.post("/api/tasks/run")
 async def tasks_run(req: Request):
     """需求开发 / 接口联调 / 代码测试：AI 产出「产出物」（文件+方案），只存 JSON 不写仓库。"""
-    if _RUN_STATE["running"]:
-        return JSONResponse({"error": "已有任务在运行，请等待完成"}, status_code=409)
+    # 先窥一眼占用只为把 409 说得清（是谁、跑了多久）；真正的原子占用在下面
+    # `_acquire_run` 那一步完成。中间的 MCP 握手可能耗时，两者之间被抢先是允许的，
+    # 届时 acquire 返回 None 同样回 409。
+    if _run_snapshot().get("running"):
+        return JSONResponse({"error": _busy_detail("跑任务")}, status_code=409)
     body = await _body_json(req)
     kind = str(body.get("task") or "").strip()
     if kind not in _TASK_KINDS:
@@ -240,7 +246,12 @@ async def tasks_run(req: Request):
     ctx["skills_used"] = used_skills
     ctx["tools_used"] = [t["name"] for t in tool_specs]
 
-    _RUN_STATE["running"] = True
+    cancel = _acquire_run("tasks",
+                          label=f"{TASK_LABELS.get(kind, kind)} · {title or (ctx.get('requirement') or '')[:40]}",
+                          source=str(body.get("source") or ""))
+    if cancel is None:
+        return JSONResponse({"error": _busy_detail("跑任务"),
+                             "run": _run_snapshot()}, status_code=409)
     try:
         if ai.mode == "mock" or ai_cfg.get("mock"):
             payload = mock_task_result(kind, ctx)
@@ -263,7 +274,7 @@ async def tasks_run(req: Request):
     except Exception as e:
         return JSONResponse({"error": f"任务执行失败: {e}"}, status_code=500)
     finally:
-        _RUN_STATE["running"] = False
+        _release_run(cancel)
 
     artifact = _astore().create(kind, title, payload, ctx)
     return {"ok": not payload.get("error"), "artifact": ArtifactStore.summary(artifact),

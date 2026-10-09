@@ -9,7 +9,10 @@ import asyncio
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 
-from web.state import ARTIFACT_DIR, _RUN_STATE, _as_num, _body_json, _gate_commands, _load_settings, _resolve_ai, _skills_text, _tstore
+from web.state import (ARTIFACT_DIR, _acquire_run, _as_num, _body_json,
+                       _busy_detail, _gate_commands, _load_settings,
+                       _release_run, _resolve_ai, _run_snapshot, _skills_text,
+                       _tstore)
 from web.streaming import _queue_stream
 from scripts import usage  # noqa: E402
 from scripts.team_bus import KINDS as TEAM_INTERVENTION_KINDS  # noqa: E402
@@ -159,8 +162,9 @@ async def team_abort(rid: str):
 async def team_stream(req: Request):
     """启动一次长任务作业，SSE 实时推送：每个子 Agent 的状态、当前动作、
     思考与输出增量，以及计划/工作项/复核结论的流转。"""
-    if _RUN_STATE["running"]:
-        return JSONResponse({"error": "已有任务在运行，请等待完成"}, status_code=409)
+    # 窥一眼只为把 409 说清；原子占用在下面的 `_acquire_run`
+    if _run_snapshot().get("running"):
+        return JSONResponse({"error": _busy_detail("启动长任务作业")}, status_code=409)
     body = await _body_json(req)
     spec = _team_spec(body)
     if not spec["task"].strip():
@@ -172,17 +176,32 @@ async def team_stream(req: Request):
     rid = store.reserve_id()
     spec["run_id"] = rid
     bus = create_bus(rid, pause_timeout=1800.0)
-    _RUN_STATE["running"] = True
+    cancel = _acquire_run("team",
+                          label=f"{spec.get('title') or spec['task'][:40]} · run {rid}",
+                          source=str(body.get("source") or ""))
+    if cancel is None:
+        drop_bus(rid)
+        return JSONResponse({"error": _busy_detail("启动长任务作业"),
+                             "run": _run_snapshot()}, status_code=409)
 
     def worker(emit):
-        emit({"type": "run_id", "run_id": rid})
+        def forward(evt):
+            # 顶栏的「停止」按的是占用租约的取消事件，而这条流程早就有自己的
+            # 终止总线（/api/team/runs/{rid}/abort）——把前者翻译成后者，
+            # 一个停止按钮才管得住两条路。每个事件都过这里，反应足够快。
+            if cancel.is_set():
+                bus.request_stop()
+            emit(evt)
+
+        forward({"type": "run_id", "run_id": rid})
         try:
             # 用量归属必须在**工作线程内部**设置，才能保证每个角色/步骤都被正确记账
             with usage.task("team", run_id=rid,
                             title=spec.get("title") or (spec["task"] or "")[:60]):
                 orch = TeamOrchestrator(config, store, bus)
-                orch.run(spec, emit=emit)
+                orch.run(spec, emit=forward)
         finally:
             drop_bus(rid)
 
-    return _queue_stream(asyncio.get_running_loop(), worker)
+    return _queue_stream(asyncio.get_running_loop(), worker,
+                         on_finish=lambda: _release_run(cancel))

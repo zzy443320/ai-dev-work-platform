@@ -13,7 +13,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from web.state import ATTACH_DIR, KB_DIR, SCREENSHOT_DIR, STATIC_DIR, VUE_ENTRY, _RUN_STATE, _astore, _gate_commands, _load_settings, _page_auth, _resolve_ai, _store, _pipeline_preflight
+from web.state import ATTACH_DIR, KB_DIR, SCREENSHOT_DIR, STATIC_DIR, VUE_ENTRY, _astore, _gate_commands, _load_settings, _page_auth, _resolve_ai, _run_snapshot, _store, _pipeline_preflight
 from scripts.ai_providers import AIConfig  # noqa: E402
 from scripts.gate import resolve_commands  # noqa: E402
 
@@ -167,9 +167,12 @@ async def health():
         except Exception as e:
             pre = {"problems": [str(e)]}
     counts = _store().counts()
+    run = _run_snapshot()
     return {
         "ok": True,
-        "running": bool(_RUN_STATE["running"]),
+        "running": bool(run.get("running")),
+        # 谁占着槽位、跑到哪一单、跑了多久——老前端只读 `running`，新界面读这个
+        "run": run,
         "repo": s["repo"]["path"],
         "repo_exists": repo_ok,
         "kb_dir": str(KB_DIR),

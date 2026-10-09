@@ -7,9 +7,14 @@ import json
 import os
 import re
 import sys
+import threading
+import time
+from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 from fastapi import HTTPException, Request
+from fastapi.responses import JSONResponse
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -535,7 +540,205 @@ def _pipeline_preflight() -> dict:
     return _fresh_pipeline().preflight
 
 
-_RUN_STATE = {"running": False}
+# ------------------------------------------------------- 流水线占用（租约）
+# 这里曾经是裸布尔 `_RUN_STATE = {"running": False}`。它只回答「有没有人在跑」，
+# 于是出过一次很难受的现场：一个外部脚本 POST /api/run 跑批量修复，界面上一整段
+# 时间只显示「已有流水线在运行，请等待完成」——不知道是哪条工单、不知道跑了多久、
+# 不知道是谁发起的，也没有任何停止入口，唯一的出路是重启进程。
+# 现在槽位是一份**带身份的租约**：谁申请的（run/probe/tasks/team）、来源、处理到
+# 第几条工单、当前阶段、已耗时、有没有被请求取消，全都可读；并且可停。
+#
+# 三条不变式，都是这次一并修掉的坑：
+# ① 检查与占用在 `_RUN_LOCK` 里一次做完（原先 `if running: 409` 与
+#    `running = True` 之间隔着 MCP 握手，两个并发请求能双双通过）；
+# ② 取消事件**跟着租约走**（每个租约一个 Event 对象）：强制解除占用后，僵尸线程
+#    手里的 Event 仍然是「已取消」，而新起的运行拿到的是全新的 Event，互不污染；
+# ③ 释放必须比对租约（`_release_run(ev)`）：僵尸线程收尾时不会把别人的占用清掉。
+RUN_KIND_LABELS = {
+    "run": "缺陷流水线",
+    "probe": "试运行（拉取 + AI 定位）",
+    "tasks": "任务（需求开发 / 联调 / 测试）",
+    "team": "长任务作业",
+    "chat": "问答",
+}
+
+_RUN_LOCK = threading.RLock()
+# 当前租约的字段。空 = 没人跑；`running` 键恒在，便于 `if _RUN_STATE["running"]` 这种老写法
+_RUN_STATE: dict = {"running": False}
+
+
+def _acquire_run(kind: str, *, label: str = "", source: str = "",
+                 total: int = 0, defect_id: str = "") -> Optional[threading.Event]:
+    """占用流水线槽位。
+
+    成功返回本次租约的**取消事件**（传给干活的线程做协作式中断），已被占用返回
+    `None`——调用方据此回 409，并且要用 `_busy_detail()` 说清楚被谁占着。
+    """
+    with _RUN_LOCK:
+        if _RUN_STATE.get("running"):
+            return None
+        cancel = threading.Event()
+        _RUN_STATE.clear()
+        _RUN_STATE.update({
+            "running": True,
+            "kind": kind,
+            "kind_label": RUN_KIND_LABELS.get(kind, kind),
+            "label": str(label or "")[:160],
+            "source": str(source or "")[:80],
+            "started_at": datetime.now().isoformat(timespec="seconds"),
+            "_t0": time.monotonic(),
+            "total": max(0, int(total or 0)),
+            "index": 0,
+            "defect": str(defect_id or "")[:60],
+            "defect_title": "",
+            "stage": "",
+            "stage_detail": "",
+            "cancel_event": cancel,
+            "cancel_requested": False,
+        })
+        return cancel
+
+
+def _release_run(cancel: Optional[threading.Event] = None) -> None:
+    """解除占用。传了 `cancel` 就只解除属于它的那份租约（僵尸线程不清别人的槽位）。"""
+    with _RUN_LOCK:
+        if cancel is not None and _RUN_STATE.get("cancel_event") is not cancel:
+            return
+        _RUN_STATE.clear()
+        _RUN_STATE["running"] = False
+
+
+def _run_progress(cancel: Optional[threading.Event], **fields) -> None:
+    """由流水线的 emit 镜像调用，更新进度字段（第几单 / 当前阶段）。
+
+    租约已被强制解除或被新运行接管时**静默忽略**：否则上一条被取消的流水线会在
+    收尾阶段把新运行的进度条改回自己的工单号。
+    """
+    with _RUN_LOCK:
+        if not _RUN_STATE.get("running"):
+            return
+        if cancel is not None and _RUN_STATE.get("cancel_event") is not cancel:
+            return
+        for k, v in fields.items():
+            _RUN_STATE[k] = v
+
+
+def _run_snapshot() -> dict:
+    """给界面/健康检查看的运行态（不含 Event 等不可序列化对象）。"""
+    with _RUN_LOCK:
+        if not _RUN_STATE.get("running"):
+            return {"running": False}
+        out = {k: v for k, v in _RUN_STATE.items()
+               if k not in ("cancel_event", "_t0")}
+        out["elapsed_seconds"] = round(time.monotonic() - _RUN_STATE.get("_t0", 0.0), 1)
+        return out
+
+
+def _progress_emitter(cancel: Optional[threading.Event], forward=None):
+    """把流水线的 emit 事件镜像进占用租约，必要时再转发给 SSE。
+
+    这一步是「外部脚本发起的批量运行也能在界面上看见」的关键：非流式的
+    `/api/run` 以前根本不传 emit，占用又只是个布尔，界面自然什么都不知道。
+    镜像失败绝不能反过来搞挂流水线，所以整段吞异常。
+    """
+    def emit(evt) -> None:
+        try:
+            kind = (evt or {}).get("type")
+            if kind == "defect":
+                _run_progress(cancel,
+                              index=int(evt.get("index") or 0),
+                              total=int(evt.get("total") or 0),
+                              defect=str(evt.get("id") or "")[:60],
+                              defect_title=str(evt.get("title") or "")[:80],
+                              stage="", stage_detail="")
+            elif kind == "stage":
+                _run_progress(cancel,
+                              stage=str(evt.get("stage") or "")[:30],
+                              stage_detail=str(evt.get("detail") or "")[:160])
+        except Exception:
+            pass
+        if forward is not None:
+            forward(evt)
+
+    return emit
+
+
+def _busy_detail(action: str = "发起新的运行") -> str:
+    """409 的正文：光说「已有流水线在运行」等于没说，得讲清被谁占着、能不能停。"""
+    snap = _run_snapshot()
+    if not snap.get("running"):
+        return f"槽位刚好空出来了，请重试{action}"
+    parts = [snap.get("kind_label") or snap.get("kind") or "任务"]
+    if snap.get("defect"):
+        idx, total = snap.get("index") or 0, snap.get("total") or 0
+        seq = f"（第 {idx}/{total} 条）" if idx and total else ""
+        parts.append(f"工单 {snap['defect']}{seq}")
+    if snap.get("defect_title"):
+        parts.append(str(snap["defect_title"])[:40])
+    if snap.get("stage"):
+        parts.append(f"当前阶段 {snap['stage']}")
+    if snap.get("source"):
+        parts.append(f"来源 {snap['source']}")
+    parts.append(f"已运行 {_elapsed_text(snap.get('elapsed_seconds', 0))}")
+    head = "、".join(p for p in parts if p)
+    if snap.get("cancel_requested"):
+        return f"正在停止：{head}。会在当前阶段边界收口，请稍候。"
+    return f"已有任务在运行——{head}。可在运行面板点「停止」，或「强制解除占用」后重试{action}。"
+
+
+def _busy_response(action: str):
+    """槽位被占时的 409 响应：正文说清被谁占着，`run` 字段把租约原样带出去
+    （界面据此渲染进度与「停止」按钮）。所有共用这个槽位的路由都用它。"""
+    return JSONResponse({"error": _busy_detail(action), "run": _run_snapshot()},
+                        status_code=409)
+
+
+def _busy_gate(action: str):
+    """只读地挡一道：槽位被占时返回 409 响应，空闲返回 None。
+
+    给「不该占用槽位、但也不能在流水线跑一半时改仓库」的端点用（采纳/撤销/返工）。
+    写法固定为 `r = _busy_gate("采纳"); if r is not None: return r`。
+    """
+    return _busy_response(action) if _run_snapshot().get("running") else None
+
+
+def _elapsed_text(seconds) -> str:
+    s = max(0, int(seconds or 0))
+    return f"{s // 60} 分 {s % 60} 秒" if s >= 60 else f"{s} 秒"
+
+
+def _request_run_cancel(force: bool = False) -> dict:
+    """请求停止当前运行。
+
+    默认是**协作式**的：置起这份租约的取消事件，流水线会在「工单之间」和
+    「agentic 修复的每一轮之间」两个边界收口——模型调用与沙箱命令都在子进程里，
+    中途硬砍会留下半截沙箱与半截提案。
+    `force=True` 额外立刻解除占用：僵尸线程继续收尾（它仍会落自己的提案），
+    但界面马上就能发起下一次运行。
+    """
+    with _RUN_LOCK:
+        snap = _run_snapshot()
+        if not snap.get("running"):
+            return {"ok": False, "running": False,
+                    "detail": "当前没有运行中的任务，无需停止"}
+        ev = _RUN_STATE.get("cancel_event")
+        if ev is not None:
+            ev.set()
+        _RUN_STATE["cancel_requested"] = True
+        if force:
+            _RUN_STATE["force_released"] = True
+            kind = _RUN_STATE.get("kind_label", "")
+            _RUN_STATE.clear()
+            _RUN_STATE["running"] = False
+            snap = _run_snapshot()
+            return {"ok": True, "running": False, "force": True,
+                    "detail": f"已强制解除占用（{kind} 的线程可能仍在后台收尾并落提案，"
+                              f"但不会再阻塞新的运行）"}
+        return {"ok": True, "running": True, "force": False,
+                "detail": "已请求停止：会在当前阶段边界生效"
+                          "（最迟一轮模型调用 + 一次沙箱验收），无需重启服务"}
+
+
 # 问答占用标记：与缺陷流水线**各管各的**（可以一边跑流水线一边问问题），
 # 但同一时刻只允许一个问答在跑，避免重复提交把会话写乱。
 _CHAT_STATE = {"running": False}

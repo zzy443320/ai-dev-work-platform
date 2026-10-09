@@ -68,10 +68,14 @@ CONCLUSION_ADAPTED = "adapted_pending_backend"
 # 命令全绿，但沙箱里把页面跑起来一看，工单描述的现象还在 —— 这是最该单独标出来的一档，
 # 否则「验收通过」会把一个没修好的补丁抬进可采纳状态
 CONCLUSION_PERSISTS = "symptom_persists"
+# 人点了「停止」：既不等于没修好，也不等于预算用尽。混进 budget_exhausted 会让人
+# 以为模型尽力了，而实际是这一版根本没跑完——提案要标得清清楚楚。
+CONCLUSION_CANCELLED = "cancelled"
 
 # 结论 → 是否需要人工介入（写进提案，UI 直接读这个字段决定徽标颜色）
 NEEDS_HUMAN = {CONCLUSION_STALLED, CONCLUSION_BUDGET, CONCLUSION_NO_PATCH,
                CONCLUSION_NO_SANDBOX, CONCLUSION_DISABLED, CONCLUSION_PERSISTS,
+               CONCLUSION_CANCELLED,
                # 后端归因天然要人转交；"未验证"那档更需要人先看证据
                CONCLUSION_BACKEND, CONCLUSION_BACKEND_UNVERIFIED, CONCLUSION_ADAPTED}
 
@@ -268,6 +272,7 @@ class FixAgent:
     def __init__(self, repo_path: str, ai, *, agent_cfg: Optional[Dict] = None,
                  gate_cfg: Optional[Dict] = None,
                  emit: Optional[Callable[[Dict], None]] = None,
+                 should_cancel: Optional[Callable[[], bool]] = None,
                  page_after_hook: Optional[Callable[..., Dict]] = None,
                  api_probe_fn: Optional[Callable[[str], Dict]] = None,
                  precedents: str = ""):
@@ -295,6 +300,9 @@ class FixAgent:
         self.shot_max = _int(self.cfg.get("sandbox_server_max_checks"), 2, 1, 5)
         self.gate_cfg = dict(gate_cfg or {})
         self.emit = emit
+        # 取消谓词（一般是 web 层那份租约的 threading.Event.is_set）：
+        # 只在轮次边界读它，绝不在模型调用/沙箱命令中途砍——那会留下半截沙箱。
+        self.should_cancel = should_cancel
         self.max_rounds = _int(self.cfg.get("max_rounds"), DEFAULT_MAX_ROUNDS, 1, 24)
         self.deadline_seconds = _int(self.cfg.get("deadline_seconds"),
                                      DEFAULT_DEADLINE_SECONDS, 30, 1800)
@@ -451,6 +459,15 @@ class FixAgent:
         try:
             for rnd in range(1, self.max_rounds + 1):
                 result["rounds"] = rnd
+                if _cancel_requested(self.should_cancel):
+                    conclusion = CONCLUSION_CANCELLED
+                    result["cancelled"] = True
+                    result["notes"].append(
+                        "收到停止请求，在第 " + str(rnd) + " 轮边界收口。"
+                        "历史尝试与真实报错都保留在「修复轨迹」里，可以直接接着改。")
+                    self._stage("已按请求停止本次修复循环", status="warn")
+                    broke_early = True
+                    break
                 if deadline.expired():
                     conclusion = CONCLUSION_BUDGET
                     result["notes"].append(
@@ -1373,6 +1390,9 @@ def _auto_summary(conclusion: str, attempts: int) -> str:
     if conclusion == CONCLUSION_PERSISTS:
         return ("验收命令在沙箱里全绿，但把页面跑起来复验后，工单描述的现象仍然存在——"
                 "按未修好处理。判读与截图见「修复轨迹 → 页面复验」。")
+    if conclusion == CONCLUSION_CANCELLED:
+        return (f"人工发起了停止，修复循环在轮次边界收口（此前提交 {attempts} 次补丁）。"
+                "已跑过的真实报错与尝试都保留在「修复轨迹」里，重跑会带上它们继续。")
     return "模型未能给出可用的补丁（工单信息不足，或根因不在前端仓库）。"
 
 
@@ -1387,6 +1407,16 @@ def _json_short(obj: Dict) -> str:
 def _plain(text: str) -> str:
     """剥掉 SEARCH/REPLACE 块，只留模型写的自然语言说明。"""
     return re.sub(r"<<<<<<< SEARCH.*?>>>>>>> REPLACE", "", text or "", flags=re.S).strip()
+
+
+def _cancel_requested(should_cancel) -> bool:
+    """读取消信号。None / 抛异常一律当「没被取消」——中断机制不能反过来搞挂循环。"""
+    if should_cancel is None:
+        return False
+    try:
+        return bool(should_cancel())
+    except Exception:
+        return False
 
 
 def _int(v, default: int, lo: int, hi: int) -> int:
