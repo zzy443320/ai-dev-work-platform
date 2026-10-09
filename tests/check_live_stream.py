@@ -3,19 +3,36 @@
 
 Part A 单元级：AIModel.complete(on_delta=...) 真实网关流式冒烟——
               必须收到 reasoning/content 增量且最终 JSON 可解析。
-Part B 端到端：服务在跑时，POST /api/run/stream 注入工单（skip_verify），
+Part B 端到端：POST /api/run/stream 注入工单（skip_verify），
               断言 SSE 事件序列：fetch→defect→ai_delta→locate→…→done。
 Part C 兼容：老接口 /api/run 仍然可用（一次性契约不被破坏）。
-Part D 试运行流式：POST /api/probe/stream（locate:false 不走 AI，真实拉取）
+Part D 试运行流式：POST /api/probe/stream（locate:false 不走 AI）
               ——防线是 pipeline.probe 签名漏 emit 这类回归（表现为 fatal 事件）。
+
+⚠ Part B/C/D **一律打在 temp_server 起的临时实例上，不打开发者正在用的 8765**。
+原先它们硬编码 http://127.0.0.1:8765，代价有两个：① 注入的合成工单
+（STREAM-TEST-1 / COMPAT-TEST-1）会往真实 `proposals/` 与 `knowledge_base/` 落
+提案和卡片，跑一次积一份，混在待审批列表里分不清真假；② SSE 客户端被杀或脚本
+超时退出时，服务端工作线程仍会把整条流水线跑完（真实 AI 要几分钟），期间所有端点
+409——把别人正在用的槽位占死。临时实例的全部数据目录都在系统临时目录里，退出即销毁。
+
+为了让 B/C/D 仍然测到真东西，临时实例**透传真实 AI 配置与仓库路径**（ai_delta 的
+plumbing 只有真模型 + 真仓库才出得来），同时关掉 agentic 修复循环、清空闸门：
+本用例断言的是事件序列与契约字段，不是"补丁对不对"，没必要为此花 8 分钟跑沙箱。
+
+用法：
+    PYTHONUTF8=1 python tests/check_live_stream.py
 """
 import json
 import sys
-import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(Path(__file__).resolve().parent))   # tests/：temp_server
+
+import requests  # noqa: E402
+import temp_server  # noqa: E402
 
 FAILS = []
 
@@ -47,64 +64,62 @@ else:
           isinstance(result, dict) and ("root_cause" in result),
           f"keys={sorted(result.keys())[:8]}")
 
-# ---------------------------------------------------------------- Part B
-print("== Part B: /api/run/stream 端到端（注入工单 + 跳过截图） ==")
-import requests  # noqa: E402
+# ------------------------------------------------------ 临时实例的透传配置
+ISOLATED = {
+    # 真模型才有流式增量，真仓库才有关键词可 grep —— 这两条是 Part B 的价值所在
+    "ai": dict(settings.get("ai") or {}),
+    "ones": dict(settings.get("ones") or {}),
+    "repo": dict(settings.get("repo") or {}),
+    # 但不跑 agentic 沙箱循环、不跑 npm 闸门：测的是事件序列，不是补丁对错
+    "agent": {"enabled": False},
+    "gate": {"commands_text": "", "degraded": True},
+    "playwright": {"base_url": "http://127.0.0.1:1", "headless": True},
+}
 
-BASE = "http://127.0.0.1:8765"
-try:
-    health = requests.get(f"{BASE}/api/health", timeout=5).json()
-    server_up = bool(health.get("ok"))
-except Exception:
-    server_up = False
+DEFECT_B = {
+    "id": "STREAM-TEST-1",
+    "title": "【流式验证】重复周期应该必填",
+    "description": "日程组件 demo-workspace/schedule 的重复周期字段没有校验必填，"
+                   "终止时间勾选了也应该必填。",
+}
+DEFECT_C = {
+    "id": "COMPAT-TEST-1",
+    "title": "【兼容验证】列表不刷新",
+    "description": "提交后列表不刷新，demo-workspace/schedule 页面。",
+}
 
-if not server_up:
-    print("  [SKIP] 服务未启动（8765），跳过 HTTP 端到端")
-else:
-    # 孤儿流水线防护：SSE 客户端被杀/断开时，服务端 worker 仍会把整条流水线跑完
-    # （真实 AI 需要几分钟），期间所有端点 409。等到 running=False 再开跑，
-    # 避免把「上一次测试的残留」误判成本次回归。
-    waited = False
-    for _ in range(30):
-        try:
-            h = requests.get(f"{BASE}/api/health", timeout=5).json()
-        except Exception:
-            h = {}
-        if not h.get("running"):
-            break
-        if not waited:
-            print("  …上一次流水线仍在运行，等待其释放（最多 5 分钟）…")
-            waited = True
-        time.sleep(10)
-    else:
-        print("  [FAIL] 服务持续 busy（running=True 超过 5 分钟），跳过 HTTP 端到端")
-        sys.exit(1)
-    if health.get("ai_mode") == "mock":
-        print("  [SKIP] 服务端 AI 是 mock 模式，注入工单也能跑但不会有 ai_delta；仍验证事件序列")
-    defect = {
-        "id": "STREAM-TEST-1",
-        "title": "【流式验证】重复周期应该必填",
-        "description": "日程组件 demo-workspace/schedule 的重复周期字段没有校验必填，"
-                       "终止时间勾选了也应该必填。",
-    }
+
+def sse(base, path, payload, timeout=300):
+    """POST-SSE：返回 (content_type, 事件列表)。"""
     events = []
-    with requests.post(
-        f"{BASE}/api/run/stream",
-        json={"defects": [defect], "skip_verify": True, "limit": 1},
-        stream=True, timeout=300,
-    ) as resp:
-        print("  HTTP", resp.status_code, resp.headers.get("content-type", ""))
-        check("SSE Content-Type", "text/event-stream" in resp.headers.get("content-type", ""),
-              resp.headers.get("content-type", ""))
+    with requests.post(base + path, json=payload, stream=True, timeout=timeout) as resp:
+        ctype = resp.headers.get("content-type", "")
+        print("  HTTP", resp.status_code, ctype)
         for raw in resp.iter_lines(decode_unicode=True):
             if not raw or not raw.startswith("data:"):
                 continue
-            payload = raw[5:].strip()
-            if payload:
+            body = raw[5:].strip()
+            if body:
                 try:
-                    events.append(json.loads(payload))
+                    events.append(json.loads(body))
                 except ValueError:
                     pass
+    return ctype, events
+
+
+with temp_server.serve(settings=ISOLATED) as srv:
+    BASE = srv.base
+    health = srv.api("/api/health")
+    mock_ai = health.get("ai_mode") == "mock"
+    print(f"\n临时实例 {BASE}（AI={health.get('ai_mode')} · "
+          f"仓库{'已透传' if health.get('repo_exists') else '不可用'} · "
+          "数据目录=系统临时目录，退出即销毁）")
+
+    # ------------------------------------------------------------ Part B
+    print("\n== Part B: /api/run/stream 端到端（注入工单 + 跳过截图） ==")
+    ctype, events = sse(BASE, "/api/run/stream",
+                        {"defects": [DEFECT_B], "skip_verify": True, "limit": 1})
+    check("SSE Content-Type", "text/event-stream" in ctype, ctype)
 
     types = [e.get("type") for e in events]
     check("收到 stage 事件", "stage" in types)
@@ -113,7 +128,7 @@ else:
                   and e.get("stage") == "fetch" and e.get("status") == "done"]
     check("fetch 阶段完成事件（注入来源）", bool(fetch_done))
     deltas = [e for e in events if e.get("type") == "ai_delta"]
-    if health.get("ai_mode") != "mock":
+    if not mock_ai:
         check("收到 ai_delta（思考或输出）", bool(deltas),
               "真实 AI 模式下必须能观察到流式增量")
         check("思考增量存在", any(e.get("kind") == "reasoning" for e in deltas))
@@ -127,50 +142,24 @@ else:
               str(rows[:1]))
         check("前端契约字段齐全", bool(rows) and all(
             k in rows[0] for k in ("proposal_id", "status", "files", "gate_ok", "kb_path")))
+    check("跑完占用标记自动释放（不留 busy）",
+          srv.api("/api/health").get("running") is False)
 
-# ---------------------------------------------------------------- Part C
-print("== Part C: 旧接口 /api/run 兼容 ==")
-if not server_up:
-    print("  [SKIP] 服务未启动")
-else:
-    resp = requests.post(
-        f"{BASE}/api/run",
-        json={"defects": [{
-            "id": "COMPAT-TEST-1",
-            "title": "【兼容验证】列表不刷新",
-            "description": "提交后列表不刷新，demo-workspace/schedule 页面。",
-        }], "skip_verify": True, "limit": 1},
-        timeout=300,
-    )
+    # ------------------------------------------------------------ Part C
+    print("\n== Part C: 旧接口 /api/run 兼容 ==")
+    resp = requests.post(BASE + "/api/run",
+                         json={"defects": [DEFECT_C], "skip_verify": True, "limit": 1},
+                         timeout=300)
     check("/api/run HTTP 200", resp.status_code == 200, f"HTTP {resp.status_code}")
     data = resp.json()
     check("/api/run 返回 count/results", data.get("count") == 1 and bool(data.get("results")))
+    check("/api/run 返回 stopped（被停止时结果不是全集）", "stopped" in data,
+          str(sorted(data.keys())))
 
-# ---------------------------------------------------------------- Part D
-print("== Part D: /api/probe/stream 端到端（locate=false，真实拉取） ==")
-if not server_up:
-    print("  [SKIP] 服务未启动")
-else:
-    events = []
-    with requests.post(
-        f"{BASE}/api/probe/stream",
-        json={"limit": 1, "locate": False},
-        stream=True, timeout=120,
-    ) as resp:
-        print("  HTTP", resp.status_code, resp.headers.get("content-type", ""))
-        check("probe SSE Content-Type",
-              "text/event-stream" in resp.headers.get("content-type", ""),
-              resp.headers.get("content-type", ""))
-        for raw in resp.iter_lines(decode_unicode=True):
-            if not raw or not raw.startswith("data:"):
-                continue
-            payload = raw[5:].strip()
-            if payload:
-                try:
-                    events.append(json.loads(payload))
-                except ValueError:
-                    pass
-
+    # ------------------------------------------------------------ Part D
+    print("\n== Part D: /api/probe/stream 端到端（locate=false） ==")
+    ctype, events = sse(BASE, "/api/probe/stream", {"limit": 1, "locate": False}, timeout=180)
+    check("probe SSE Content-Type", "text/event-stream" in ctype, ctype)
     types = [e.get("type") for e in events]
     check("probe 无 fatal 事件（签名/桥接没有回归）", "fatal" not in types,
           next((e.get("error") for e in events if e.get("type") == "fatal"), ""))
@@ -188,16 +177,15 @@ else:
               f"last_types={types[-3:]}")
 
     # 老接口 /api/probe 兼容（同样曾因签名漏 emit 而 NameError 500）
-    resp = requests.post(
-        f"{BASE}/api/probe",
-        json={"limit": 1, "locate": False},
-        timeout=120,
-    )
+    resp = requests.post(BASE + "/api/probe", json={"limit": 1, "locate": False}, timeout=180)
     check("/api/probe HTTP 200", resp.status_code == 200, f"HTTP {resp.status_code}")
     pdata = resp.json()
     check("/api/probe 返回 count/source/results", all(
-        k in pdata for k in ("count", "source", "results")),
-        str(pdata)[:160])
+        k in pdata for k in ("count", "source", "results")), str(pdata)[:160])
+
+    # 合成工单只该落在临时目录：真实 proposals/ 不能再被喂进 STREAM / COMPAT
+    leaked = sorted(p.name for p in (ROOT / "proposals").glob("*TEST-*"))
+    check("没有往开发者真实数据目录写合成工单", not leaked, str(leaked[:3]))
 
 print()
 if FAILS:

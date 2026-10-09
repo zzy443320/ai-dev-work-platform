@@ -48,6 +48,15 @@ from temp_server import serve                                  # noqa: E402
 #                                frontend/tests/pure.test.mjs，弹窗接线仍由
 #                                check_vue_settings_ui.py 的 #modal-body 断言覆盖
 #   - check_chat_ui.py         → 旧版问答用例；已由 check_vue_chat_ui.py 全面承接
+#   - check_pager.py           → proposalsCache / renderProposals / gotoPropPage /
+#                                propPage 未定义（2026-10-09 实测 ReferenceError）；
+#                                分页契约已由本文件调度的 check_vue_defect_ui.py
+#                                第 5 步承接（灌 30 条真提案测每页 8 条 / 翻页 /
+#                                筛选重置），页码折叠序列另由 pure.test.mjs 守
+#
+# 2026-10-09：上面这批"清单留此备查"的死壳文件本身也收掉了（进系统回收站，可恢复）。
+# 留着它们只有一个坏处——名字看起来还像在守什么，实际一跑就 ReferenceError，
+# 于是没人跑、没人知道。覆盖面迁移去向都写在上面每一行里，按图找得到。
 LEGACY = [
     "check_panel_fold.py",
     "check_layout_ui.py",

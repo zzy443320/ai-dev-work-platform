@@ -16,6 +16,12 @@
   - 日志区 420px 恒定高中 + 空态占位提示 ← tests/check_live_ui.py（布局部分）
   - 运行/试运行结果渲染 + 放大按钮可见性  ← tests/check_expand_modal.py（渲染部分）
 
+上面箭头右列那四个文件（check_pager / check_kb_patterns_ui / check_live_ui /
+check_expand_modal）已于 2026-10-09 收掉——它们是 Vue 收口前的原生界面用例，
+直调 `proposalsCache` / `liveSetup` / `renderRunResults` 这类已不存在的 window
+全局，一跑就 ReferenceError，属于"名字看起来还像在守什么、实际没人跑"的死壳。
+承接关系就是本文件这几行，别再去找那些文件；完整备查清单见 check_vue_all.py 顶部。
+
 刻意**不**验证的部分：`liveSetup/liveLine/liveAI/liveRefs` 这类旧版命令式内部函数、
 `stagesRunning/stagesFromRunResults/stagesFromProbeResults` 这几个纯函数的**直调**结果
 （旧版靠 debugBridge 挂到 window 才能直调，收口后是 composable 内部实现），
