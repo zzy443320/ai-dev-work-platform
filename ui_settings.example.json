@@ -68,6 +68,9 @@
     "sandbox_server_cwd": "",
     "sandbox_server_ready_timeout": 90,
     "sandbox_server_max_checks": 2,
+    "api_probe": "auto",
+    "api_probe_hosts": "",
+    "api_probe_timeout": 15,
     "precedents": 3,
     "precedents_chars": 6000,
     "command_allow_text": ""

@@ -217,6 +217,39 @@ function pmAgent(p) {
       html += `<details class="fold"><summary>服务启动日志尾部</summary><pre class="check-out">${escapeHtml(pg.log_tail)}</pre></details>`
     }
   }
+  const vd = a.verdict || {}
+  if (vd.kind) {
+    const okEv = vd.verified !== false
+    html += `<div class="pm-line${okEv ? '' : ' bad'}"><b>归因结论</b><span>`
+      + `${escapeHtml(vd.kind === 'backend_issue' ? '后端 / 接口问题' : '前端已兼容，等上游契约修正')}`
+      + (vd.endpoint ? ` · 接口 <code>${escapeHtml(vd.endpoint)}</code>` : '')
+      + ` · 证据 ${okEv ? '可核查' : '<b>不足，需人工核实</b>'}</span></div>`
+    if (vd.expected) html += kv('期望', vd.expected)
+    if (vd.actual) html += kv('实际', vd.actual)
+    if ((vd.citations_ok || []).length) {
+      html += `<div class="pm-line"><b>仓库证据</b><span>${vd.citations_ok
+        .map((r) => `<code>${escapeHtml(r)}</code>`).join(' ')}</span></div>`
+      const snips = vd.citation_snippets || {}
+      html += `<details class="fold"><summary>引用处的真实代码行（系统读取，非模型转述）</summary>`
+        + `<pre class="diff">${escapeHtml(Object.keys(snips).map((k) => `${k}  ${snips[k]}`).join('\n'))}</pre></details>`
+    }
+    if ((vd.citations_bad || []).length) {
+      html += `<div class="pm-line bad"><b>戳穿的引用</b><span>模型给了这些 `
+        + `<code>${escapeHtml(vd.citations_bad.join('、'))}</code>，但仓库里读不到 —— 编造或路径写错。</span></div>`
+    }
+    if ((a.probes || []).length) {
+      html += `<details class="fold"><summary>接口探测记录（${a.probes.length} 次，只有结构与状态码）</summary>`
+        + `<pre class="diff">${escapeHtml(a.probes.map((pb) => `${pb.status || 'ERR'} ${pb.url}\n`
+          + (pb.shape || []).slice(0, 25).join('\n')).join('\n\n'))}</pre></details>`
+    }
+    if (vd.handoff) html += kv('给后端的交接', vd.handoff)
+    if (vd.cleanup) html += kv('上游修好后应撤什么', vd.cleanup)
+  }
+  const notes = a.contract_notes || []
+  if (notes.length) {
+    html += `<div class="pm-line"><b>契约核查</b><span>${notes.length} 条记录（旁证 / 待解释的断言）</span></div>`
+    html += `<ul class="iss-list warn">${notes.map((n) => `<li>${mdBold(n)}</li>`).join('')}</ul>`
+  }
   const prec = a.precedents_used || []
   if (prec.length) {
     html += `<div class="pm-line"><b>注入的先例</b><span>${prec.length} 条同类历史缺陷的改法与结局`

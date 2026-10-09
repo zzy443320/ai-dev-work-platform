@@ -35,6 +35,7 @@ const form = reactive({
     per_command_timeout: 240, page_read: true, command_allow_text: '',
     repro: 'auto', repro_command: '', repro_max_rewrite: 2,
     sandbox_server: 'auto', sandbox_server_command: '', sandbox_server_cwd: '',
+    api_probe: 'auto', api_probe_hosts: '', api_probe_timeout: 15,
     sandbox_server_ready_timeout: 90, precedents: 3, precedents_chars: 6000,
   },
   playwright: { base_url: '', headless: true },
@@ -147,6 +148,9 @@ async function loadSettings() {
     form.agent.sandbox_server_command = ag.sandbox_server_command || ''
     form.agent.sandbox_server_cwd = ag.sandbox_server_cwd || ''
     form.agent.sandbox_server_ready_timeout = ag.sandbox_server_ready_timeout ?? 90
+    form.agent.api_probe = ag.api_probe || 'auto'
+    form.agent.api_probe_hosts = ag.api_probe_hosts || ''
+    form.agent.api_probe_timeout = ag.api_probe_timeout ?? 15
     form.agent.precedents = ag.precedents ?? 3
     form.agent.precedents_chars = ag.precedents_chars ?? 6000
     form.agent.command_allow_text = ag.command_allow_text || ''
@@ -374,6 +378,9 @@ async function saveSettings() {
       sandbox_server_command: String(form.agent.sandbox_server_command || '').trim(),
       sandbox_server_cwd: String(form.agent.sandbox_server_cwd || '').trim(),
       sandbox_server_ready_timeout: Number(form.agent.sandbox_server_ready_timeout) || 90,
+      api_probe: form.agent.api_probe,
+      api_probe_hosts: String(form.agent.api_probe_hosts || '').trim(),
+      api_probe_timeout: Number(form.agent.api_probe_timeout) || 15,
       precedents: Number(form.agent.precedents) || 0,
       precedents_chars: Number(form.agent.precedents_chars) || 6000,
       command_allow_text: form.agent.command_allow_text,

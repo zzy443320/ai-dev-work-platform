@@ -34,6 +34,9 @@ from .gate import resolve_commands
 from .patch_engine import build_patch, parse_blocks, render_block_prompt
 from .repro import (STRENGTH_ASSERT, STRENGTH_NONE, STRENGTH_TEST, classify_run,
                     broken_hint, detect_harness, render_cmd, spec_ok)
+from .apicontract import (contract_tokens, corroborate, escape_hatches,
+                          normalize_verdict, parse_citations, shape_guessing,
+                          verify_citations)
 from .sandbox import CmdResult, Sandbox, resolve_sandbox_cfg
 
 # 预算默认值（config `agent:` 段可覆盖；界面参数面板同源）
@@ -57,13 +60,20 @@ CONCLUSION_NO_PATCH = "no_patch"            # 模型始终没给出可用补丁
 CONCLUSION_NO_SANDBOX = "sandbox_unavailable"
 CONCLUSION_DISABLED = "agent_disabled"      # Mock 模式 / 未开启 agentic 循环
 CONCLUSION_UNVERIFIED = "unverified"        # 补丁能构建，但这个仓库没有任何可跑的验收命令
+# 后端归因是三档，不是一档：**有据的**后端问题、**没据的**后端问题、以及"前端先兼容等上游"。
+# 把这三档分开，才谈得上统计与可信；混进 not_converged 就等于判对了也没有回报。
+CONCLUSION_BACKEND = "backend_issue"
+CONCLUSION_BACKEND_UNVERIFIED = "backend_issue_unverified"
+CONCLUSION_ADAPTED = "adapted_pending_backend"
 # 命令全绿，但沙箱里把页面跑起来一看，工单描述的现象还在 —— 这是最该单独标出来的一档，
 # 否则「验收通过」会把一个没修好的补丁抬进可采纳状态
 CONCLUSION_PERSISTS = "symptom_persists"
 
 # 结论 → 是否需要人工介入（写进提案，UI 直接读这个字段决定徽标颜色）
 NEEDS_HUMAN = {CONCLUSION_STALLED, CONCLUSION_BUDGET, CONCLUSION_NO_PATCH,
-               CONCLUSION_NO_SANDBOX, CONCLUSION_DISABLED, CONCLUSION_PERSISTS}
+               CONCLUSION_NO_SANDBOX, CONCLUSION_DISABLED, CONCLUSION_PERSISTS,
+               # 后端归因天然要人转交；"未验证"那档更需要人先看证据
+               CONCLUSION_BACKEND, CONCLUSION_BACKEND_UNVERIFIED, CONCLUSION_ADAPTED}
 
 # verified 是**靠什么**验出来的，证据强度差一个量级，必须分开标：
 #   repro-test   针对工单现象写的单测，从不绿到绿 —— 最接近「缺陷被修好了」
@@ -116,6 +126,19 @@ AGENT_SYSTEM = """\
 7. **不要反问**，也不要让用户把文件内容贴给你——那是把活推回给用户的最后手段。缺信息就自己查。
    有多种合理改法时，选最贴合仓库现状的直接做，把选择和理由写进最终说明，让人工在审批时改主意。
 8. 修**这个**缺陷，不要顺手重构。最小改动、可审、可回滚的补丁远胜大而漂亮的补丁。
+9. ⚖ **前端不是唯一的责任方**。有些缺陷根因在后端接口、数据或权限；有些要等后端改完前端再适配。
+   - 判「这是后端问题」是一等结论（`{"action":"verdict","kind":"backend_issue",…}`），
+     **不是失败**：它会直接结束本次循环、把证据整理成给后端的交接说明。但必须带可核查证据：
+     一次成功的 `api_probe`，或仓库里的 `路径:行号`（系统会真去读那一行，编造的会被戳穿）。
+   - 如果"前端只能先做兼容、上游契约本该统一"，补丁照交，再补一条
+     `{"action":"verdict","kind":"adapted_pending_backend","cleanup":"后端改好后该撤哪段"}`。
+   - **禁止用容错代码代替查证**：一次新增 ≥3 个响应字段兼容读取（`list`/`rows`/`items` 全列进
+     候选）会被直接拒绝，要求你先 `api_probe` 拿真实结构。把返回值"都接受一遍"不是修复，
+     是把不确定性永久写进代码。
+   - 同理，改请求参数名/URL 形状时，那个名字要在仓库里另有出处（DTO、typings、别处调用），
+     不能凭语义推断。拿不到证据就别改契约——去问后端。
+   - 用 `as any` / 交叉类型断言 / `@ts-ignore` 绕过 typings 不一致，等于把疑问藏起来：
+     要么给出证据，要么改判后端问题。
 """
 
 READ_RULES = """\
@@ -153,8 +176,14 @@ def _tools_text() -> str:
         ("repo_grep", "搜代码：{\"pattern\": \"getFinalContent\", \"glob\": \"*.vue\"}"),
         ("repro_add", "写复现用例（沙箱内新建文件，立刻在未修复代码上跑一次）："
                       "{\"path\": \"…\", \"content\": \"…\"}"),
+        ("api_probe", "只读探一次接口拿真实返回结构（只允许配置的被测域名，只回字段名与类型，"
+                      "不回数据）：{\"url\": \"https://…/api/…\"}"),
         ("check_run", "在沙箱里跑一条检查命令：{\"cmd\": \"npx vitest run src/x.spec.ts\"}"),
         ("patch_try", "提交候选补丁：直接输出 SEARCH/REPLACE 块，系统自动识别并真跑验证"),
+        ("verdict", "归因结论（不是认输，是交付）：{\"action\":\"verdict\",\"kind\":"
+                    "\"backend_issue|adapted_pending_backend\",\"endpoint\":\"…\","
+                    "\"expected\":\"…\",\"actual\":\"…\",\"citations\":[\"路径:行号\"],"
+                    "\"handoff\":\"给后端的话术\",\"cleanup\":\"后端修好后前端该撤什么\"}"),
         ("give_up", "认输转人工：{\"action\":\"give_up\",\"reason\":\"…\"}"),
     ]
     return "\n".join(f"- `{n}` {d}" for n, d in rows)
@@ -179,6 +208,8 @@ def parse_action(text: str) -> Optional[Dict]:
     if action in ("give_up", "giveup"):
         return {"give_up": True,
                 "reason": str(obj.get("reason") or obj.get("evidence") or "")[:1500]}
+    if action == "verdict":
+        return {"verdict": True, "raw": obj}
     if action not in ("call", "tool"):
         return None
     args = obj.get("arguments")
@@ -238,6 +269,7 @@ class FixAgent:
                  gate_cfg: Optional[Dict] = None,
                  emit: Optional[Callable[[Dict], None]] = None,
                  page_after_hook: Optional[Callable[..., Dict]] = None,
+                 api_probe_fn: Optional[Callable[[str], Dict]] = None,
                  precedents: str = ""):
         """`page_after_hook(sandbox, budget_left) -> Dict`：补丁已落在沙箱、还没还原回
         原始内容的那一刻回调一次，由上层起 dev server 拍「修复后」的页面。
@@ -249,7 +281,13 @@ class FixAgent:
         self.repo_root = Path(repo_path).resolve()
         self.ai = ai
         self.page_after_hook = page_after_hook
+        self.api_probe_fn = api_probe_fn
         self.precedents = str(precedents or "")
+        # 契约护栏与归因都要读仓库核对引用，所以 reader 是实例状态而不是 run() 局部：
+        # 只在 run() 里建会让任何绕过 run() 的调用（含单测）拿不到它。
+        self.reader = RepoReader(str(self.repo_root), tools_enabled=True)
+        self.probes: List[Dict] = []
+        self.verdict: Dict = {}
         self._shots = 0
         self.page_after: Dict = {}
         self.cfg = dict(agent_cfg or {})
@@ -328,6 +366,9 @@ class FixAgent:
             "sandbox": {},
             "repro": {},
             "page_after": {},
+            "verdict": {},
+            "probes": [],
+            "contract_flags": {},
             "verified_via": "",
             "rework_ref": {},
             "suggested_commands": [],
@@ -337,6 +378,9 @@ class FixAgent:
         }
         # 复现用例的状态机：none → red（合格判据，开始修）→ green（修好了）
         #                    或 → blocked（写了几个用例都复现不出来，放弃复现环节）
+        self.reader = RepoReader(str(self.repo_root), tools_enabled=True)
+        self.probes: List[Dict] = []
+        self.verdict: Dict = {}
         self.repro: Dict = {"attempted": False, "status": "none", "path": "",
                             "content": "", "harness": (self.harness.to_dict()
                                                        if self.harness else {}),
@@ -400,6 +444,9 @@ class FixAgent:
         conclusion = CONCLUSION_NO_PATCH
         gave_up = ""
         broke_early = False
+        verdict_tries = 0
+        verdict_asked = False
+        adapted = False
 
         try:
             for rnd in range(1, self.max_rounds + 1):
@@ -422,6 +469,26 @@ class FixAgent:
                     result["notes"].append("模型主动认输转人工：" + gave_up[:300])
                     broke_early = True
                     break
+                if action and action.get("verdict"):
+                    verdict_tries += 1
+                    fb = self._take_verdict(action["raw"])
+                    context.append(f"### 系统（第 {rnd} 轮 · 归因结论已收到）\n{fb}")
+                    v = self.verdict or {}
+                    if v.get("kind") == "backend_issue":
+                        if v.get("verified") or verdict_tries >= 2:
+                            # 有据 → 正式归因后端；反复无据也给结论，但标成未验证，
+                            # 让它可统计、可追溯，而不是假装"没修好"是模型能力问题
+                            conclusion = (CONCLUSION_BACKEND if v.get("verified")
+                                          else CONCLUSION_BACKEND_UNVERIFIED)
+                            broke_early = True
+                            break
+                        continue
+                    if v.get("kind") == "adapted_pending_backend":
+                        # 兼容层已经交过并跑绿了（或马上会交），归因说清楚就可以收口
+                        adapted = True
+                        broke_early = True
+                        break
+                    continue
                 if action and action.get("tool"):
                     context.extend(self._exec_tool(action["tool"], action["arguments"],
                                                    reader, sandbox, commands, rnd))
@@ -456,6 +523,22 @@ class FixAgent:
                                 "报错点、或换更小的改动），要么直接 give_up。"
                                 % stall[sig])
                     if attempt["rank"] >= RANK_VERIFIED:
+                        # 跑绿了就想收口——但这一版**动了接口契约**时，绿只说明"没改坏"，
+                        # 说明不了"该前端改"。所以多给一轮，专门问它：这是真修法，还是
+                        # 等上游改之前的兼容层？两种答案都有地方放，不会被挤进 give_up。
+                        if (attempt.get("contract_surface") and not self.verdict
+                                and not verdict_asked and rnd < self.max_rounds):
+                            verdict_asked = True
+                            context.append(
+                                "### 系统（补丁已通过验证）\n命令与判据都绿了，可以收口。"
+                                "但这一版动了接口契约面（请求字段名 / URL / 响应形状）。"
+                                "请只回答一次：\n"
+                                "- 若根因在上游、前端这段只是**权宜兼容** → "
+                                '{"action":"verdict","kind":"adapted_pending_backend",'
+                                '"endpoint":"…","expected":"…","actual":"…",'
+                                '"handoff":"要后端改什么","cleanup":"后端改好后该撤哪段"}\n'
+                                "- 若这就是正确的修法 → 直接给最终说明（不要再交补丁）。")
+                            continue
                         conclusion = attempt["conclusion"]
                         broke_early = True
                         break
@@ -476,6 +559,11 @@ class FixAgent:
         for a in attempts:
             best = a if best is None or a["rank"] > best["rank"] else best
         result["repro"] = self.repro
+        result["verdict"] = self.verdict or {}
+        result["probes"] = [{k: v for k, v in pr.items()
+                             if k in ("ok", "status", "url", "content_type",
+                                    "shape", "error", "note", "query_param_names")}
+                            for pr in self.probes[-4:]]
         result["rework_ref"] = dict(seed.get("rework") or {})
         if best:
             result["patch_text"] = best.get("patch_text", "")
@@ -487,6 +575,7 @@ class FixAgent:
             result["verification"] = best.get("verification", {})
             result["best_round"] = best.get("round")
             result["page_after"] = best.get("page_after") or self.page_after or {}
+            result["contract_notes"] = best.get("contract_notes") or []
             # 命令全绿但页面复验说现象仍在：这条不算收敛，别让它冒充 verified
             if best.get("page_still_wrong"):
                 conclusion = CONCLUSION_PERSISTS
@@ -526,6 +615,12 @@ class FixAgent:
                                        + gave_up[:200] + "）")
         else:
             result["final_summary"] = _auto_summary(conclusion, len(attempts))
+        if adapted and conclusion in (CONCLUSION_VERIFIED, CONCLUSION_GREEN):
+            # 「前端已兼容、等上游契约」优先级高于 verified：结论词要能告诉人这段该撤
+            conclusion = CONCLUSION_ADAPTED
+            result["notes"].append(
+                "前端兼容层已写好并通过验证，但根因在上游契约："
+                + str((self.verdict or {}).get("handoff") or "")[:200])
         result["conclusion"] = conclusion
         result["needs_human"] = conclusion in NEEDS_HUMAN
         result["elapsed_seconds"] = round(self.deadline_seconds
@@ -761,6 +856,8 @@ class FixAgent:
                 else:
                     result = (f"$ {cmd}\n返回码 {r.returncode}"
                               f"（{r.seconds}s）\n" + _clip(r.output, 4000))
+        elif name in ("api_probe", "probe_api", "api_get"):
+            result = self._api_probe(str(args.get("url") or args.get("path") or ""))
         elif name in ("repro_add", "repro_write", "add_repro"):
             result = self._add_repro(args, sandbox, rnd)
         else:
@@ -770,6 +867,129 @@ class FixAgent:
         self._tool_event(name, args, result)
         return [f"### 工具 {name} {_json_short(args)}（第 {rnd} 轮）\n"
                 + _clip(result, MAX_FEEDBACK_CHARS)]
+
+    # --------------------------------------------------------------- 契约护栏
+    def _contract_guard(self, built, text: str, rnd: int) -> Dict:
+        """拦住"拿容错代替查证"这两类动作，并要求可核查的证据。
+
+        A 臂：改请求参数名 / URL 形状 —— 那个名字必须在仓库里**另有出处**（本次不改动的
+            文件也用它）。没有就是模型自己起的字段名，正好是首批第 1 条的行为。
+        B 臂：一次新增 ≥3 个响应字段读取（"list/rows/items 全都兼容一遍"）—— 必须有
+            本次会话里成功的 `api_probe` 结构，或仓库内 `路径:行号` 引用（会真去读那行）。
+
+        判定不过就当轮未构建返回，把话说清楚：要么补证据，要么改判 `backend_issue`。
+        """
+        changes = [{"file_path": c.file_path, "diff": c.diff()}
+                   for c in built.changes if c.ok]
+        touched = {str(c.get("file_path") or "") for c in changes}
+        blocked: List[str] = []
+        tokens: List[str] = []
+        notes: List[str] = []
+
+        ct = contract_tokens(changes)
+        for name in ct["fields"]:
+            proofs = corroborate(self.repo_root, name, touched)
+            if not proofs:
+                blocked.append(
+                    f"补丁新增/改动了请求字段 `{name}`，但仓库里除本次改动的文件外"
+                    f"没有任何地方使用它 —— 这说明字段名是推断出来的。")
+            else:
+                notes.append(f"请求字段 `{name}` 有旁证：{', '.join(proofs[:3])}")
+        for guess in shape_guessing(changes):
+            fields = guess.get("fields") or []
+            probed = [f for f in fields if self._probed_has_field(f)]
+            cited, bad = verify_citations(self.reader, parse_citations(text))
+            if probed:
+                notes.append(f"响应字段 {', '.join(probed)} 已由接口探测证实（{guess['file_path']}）")
+                continue
+            if cited:
+                notes.append(f"响应形状改动引用了仓库证据："
+                             + "、".join(c["ref"] for c in cited[:3])
+                             + "；请人工确认这些引用确实支撑了这些字段")
+                continue
+            blocked.append(
+                f"在 {guess.get('file_path')} 一次新增了 {len(fields)} 个响应字段兼容读取"
+                f"（{'、'.join(fields[:6])}）——这是拿容错代码代替查证。"
+                "请先用 `api_probe` 拿一次真实返回结构，或给出仓库内 `路径:行号` 证据；"
+                "确实需要后端先改，就交 `{\"action\":\"verdict\",\"kind\":\"backend_issue\",…}`。")
+        for hatch in escape_hatches(changes):
+            notes.append(f"⚠ 新增行里有绕过类型系统的写法：{hatch}")
+        if blocked:
+            exits = ("两条出路：① 用 `api_probe` 拿一次真实返回结构，或给出仓库内"
+                     " `路径:行号` 引用（DTO / typings / 别处调用）；② 这本来就该后端先改，"
+                     '就交 {"action":"verdict","kind":"backend_issue",...} 把证据与交接话术写清楚。')
+            return {"blocked": True, "tokens": tokens, "surface": bool(blocked),
+                    "signature": "|".join(sorted(set(blocked)))[:700],
+                    "messages": (blocked + notes + [exits])[:8]}
+        return {"blocked": False, "notes": notes, "tokens": tokens,
+                "surface": bool(ct["fields"] or ct["urls"]), "messages": []}
+
+    def _probed_has_field(self, field: str) -> bool:
+        key = "." + str(field)
+        for probe in self.probes:
+            for line in probe.get("shape") or []:
+                head = line.split(":", 1)[0]
+                if head == field or head.endswith(key):
+                    return True
+        return False
+
+    # ----------------------------------------------------------- 接口真相探测
+    def _api_probe(self, url: str) -> str:
+        """只读探一次接口。回给模型的是**字段名与类型**，不含任何字段值。
+
+        生产数据不进 prompt、不进提案、不进知识卡片 —— 判契约不匹配需要的是
+        `data.list: array` 这种形状信息，不是列表里到底有什么。
+        """
+        if self.api_probe_fn is None:
+            return ("[错误] 当前未启用接口探测（配置 agent.api_probe: off，或被测应用地址未填）。"
+                    "改用仓库内 `路径:行号` 证据，或改判 backend_issue 并写清需要什么信息。")
+        if not url:
+            return '[错误] api_probe 需要 {"url": "https://…/api/…"}'
+        self._stage(f"只读探测接口：{url[:90]}", stage="接口探测")
+        try:
+            info = self.api_probe_fn(url) or {}
+        except Exception as e:
+            info = {"ok": False, "error": f"{type(e).__name__}: {e}", "url": url}
+        info.setdefault("url", url)
+        self.probes.append(info)
+        if not info.get("ok"):
+            return ("[探测失败] " + json.dumps(
+                {k: info.get(k) for k in ("status", "error", "note", "url") if k in info},
+                ensure_ascii=False)[:900]
+                + "\n这不代表没有缺陷，只代表拿不到证据：可以试别的接口地址，"
+                  "或改判 backend_issue 并在 handoff 里写清需要什么信息。")
+        shape = info.get("shape") or []
+        return (f"HTTP {info.get('status')} {info.get('content_type')} "
+                f"{info.get('url')}（{info.get('bytes')} 字节）\n"
+                "返回结构（只有字段名与类型，取值已丢弃）：\n" + "\n".join(shape[:60]))
+
+    # --------------------------------------------------------------- 归因结论
+    def _take_verdict(self, raw: Dict) -> str:
+        """收下模型的归因结论，并**核查它给的证据**——编造的引用会被戳穿。"""
+        v = normalize_verdict(raw)
+        if not v.get("ok"):
+            return "[错误] " + v.get("error", "结论格式不对")
+        cited, bad = verify_citations(self.reader, parse_citations(" ".join(
+            [v.get("handoff", ""), v.get("expected", ""), v.get("actual", ""),
+             " ".join(v.get("citations") or [])])))
+        probed = [p for p in self.probes if p.get("ok")]
+        v["citations_ok"] = [c["ref"] for c in cited]
+        v["citations_bad"] = bad
+        v["citation_snippets"] = {c["ref"]: c["snippet"] for c in cited}
+        v["probes_ok"] = len(probed)
+        if v["kind"] == "backend_issue":
+            if not cited and not probed:
+                v["verified"] = False
+                self.verdict = v
+                return ("[结论暂不采信] 你判的是「后端问题」，却没给任何可核查证据："
+                        "既没有成功的 `api_probe`，也没有能在仓库里读到的 `路径:行号`。"
+                        "补一条证据（探一次接口，或引用 DTO / typings / 另一处调用），"
+                        "否则只能记为「未验证的后端归因」。")
+            v["verified"] = True
+        else:
+            v["verified"] = True
+        self.verdict = v
+        return json.dumps(v, ensure_ascii=False)[:1500]
 
     # ------------------------------------------------------- 复现用例（红优先）
     def _add_repro(self, args: Dict, sandbox: Sandbox, rnd: int) -> str:
@@ -854,6 +1074,22 @@ class FixAgent:
             "summary": _clip(_plain(text), 600),
         }
         built = build_patch(str(sandbox.root), blocks)
+        if not built.ok:
+            attempt["errors"] = list(dict.fromkeys(built.errors))[:8]
+            attempt["signature"] = "unbuilt:" + "|".join(sorted(attempt["errors"]))[:800]
+            attempt["conclusion"] = "unbuilt"
+            return attempt
+        # 契约护栏放在落盘之前：拦下来时一个字都不写，反馈里给的是"补证据或改判"，
+        # 而不是"改了再说"。
+        guard = self._contract_guard(built, text, rnd)
+        attempt["contract_notes"] = guard.get("notes") or []
+        attempt["contract_surface"] = bool(guard.get("surface"))
+        if guard.get("blocked"):
+            attempt["errors"] = guard["messages"][:6]
+            attempt["signature"] = "contract:" + str(guard.get("signature"))[:700]
+            attempt["conclusion"] = "unbuilt"
+            attempt["contract_blocked"] = True
+            return attempt
         # 硬拦「改温度计说退烧」：一旦复现用例被立为判据，补丁里就不允许再动它。
         # 只在提示词里禁止是不够的——模型确实会为了拿到绿而改用例。
         repro_path = str(self.repro.get("path") or "")
@@ -1123,6 +1359,15 @@ def _auto_summary(conclusion: str, attempts: int) -> str:
                 "供人工判断，请勿直接采纳。")
     if conclusion == CONCLUSION_NO_SANDBOX:
         return "沙箱不可用，未获得任何真实运行结果；本次结论与旧的一次成型链路等价。"
+    if conclusion == CONCLUSION_BACKEND:
+        return ("判定为后端/接口/数据问题，且给出了可核查证据（接口探测或仓库内引用）。"
+                "本次不产出前端补丁——证据与交接话术见「归因与证据」。")
+    if conclusion == CONCLUSION_BACKEND_UNVERIFIED:
+        return ("模型判为后端问题，但两次都拿不出可核查证据（没有成功的接口探测，"
+                "也没有能在仓库里读到的引用）。这条**不能当定论**，需要人工核实归因。")
+    if conclusion == CONCLUSION_ADAPTED:
+        return ("前端兼容层已写好并通过验证，但根因在上游契约不一致：这段兼容是权宜，"
+                "后端把结构统一后应当回收（撤销点见「归因与证据」）。")
     if conclusion == CONCLUSION_UNVERIFIED:
         return "补丁已生成，但该仓库没有可跑的验收命令，未经真实验证。"
     if conclusion == CONCLUSION_PERSISTS:

@@ -118,6 +118,15 @@ async def update_settings(req: Request):
         for key, cap in (("sandbox_server_command", 500), ("sandbox_server_cwd", 200)):
             if key in ag:
                 cur[key] = str(ag[key]).strip()[:cap]
+        if "api_probe" in ag:
+            ap = str(ag["api_probe"]).strip().lower()
+            cur["api_probe"] = ap if ap in ("auto", "on", "off") else "auto"
+        if "api_probe_hosts" in ag:
+            cur["api_probe_hosts"] = str(ag["api_probe_hosts"]).strip()[:400]
+        if "api_probe_timeout" in ag:
+            n = _as_num(ag["api_probe_timeout"], None)
+            if n is not None:
+                cur["api_probe_timeout"] = int(min(max(n, 3), 60))
         if "precedents" in ag:
             n = _as_num(ag["precedents"], None)
             if n is not None:

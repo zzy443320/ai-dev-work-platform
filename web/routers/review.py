@@ -180,6 +180,26 @@ async def rework_proposal(pid: str, req: Request):
     return JSONResponse(result, status_code=200 if result.get("ok") else 409)
 
 
+@router.get("/api/proposals/{pid}/handoff")
+async def get_handoff(pid: str):
+    """只生成后端交接说明（含结构，不含真实数据），供人工复制或预览。"""
+    return _fresh_pipeline().handoff_text(pid)
+
+
+@router.post("/api/proposals/{pid}/handoff")
+async def post_handoff(pid: str, req: Request):
+    """把归因结论回写成 ONES 工单评论——唯一会写到目标仓库之外系统的动作。
+
+    刻意要求显式 confirm：自动发会在评审人不知情的情况下往真实工单里刷评论。
+    """
+    body = await _body_json(req)
+    if not body.get("confirm"):
+        return JSONResponse({"error": "回写工单评论需要明确勾选“确认发给工单”"}, status_code=400)
+    pipeline = _fresh_pipeline()
+    result = await run_in_threadpool(pipeline.post_handoff, pid)
+    return JSONResponse(result, status_code=200 if result.get("ok") else 409)
+
+
 @router.post("/api/proposals/{pid}/undo")
 async def undo_proposal(pid: str):
     # 撤销也是往目标仓库写文件，所以和采纳一样要先确认流水线没在跑；

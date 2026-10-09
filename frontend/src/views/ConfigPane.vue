@@ -285,6 +285,22 @@ function openAiModal() {
                              :min="20" :max="600" :step="10" controls-position="right" />
           </label>
           <label class="field">
+            <span>只读接口探测（判后端归因要有真实返回，不靠猜）</span>
+            <el-select id="cfg-agent-probe" v-model="form.agent.api_probe">
+              <el-option label="auto（填了被测应用地址就启用）" value="auto" />
+              <el-option label="on（尽量启用）" value="on" />
+              <el-option label="off（关掉，后端归因只能靠仓库引用）" value="off" />
+            </el-select>
+          </label>
+          <label class="field">
+            <span>允许探测的主机（分号分隔，默认只允许被测应用域名）</span>
+            <el-input id="cfg-agent-probe-hosts" v-model="form.agent.api_probe_hosts"
+                      placeholder="ai.example.internal;gateway.example.internal" />
+          </label>
+          <div class="info-note">接口探测只发 GET/HEAD、只打白名单主机，并且<strong>只回字段名与类型</strong>：
+            响应体不写进提案、不进知识卡片 —— 判契约要的是 <code>data.list: array</code> 这种形状，
+            不是列表里的真实数据。</div>
+          <label class="field">
             <span>注入几条同类历史缺陷先例（0=关）</span>
             <el-input-number id="cfg-agent-precedents" v-model="form.agent.precedents"
                              :min="0" :max="8" controls-position="right" />

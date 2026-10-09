@@ -70,6 +70,9 @@ cp config.yaml.example config.yaml
 | `checks_pass` | 所有命令全绿，但基线本来就全绿 | 证明没改坏构建，**缺陷本身是否修好还要看页面** |
 | `unverified` | 补丁能构建，但这个仓库没有任何可跑的验收命令 | 当"AI 的下一版尝试"看，必须人工跑一遍 |
 | `symptom_persists` | 命令全绿，但在沙箱里把页面跑起来后**现象仍在** | 闸门直接判未通过（提案停在 `gate_failed`），要采纳必须勾选强制采纳 |
+| `backend_issue` | 判为后端 / 接口 / 数据问题，且**有可核查证据** | 不产出前端补丁；证据与交接话术整理好，可一键回写工单评论 |
+| `backend_issue_unverified` | 模型说是后端问题，但两次都拿不出可核查证据 | 不能当定论，需要人工先核实归因 |
+| `adapted_pending_backend` | 前端兼容层已写好并跑绿，但根因在上游契约 | 可以采纳，同时记着"上游修好后这段该撤"（cleanup 里写着撤点） |
 | `not_converged` / `budget_exhausted` | 同一错误连续 3 次或轮次/时间用尽 | 认输转人工，看轨迹里最后一次的真实报错 |
 
 **先立判据，再动手修。** 光让 `lint` / `tsc` 从红变绿，证明的是「没改坏构建」，不是「这条缺陷修好了」。所以循环在改代码之前要先交一个**针对工单现象的复现用例**：它被写进沙箱、在**未修复**的代码上跑一次，**必须红**——现在就绿说明它测的根本不是这条缺陷，会被打回重写（默认允许重写 2 次，仍复现不出就放弃这一环节并在提案里如实写明）。判据成立之后，每一轮补丁的验证都会带上这个用例一起跑，它转绿 + 验收命令不新增失败，才是 `verified` 里最强的那一档。为防止「改温度计说退烧」，**补丁里出现复现用例的路径会被直接拒绝**。
@@ -83,6 +86,17 @@ cp config.yaml.example config.yaml
 | `gate-command` | 只有 lint / tsc / build 从红转绿 | 只证明没改坏构建 |
 
 **看到绿之后，还要看一眼页面。** 第一次拿到绿时，循环会在**打了补丁的沙箱**里起一次 dev server（自动挑空闲端口，不抢你自己开着的那个），按工单同一套复现操作再拍一张图，把修复前/修复后两张图一起交给模型判「现象消失了没有」，结论分 `gone / same / unclear`，外加 console 报错的前后差集。三条硬规矩：判读 `same` → 这次的绿**不算收敛**，降级成 `symptom_persists` 并把判读原文回喂给模型继续改，下一版想翻案必须重新复验（一条缺陷最多起 2 次服务）；服务起不来 / 页面白屏 / 缺后端接口 → 标 `unusable` 并写进提案说明，这是**证据缺席**不是通过，也不会覆盖上一版「现象仍在」的结论；剩余时间预算不够等端口就绪 → 直接跳过，不做半吊子检查。技术栈差异靠 `sandbox_server_command` 覆盖（monorepo 常用 `pnpm --filter demo-app dev --port {port}`）；`package.json` 里没有 `dev`/`start`/`serve` 或用的是探测不认识的 runner 时，复验自动跳过而不是瞎猜。
+
+**不许拿容错代码代替查证。** 首批真实工单里实测到三种"把后端问题当缺陷修"的动作，现在都被代码拦下（不是提示词里的愿望）：
+
+- **改请求契约要有旁证**：补丁新增/改写请求字段名、URL 形状或 `params.x =` 赋值时，那个名字必须在仓库里另有出处（DTO、typings、别处调用都算，但被本次改动覆盖的文件本身不算）。找不到就当轮未构建退回，并给两条出路：拿接口真相，或改判 `backend_issue`。
+- **禁止"全都兼容一遍"**：一次新增 ≥3 个响应字段读取（把 `list`/`rows`/`items` 全列进候选）会被拒绝，除非本次会话里有一次成功的接口探测证实了这些字段，或给出了仓库内 `路径:行号` 引用 —— **引用会真去读那一行**，编的路径当场被戳穿。
+- 用 `as any` / 交叉类型断言 / `@ts-ignore` 绕过 typings 不一致，会列进提案的「契约核查」给审批人看。
+- 反过来，只补两个字段、普通 UI 配置、数组方法**都不拦**：误拦的代价是模型学会绕检查，比漏拦更贵。
+
+**接口真相（只读探测）**：模型可用 `api_probe` 打一次真实接口，三道约束写死 —— 只允许 GET/HEAD；只允许被测应用域名（额外主机要显式填 `agent.api_probe_hosts`）；**只回字段名与类型，响应体不落盘、不进提案、不进知识卡片**。判契约不匹配需要的是 `data.list: array` 这种形状，不是列表里的真实数据。探不到就如实报"拿不到证据"，允许据此改判后端问题。
+
+**后端交接**：归因结论会排成一条交接说明（缺陷号、接口、期望 vs 实际、证据引用、结构摘要、以及"上游修好后前端该撤什么"）。界面上点「回写到 ONES 工单评论」才发，需要显式确认，同一提案只发一次 —— 这是整条流水线唯一会写到目标仓库之外系统的动作。不想发就点"预览"复制走。
 
 **先例：把已经攒下的档案接回回路。** 每修一条缺陷都会在 `proposals/` 留完整档案，但循环原先从不看它们——同一模块反复出缺陷，模型每次从零猜，人工否决过的改法还会重演。现在每次开工前会按「目录段 / 关键词 / 标题」挑出最多 3 条同类历史提案注入，**连被拒绝的以及本工单自己上一次的失败尝试一起给**，并带上当时的结局（人工采纳 / 拒绝 / 强制采纳 / 采纳后撤销）与备注。三条约束：无关的先例不会因为「它被采纳过」就越权进入（结局只能修饰相关度，不能替代相关度）；注入总量默认封顶 6000 字符，超了先砍补丁正文而不是整条先例；实际注入了哪几条会记在提案的修复轨迹里，可追溯。跑完的结论（`fix_conclusion` / `evidence_via` / `human_decision` 三个字段 + 一节枚举值）会沉淀进知识卡片——只写枚举值不写模型散文，因为卡片是脱敏导出的对象，往里搬自由文本等于给脱敏流程挖一个静默漏洗的坑。
 
@@ -112,7 +126,7 @@ gate:
 
 **仓库的基线本来就是红的怎么办？** 很常见：`tsconfig` 的 `"types"` 里指了没装的包（`@types/jest`）、仓库自带一堆 lint 错。这类命令打什么补丁都不会变绿，所以 `verified` 的判据不是「所有命令全绿」，而是 **没有新增失败项 + 这条缺陷自己的复现判据从红转绿**（`verified_via` 会如实标成 `repro-*`，那些历史红项列在 `baseline_still_red` 里，不与回归混为一谈）。没有复现判据时保守处理：宁可只给 `checks_pass` 以下的结论。当然，把基线修绿更划算——一条 `yarn add -D @types/jest` 就能让 type-check 从"永久红"变成真正的回归防线。
 
-预算与开关都在配置 `agent:` 段（界面「配置 → Agentic 修复」同字段）：`max_rounds: 8`（一次"交补丁 + 拿验证"算一轮）、`deadline_seconds: 360`、`max_stall: 3`（同一验证结果连续出现即认输，不再烧 token）、`sandbox: auto|worktree|copy`、`sandbox_dir`（临时副本放哪）、`link_node_modules`（把源仓依赖目录链进沙箱，关掉会有一大片"找不到模块"的假失败）、`page_read`（让模型看修复前截图与 console 报错）、`repro: auto|on|off` 与 `repro_command`（自定义复现命令，`{file}` 是用例路径，monorepo 常用 `npx vitest run --root packages/xxx {file}`）、`repro_max_rewrite: 2`（复现失败允许重写几次）、`sandbox_server: auto|on|off` 与 `sandbox_server_command` / `sandbox_server_cwd` / `sandbox_server_ready_timeout` / `sandbox_server_max_checks`（页面复验那一路）、`precedents: 3` 与 `precedents_chars: 6000`（同类历史缺陷先例注入）。开复现时轮次预算会自动 +2，因为写用例与修代码抢的是同一份轮次。
+预算与开关都在配置 `agent:` 段（界面「配置 → Agentic 修复」同字段）：`max_rounds: 8`（一次"交补丁 + 拿验证"算一轮）、`deadline_seconds: 360`、`max_stall: 3`（同一验证结果连续出现即认输，不再烧 token）、`sandbox: auto|worktree|copy`、`sandbox_dir`（临时副本放哪）、`link_node_modules`（把源仓依赖目录链进沙箱，关掉会有一大片"找不到模块"的假失败）、`page_read`（让模型看修复前截图与 console 报错）、`repro: auto|on|off` 与 `repro_command`（自定义复现命令，`{file}` 是用例路径，monorepo 常用 `npx vitest run --root packages/xxx {file}`）、`repro_max_rewrite: 2`（复现失败允许重写几次）、`sandbox_server: auto|on|off` 与 `sandbox_server_command` / `sandbox_server_cwd` / `sandbox_server_ready_timeout` / `sandbox_server_max_checks`（页面复验那一路）、`precedents: 3` 与 `precedents_chars: 6000`（同类历史缺陷先例注入）、`api_probe: auto|on|off` 与 `api_probe_hosts` / `api_probe_timeout`（只读接口探测，判后端归因要有真相）。开复现时轮次预算会自动 +2，因为写用例与修代码抢的是同一份轮次。
 
 沙箱里的命令执行受白名单约束：只放行 npm/npx/node/tsc/eslint/vitest/pytest/git diff 这类**读取与检查**动作；删除类、外发类（curl/ssh）、发布类（npm publish）、改 git 状态类（push/reset/clean）以及解释器内联代码（`python -c` / `node -e`）一律拒绝，并把拒绝原因回给模型。命令超时会被杀整棵进程树（避免 dev server 类常驻进程挂住流水线）。
 

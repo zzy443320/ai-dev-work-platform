@@ -3,7 +3,7 @@
 // （decide + 四个操作函数）的等价迁移。模块级单例 —— App.vue 的事件接线、
 // 产出物弹窗里的「查看提案」、KbModal 的关联链接都指向同一份状态。
 import { computed, ref } from 'vue'
-import { api } from '../api/client.js'
+import { api, http } from '../api/client.js'
 import { useToast } from './useToast.js'
 import { useDefect } from './useDefect.js'
 import { useHealth } from './useHealth.js'
@@ -33,6 +33,10 @@ const reworkVerdict = ref('not_fixed')
 const reworkDetail = ref('')
 const reworkRerun = ref(true)
 const reworkBusy = ref(false)
+// ---- 后端交接说明（预览 + 显式回写 ONES 工单评论）----
+const handoffOpen = ref(false)
+const handoffText = ref('')
+const handoffBusy = ref(false)
 
 const actions = computed(() => proposalActions(detail.value || {}))
 const statusText = computed(() => statusLabel(detail.value || {}))
@@ -166,6 +170,41 @@ function onUndo() {
   decide(detail.value.id, 'undo', {})
 }
 
+/** 后端交接：只生成预览，发送必须显式二次确认 */
+async function previewHandoff() {
+  if (!detail.value) return
+  try {
+    const d = await http.get(`/api/proposals/${encodeURIComponent(detail.value.id)}/handoff`)
+    handoffText.value = d.handoff || ''
+    handoffOpen.value = true
+  } catch (e) {
+    toast(`生成交接说明失败: ${e}`, 'err')
+  }
+}
+
+async function sendHandoff() {
+  if (!detail.value || handoffBusy.value) return
+  if (!window.confirm('确认把这份归因结论作为评论回写到 ONES 工单？\n'
+    + '内容只含字段名与结构，不含响应真实数据；同一提案只会回写一次。')) return
+  handoffBusy.value = true
+  try {
+    const d = await api.proposalAction(detail.value.id, 'handoff', { confirm: true })
+    if (d.ok) {
+      toast(`已回写到工单 ${d.defect_id}（${d.chars} 字）`)
+      handoffText.value = d.handoff || handoffText.value
+      await refreshAfterDecision()
+      await openProposal(detail.value.id)
+    } else {
+      pendingError.value = d.error || '回写失败'
+      if (d.handoff) { handoffText.value = d.handoff; handoffOpen.value = true }
+    }
+  } catch (e) {
+    pendingError.value = `回写失败: ${e}`
+  } finally {
+    handoffBusy.value = false
+  }
+}
+
 /** 决策后统一刷新提案列表 / 统计 / 健康行（旧版 decide 的收尾三连）。
     useDefect 是模块级单例，这里拿到的是 DefectPane 正在渲染的同一套状态。 */
 async function decide(id, action, payloadObj) {
@@ -217,5 +256,6 @@ export function useProposalModal() {
     openProposal, close, decide, onApprove, onForceApprove, onReject, onUndo,
     REWORK_OPTIONS, reworkOpen, reworkVerdict, reworkDetail, reworkRerun, reworkBusy,
     openRework, cancelRework, submitRework,
+    handoffOpen, handoffText, handoffBusy, previewHandoff, sendHandoff,
   }
 }

@@ -557,7 +557,8 @@ class AIDefectFixerPipeline:
                          gate_cfg=self.gate_cfg, emit=_emit_agent,
                          precedents=precedents,
                          page_after_hook=self._page_after_hook(
-                             defect, did, verify or page))
+                             defect, did, verify or page),
+                         api_probe_fn=self._api_probe_fn())
         try:
             with usage.step("fix_agent"):
                 result = agent.run(defect, seed={
@@ -629,7 +630,45 @@ class AIDefectFixerPipeline:
             ctx={"notes": f"defect={did}", "file_path": path})
         return str(created.get("id") or "")
 
-    # -------------------------------------------- 沙箱页面复验（修复后截图判读）
+    # ------------------------------------------------------------- 接口真相探测
+    def _api_probe_fn(self):
+        """只读接口探测的回调。拿不到被测环境地址就是没启用 —— 不猜、不打别的机器。
+
+        三条约束写死在 `apicontract.api_probe` 里：只 GET/HEAD、只允许白名单主机、
+        只回字段名与类型（**响应体不落盘、不进提案**，避免生产数据顺着知识卡片永久留下）。
+        """
+        mode = str(self.agent_cfg.get("api_probe") or "auto").strip().lower()
+        if mode == "off":
+            return None
+        base = str(self.config.get("playwright", {}).get("base_url") or "").strip()
+        if not base:
+            return None
+        from urllib.parse import urlsplit
+
+        parts = urlsplit(base)
+        hosts = [h.strip().lower() for h in
+                 str(self.agent_cfg.get("api_probe_hosts") or "").replace(",", ";").split(";")
+                 if h.strip()]
+        if parts.hostname:
+            hosts.append(parts.hostname.lower())
+        storage = self.config.get("playwright", {}).get("auth", {}).get("storage_state") or ""
+
+        def probe(url: str) -> Dict:
+            from .apicontract import api_probe, load_storage_cookies
+
+            target = str(url or "").strip()
+            if target and not target.lower().startswith(("http://", "https://")):
+                target = base.rstrip("/") + (target if target.startswith("/") else "/" + target)
+            cookies = {}
+            host = urlsplit(target).hostname or ""
+            if storage and host:
+                cookies = load_storage_cookies(Path(storage), host)
+            return api_probe(target, allowed_hosts=hosts, cookies=cookies or None,
+                             timeout=_as_int(self.agent_cfg.get("api_probe_timeout"), 15))
+
+        return probe
+
+    # ------------------------------------------------------- 沙箱页面复验（修复后截图判读）
     def _page_after_hook(self, defect: Dict, did: str, before: Dict):
         """交给 FixAgent 的钩子：在**打了补丁的沙箱**里起 dev server，拍一张修复后的图。
 
@@ -952,6 +991,59 @@ class AIDefectFixerPipeline:
             if rw and str(rw.get("at") or "") >= str(best.get("at") or ""):
                 best = {**rw, "proposal_id": p.get("id")}
         return best
+
+    def post_handoff(self, proposal_id: str) -> Dict:
+        """把归因结论作为评论回写到 ONES 工单 —— 显式点击才发，绝不自动发。
+
+        这是整条流水线唯一**写到目标仓库之外系统**的动作，所以三道约束：必须有已记录的
+        归因结论；同一份提案不重复发；发出去的正文只含字段名/结构，不含响应真实数据。
+        """
+        from .apicontract import render_handoff
+
+        proposal = self.proposals.get(proposal_id)
+        if not proposal:
+            return {"ok": False, "error": f"提案不存在: {proposal_id}"}
+        verdict = (proposal.get("agent") or {}).get("verdict") or {}
+        if not verdict.get("kind"):
+            return {"ok": False, "error": "这份提案没有归因结论，没有可交接的内容"}
+        done = (proposal.get("handoff") or {}).get("posted_at")
+        if done:
+            return {"ok": False, "error": f"已于 {done} 回写过，避免在工单里刷第二条评论",
+                    "posted_at": done}
+        defect = proposal.get("defect") or {}
+        did = str(defect.get("id") or defect.get("issueUUID") or "").strip()
+        if not did:
+            return {"ok": False, "error": "提案里没有工单编号/UUID，无法定位要评论哪条"}
+        content = render_handoff(defect, proposal.get("agent") or {}, proposal_id)
+        if not content:
+            return {"ok": False, "error": "交接说明生成为空"}
+        if not str(self.config.get("ones", {}).get("token") or "").strip() \
+                and not self.ones.email:
+            return {"ok": False, "error": "ONES 未配置凭据，无法回写评论",
+                    "handoff": content}
+        try:
+            self.ones.add_comment(did, content)
+        except Exception as e:
+            return {"ok": False, "error": f"回写 ONES 评论失败：{type(e).__name__}: {e}",
+                    "handoff": content}
+        self.proposals.update({**proposal, "handoff": {
+            "posted_at": _now(), "defect_id": did, "chars": len(content),
+            "kind": verdict.get("kind"),
+        }})
+        return {"ok": True, "posted_at": _now(), "defect_id": did,
+                "chars": len(content), "handoff": content}
+
+    def handoff_text(self, proposal_id: str) -> Dict:
+        """只生成不发送，给界面展示与人工复制用。"""
+        from .apicontract import render_handoff
+
+        proposal = self.proposals.get(proposal_id)
+        if not proposal:
+            return {"ok": False, "error": f"提案不存在: {proposal_id}"}
+        content = render_handoff(proposal.get("defect") or {},
+                                 proposal.get("agent") or {}, proposal_id)
+        return {"ok": bool(content), "handoff": content,
+                "posted_at": (proposal.get("handoff") or {}).get("posted_at") or ""}
 
     def undo(self, proposal_id: str) -> Dict:
         """Undo an approved proposal: restore the working-tree files from the

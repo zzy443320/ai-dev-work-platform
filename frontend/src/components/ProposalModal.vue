@@ -16,6 +16,7 @@ const {
   actions, statusText, statusClass, gateHtml, preflight,
   REWORK_OPTIONS, reworkOpen, reworkVerdict, reworkDetail, reworkRerun, reworkBusy,
   openRework, cancelRework, submitRework,
+  handoffOpen, handoffText, handoffBusy, previewHandoff, sendHandoff,
   close, onApprove, onForceApprove, onReject, onUndo,
 } = useProposalModal()
 
@@ -74,6 +75,23 @@ const canRework = computed(() => (detail.value || {}).status !== 'rejected')
     </div>
 
     <div class="pm-foot">
+      <div v-if="(detail && detail.agent && detail.agent.verdict && detail.agent.verdict.kind)"
+           class="handoff-bar" id="handoff-bar">
+        <el-button id="btn-handoff-preview" size="small" text @click="previewHandoff()">
+          预览后端交接说明
+        </el-button>
+        <el-button id="btn-handoff-send" size="small" type="warning" plain
+                   :loading="handoffBusy"
+                   :disabled="!!(detail.handoff && detail.handoff.posted_at)"
+                   @click="sendHandoff()">
+          {{ detail.handoff && detail.handoff.posted_at
+             ? `已回写（${String(detail.handoff.posted_at).slice(0, 16).replace('T', ' ')}）`
+             : '回写到 ONES 工单评论' }}
+        </el-button>
+        <span class="muted">只发字段名与结构，不含响应真实数据；同一提案只发一次</span>
+      </div>
+      <pre v-if="handoffOpen && handoffText" class="handoff-preview"
+           id="handoff-preview">{{ handoffText }}</pre>
       <label class="field">
         <span>决策备注（会写进提案 JSON 与知识卡片）</span>
         <el-input id="pm-note" type="textarea" :rows="2" v-model="note"
@@ -153,6 +171,26 @@ h3 {
   font-size: 14px;
   font-weight: 700;
   margin: 0;
+}
+.handoff-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+.handoff-preview {
+  margin: 0 0 10px;
+  padding: 10px 12px;
+  max-height: 240px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--code-bg);
+  color: var(--text-dim);
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 12px;
+  white-space: pre-wrap;
 }
 /* 复刻旧版 .modal-head .close 的视觉（透明、悬浮高亮），脱离 .modal-head 后单独立样式 */
 .close {

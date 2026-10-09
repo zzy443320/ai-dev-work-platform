@@ -142,6 +142,9 @@ DEFAULT_SETTINGS = {
         "sandbox_server_cwd": "",
         "sandbox_server_ready_timeout": 90,
         "sandbox_server_max_checks": 2,
+        "api_probe": "auto",       # 只读接口探测（判后端归因要有真相）；off 关闭
+        "api_probe_hosts": "",
+        "api_probe_timeout": 15,
         "precedents": 3,             # 同类历史缺陷先例注入条数（0=关）
         "precedents_chars": 6000,
         "command_allow_text": "",    # 追加放行的命令正则，一行一条
