@@ -14,12 +14,14 @@ import { computed, onMounted, ref } from 'vue'
 import { useDefect, PROP_PAGE_SIZE } from '../composables/useDefect.js'
 import { useArtifacts } from '../composables/useArtifacts.js'
 import { useFold } from '../composables/useFold.js'
+import { useRunLease } from '../composables/useRunLease.js'
 import { useRunModal } from '../composables/useRunModal.js'
 import { useModuleParams } from '../composables/useModuleParams.js'
 import { api } from '../api/client.js'
 import ParamBar from '../components/ParamBar.vue'
 import ParamDrawer from '../components/ParamDrawer.vue'
 import RunLog from '../components/RunLog.vue'
+import RunLeaseBar from '../components/RunLeaseBar.vue'
 import ArtifactsPanel from '../components/ArtifactsPanel.vue'
 import ProposalCard from '../components/ProposalCard.vue'
 import ProposalPager from '../components/ProposalPager.vue'
@@ -46,6 +48,10 @@ const {
 const { isCollapsed, toggleFold } = useFold()
 const { openRunModal } = useRunModal()
 const { close: closeParams } = useModuleParams()
+// 服务端占用（可能是外部脚本 / 别的标签页 / 刷新前留下的线程）。本地 `running`
+// 只知道自己这个标签页发起的运行，两者取并集才是「现在能不能点运行」。
+const { busy: leaseBusy, refresh: refreshLease } = useRunLease()
+const canStart = computed(() => !running.value && !leaseBusy.value)
 // 复现用例面板：修复循环在沙箱里跑红→绿的那份用例会挂成 type=repro 的产出物等人采纳。
 // useArtifacts 是单例，本页签内只此一个面板实例（App.vue 的全局面板在 defect 页签是隐藏的，
 // 因为 ARTIFACT_TAB_LABEL 不含 defect），所以必须自己带 id-suffix 防止与其它页签串 id。
@@ -63,6 +69,9 @@ const summary = computed(() => [
 async function onStart(kind) {
   closeParams('defect')
   await start(kind)
+  // 跑完（无论成败）都回读一次占用：被停止时线程还在阶段边界收尾，
+  // 界面上那条「仍在运行」必须跟着真实租约走，不能靠本地标记猜。
+  await refreshLease()
   // 跑完再拉一次复现用例：新产生的 repro 产出物要立刻出现在面板里，
   // 不能等用户切页签（App.vue 的按需加载不含 defect）
   if (kind === 'run') await loadArtifacts('repro')
@@ -121,6 +130,8 @@ function esc(s) {
 const badgeAlert = computed(() => openCount.value > 0)
 
 onMounted(async () => {
+  // 占用先读一次：进页面就该立刻知道「有人在跑」，不等 3 秒轮询的下一拍
+  refreshLease()
   await ensure()
   await loadRepoBanner()
   await loadArtifacts('repro')
@@ -146,6 +157,10 @@ onMounted(async () => {
     <!-- 主区只放过程与产物：参数摘要条 + 实时运行日志。工单范围、Limit、
          试运行/运行这些一次性输入搬进了右侧参数抽屉（见文件末尾的 ParamDrawer）。 -->
     <ParamBar name="defect" action="运行参数" :items="summary" />
+
+    <!-- 占用条：槽位被别的来源（外部脚本 / 另一个标签页）占着时，这里就是唯一
+         能看到「是谁、到哪了、能不能停」的地方——以前只能干等一句 409。 -->
+    <RunLeaseBar />
 
     <RunLog
       :lines="lines" :live="live" :has-live="hasLive" :replay="replay"
@@ -285,12 +300,13 @@ onMounted(async () => {
     <div class="info-note" id="dry-warn">说明：「试运行」只拉取 ONES 工单并 AI 定位问题（不生成提案、不进审批、不写文件），用来独立验证连通性和定位效果；<br>「运行」走完整流水线产出提案（补丁 + diff + 闸门结果 + 截图），同样不改动目标仓库，人工采纳才写工作区（不 commit、不 push）。<br>运行过程中可实时看到每个阶段的进展，以及大模型的思考与输出。</div>
 
     <template #footer>
-      <el-button type="primary" id="btn-run" :disabled="running" @click="onStart('run')">
+      <el-button type="primary" id="btn-run" :disabled="!canStart" @click="onStart('run')"
+                 :title="canStart ? '' : '槽位被占用，见上方运行占用条（可点「停止」）'">
         <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="6 3 20 12 6 21 6 3" /></svg>
         运行
       </el-button>
-      <el-button id="btn-probe" :disabled="running" @click="onStart('probe')"
-              title="只拉取 ONES 工单并 AI 定位问题，不生成提案、不进审批、不写任何文件">
+      <el-button id="btn-probe" :disabled="!canStart" @click="onStart('probe')"
+              :title="canStart ? '只拉取 ONES 工单并 AI 定位问题，不生成提案、不进审批、不写任何文件' : '槽位被占用，见上方运行占用条（可点「停止」）'">
         <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></svg>
         试运行
       </el-button>

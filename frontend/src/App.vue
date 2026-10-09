@@ -47,6 +47,7 @@ import { useLayout } from './composables/useLayout.js'
 import { useTabStrip } from './composables/useTabStrip.js'
 import { useRunStatus } from './composables/useRunStatus.js'
 import { useHealth } from './composables/useHealth.js'
+import { useRunLease } from './composables/useRunLease.js'
 import { useArtifacts } from './composables/useArtifacts.js'
 import { useDefect } from './composables/useDefect.js'
 import { useSettings } from './composables/useSettings.js'
@@ -69,6 +70,10 @@ const settingsTooltip = computed(() =>
 const { text: runStatusText, kind: runStatusKind } = useRunStatus()
 // 健康检查是模块级单例 —— 顶栏读它，三个任务页签和产出物面板写它
 const { health, healthError, loadHealth } = useHealth()
+// 流水线占用租约：全局轮询一份（3 秒一拍，纯内存读）。顶栏药丸与缺陷页签的
+// 占用条共用它，所以「别人（外部脚本 / 另一个标签页）占着槽位」在哪儿都看得见。
+const { busy: leaseBusy, shortLine: leaseShortLine,
+        startLeasePoll, stopLeasePoll } = useRunLease()
 const { openArtifact, loadArtifacts } = useArtifacts()
 // 缺陷页签的数据：切到该页签时要重拉（流水线刚产出的提案得立刻可见）。
 // stageStates 由这里传给 #stage-flow —— 步骤条与真实结果联动。
@@ -181,10 +186,14 @@ onMounted(() => {
   loadHealth()
   loadSettings()
   initChangelog()
+  startLeasePoll()
   window.addEventListener('keydown', onEsc)
 })
 
-onBeforeUnmount(() => window.removeEventListener('keydown', onEsc))
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onEsc)
+  stopLeasePoll()
+})
 
 // 页签切换后按需拉数据（旧版是在 switchTab 里直接调 loadArtifacts / ensure 等）。
 // 产出物面板按当前页签的类型拉列表；缺陷修复页签旧版会直接 return，不动列表。
@@ -211,12 +220,16 @@ function expandRunLog(payload) {
 
 // 顶栏状态药丸：三态合流 —— 健康检查的连接失败 > 流水线运行态 > 就绪。
 // 旧版是各处直接写 $('#status')，谁后写谁生效；这里保留同样的优先级语义。
+// 「槽位被占」排在本地文案之前：本地那句可能是上一次运行的结果（「产出 3 个提案」），
+// 而槽位此刻确实被别人占着——说 stale 的成功文案会让人以为可以马上再跑一次。
 const statusText = computed(() => {
   if (healthError.value) return '连接失败'
+  if (leaseBusy.value) return leaseShortLine.value
   return runStatusText.value || '就绪'
 })
 const statusClass = computed(() => {
   if (healthError.value) return 'error'
+  if (leaseBusy.value) return 'running'
   return runStatusKind.value
 })
 /** 状态 → el-tag 的语义色 */

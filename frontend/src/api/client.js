@@ -98,6 +98,10 @@ export const api = {
   run: (payload) => http.post('/api/run', payload),
   probe: (payload) => http.post('/api/probe', payload),
 
+  // 流水线占用租约：谁在跑 / 跑到哪 / 停了没（纯内存读，可安全轮询）
+  runStatus: () => http.get('/api/run/status'),
+  runCancel: (payload) => http.post('/api/run/cancel', payload),
+
   // 缺陷修复提案
   proposals: () => http.get('/api/proposals'),
   proposal: (id) => http.get(`/api/proposals/${enc(id)}`),
