@@ -143,6 +143,15 @@ pytest 只当收编器：`tests/suite_pytest.py` 用子进程跑筛过的安全�
 .venv/Scripts/python.exe -m pytest -k origin       # 只跑同源闸门
 ```
 
+推送前扫一遍载荷（本仓库有公开远端，而它日常处理内网工单与私有仓库路径）：
+
+```bash
+.venv/Scripts/python.exe tools/prepush_scan.py            # 扫 origin/main..HEAD 的新增行
+.venv/Scripts/python.exe tools/prepush_scan.py --worktree # 扫未提交改动
+```
+
+命中即非零退出（可直接挂 pre-push 钩子）。查的是密钥、`C:Users<真实用户名>`、含中文的绝对路径、内网 IP、32 位 hex 指纹与真实工单号形状。**这是提示不是判决**：合成串（`EXAMPLEid0000001`）也会命中形状，要看着去重清单人工确认。脱敏导出管的是知识卡片，而提交说明、CHANGELOG、代码注释里的散文没有那道流程 —— 所以要有这个机械的最后一道。
+
 想手工跑单个用例也完全可以（不依赖 pytest）：
 
 ```bash

@@ -55,3 +55,6 @@ _rewired_*
 qwenwork/
 .DS_Store
 Thumbs.db
+
+# 用例运行期的改写副本（check_vue_all 的 LEGACY 组），不是源码
+/.scratch/

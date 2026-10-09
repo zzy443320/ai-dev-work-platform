@@ -71,6 +71,10 @@ SELF_CONTAINED = [
 ]
 
 report = []
+# 必须待在仓库根下的一层子目录里：这些脚本用 `Path(__file__).resolve().parents[1]`
+# 反推仓库根，扔进系统临时目录它们就找不到 scripts/ 与 tests/ 夹具了。
+SCRATCH = ROOT / ".scratch"
+SCRATCH.mkdir(parents=True, exist_ok=True)
 
 with serve(kb="fixture") as srv:
     for name in LEGACY:
@@ -79,16 +83,18 @@ with serve(kb="fixture") as srv:
             report.append([name, "missing", ""])
             continue
         code = src.read_text(encoding="utf-8").replace("http://127.0.0.1:8765", srv.base)
-        # 文件名带 _tmp_ 前缀：.gitignore 已覆盖，且每次运行整体覆盖重写，
-        # 用例结束后不做删除（safe-delete 钩子会拦 unlink，逐个弹确认太吵）。
-        dst = TESTS / ("_tmp_rewired_" + name)
+        # 改写副本写到系统临时目录，不再落在 tests/ 里。以前落在 tests/ 靠 `_tmp_*`
+        # 的 gitignore 规则兜着，代价是仓库目录里长期躺着五六个"看起来像源码"的
+        # 生成物（还被人手工留过一份没前缀的副本，分不清哪个是在用的）。
+        dst = SCRATCH / name
         dst.write_text(code, encoding="utf-8")
         try:
             proc = subprocess.run(
                 [sys.executable, str(dst)], cwd=str(ROOT),
                 capture_output=True, text=True, encoding="utf-8",
                 errors="replace", timeout=300,
-                env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+                env={**os.environ, "PYTHONIOENCODING": "utf-8",
+                     "PYTHONPATH": os.pathsep.join([str(ROOT), str(TESTS)])},
             )
         except subprocess.TimeoutExpired:
             report.append([name, "TIMEOUT", ""])

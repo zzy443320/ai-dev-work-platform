@@ -140,7 +140,7 @@ def t_probe():
               str(r)[:200])
         check("查询参数只留名字不留值", r.get("query_param_names") == ["pageSize"]
               and "pageSize=20" not in r["url"], str(r.get("url")))
-        off = AC.api_probe("http://10.9.9.9/api/x", allowed_hosts=["127.0.0.1"])
+        off = AC.api_probe("http://192.0.2.10/api/x", allowed_hosts=["127.0.0.1"])
         check("白名单外的主机直接拒", off["ok"] is False and "不在允许列表" in off["error"],
               str(off)[:120])
         bad = AC.api_probe("ftp://127.0.0.1/x", allowed_hosts=["127.0.0.1"])
