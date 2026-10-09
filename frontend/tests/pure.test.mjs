@@ -13,8 +13,8 @@
 // 所以把这些纯函数请出 composable（utils/stages.js），在这里直调断言。
 import assert from 'node:assert/strict'
 import {
-  LIVE_STAGE_IDX, STAGE_STATES, stageAdvance, stagesFromProbeResults,
-  stagesFromRunResults, stagesIdle, stagesRunning,
+  LEASE_STAGE_IDX, LIVE_STAGE_IDX, STAGE_STATES, stageAdvance, stagesFromLease,
+  stagesFromProbeResults, stagesFromRunResults, stagesIdle, stagesRunning,
 } from '../src/utils/stages.js'
 import { escapeHtml, renderMarkdown } from '../src/utils/format.js'
 
@@ -42,6 +42,44 @@ console.log('== 步骤条推导 ==')
 check('运行中只有第 1 步 active', () => {
   assert.deepEqual(stagesRunning(), ['active', 'idle', 'idle', 'idle', 'idle'])
   assert.deepEqual(stagesIdle(), ['idle', 'idle', 'idle', 'idle', 'idle'])
+})
+
+// 外部脚本 / 别的标签页发起的运行，步骤条靠服务端占用租约推导（不是 SSE 事件）
+check('租约快照：当前步 active，之前的 done，之后的 idle', () => {
+  assert.deepEqual(stagesFromLease({ running: true, kind: 'run', stage: 'fetch' }),
+    ['active', 'idle', 'idle', 'idle', 'idle'])
+  assert.deepEqual(stagesFromLease({ running: true, kind: 'run', stage: 'gate' }),
+    ['done', 'done', 'done', 'active', 'idle'])
+  assert.deepEqual(stagesFromLease({ running: true, kind: 'run', stage: 'kb' }),
+    ['done', 'done', 'done', 'done', 'active'])
+})
+
+check('租约快照：取证环节（verify/repro/agent）要归位，否则步骤条会退回「定位」', () => {
+  // 修复循环那 7 轮是整条流水线最久的一段，名儿没映射上就会看起来"卡在定位"
+  assert.equal(stagesFromLease({ running: true, kind: 'run', stage: 'agent' })[2], 'active')
+  assert.equal(stagesFromLease({ running: true, kind: 'run', stage: 'repro' })[2], 'active')
+  assert.equal(stagesFromLease({ running: true, kind: 'run', stage: 'verify' })[1], 'active')
+  assert.deepEqual(Object.keys(LEASE_STAGE_IDX).sort(),
+    ['agent', 'fetch', 'gate', 'kb', 'locate', 'patch', 'proposal', 'repro', 'verify'])
+})
+
+check('租约快照：没映射上的新阶段名不瞎猜，按已取到工单往下推一格', () => {
+  assert.equal(stagesFromLease({ running: true, kind: 'run', stage: 'brand_new' })[0], 'active')
+  assert.equal(stagesFromLease(
+    { running: true, kind: 'run', stage: 'brand_new', index: 2 })[1], 'active')
+})
+
+check('租约快照：试运行后三步恒 off，且不会越过第 2 步', () => {
+  assert.deepEqual(stagesFromLease({ running: true, kind: 'probe', stage: 'locate' }),
+    ['done', 'active', 'off', 'off', 'off'])
+  // 试运行里万一冒出 gate/kb 这类名，也只能停在第 2 步
+  assert.equal(stagesFromLease({ running: true, kind: 'probe', stage: 'kb' })[1], 'active')
+  assert.equal(stagesFromLease({ running: true, kind: 'probe', stage: 'kb' })[3], 'off')
+})
+
+check('租约快照：空闲返回 null（由调用方决定退回哪套，不假装五步全绿）', () => {
+  assert.equal(stagesFromLease(null), null)
+  assert.equal(stagesFromLease({ running: false }), null)
 })
 
 check('全部成功 → 5 步 done', () => {

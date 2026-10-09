@@ -4,10 +4,11 @@
 // 这个页签有四块彼此独立的数据（流水线日志 / 提案 / 分类统计 / 知识库），
 // 旧版是四个全局函数各拉各的、跑完流水线再一起刷新。这里保留同样的边界：
 // 每块一个 loader，`refreshAfterRun()` 负责「跑完该刷哪几块」。
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { api } from '../api/client.js'
 import { sseConsume } from './useSse.js'
 import { useToast } from './useToast.js'
+import { useRunLease } from './useRunLease.js'
 import { setRunStatus } from './useRunStatus.js'
 import { STATUS_ORDER, isOpenStatus } from '../utils/labels.js'
 
@@ -15,10 +16,11 @@ import { STATUS_ORDER, isOpenStatus } from '../utils/labels.js'
 // 这里既 import 进来自己用，又再 export 一次：既有 import 路径与界面用例的取法都不变。
 // （写成 `export {…} from` 不会产生本地绑定，本模块内部就调不到那几个函数了。）
 import {
-  stageAdvance, stagesFromProbeResults, stagesFromRunResults, stagesIdle, stagesRunning,
+  stageAdvance, stagesFromLease, stagesFromProbeResults, stagesFromRunResults,
+  stagesIdle, stagesRunning,
 } from '../utils/stages.js'
 export {
-  STAGE_STATES, LIVE_STAGE_IDX, stagesIdle, stagesRunning,
+  STAGE_STATES, LIVE_STAGE_IDX, stagesIdle, stagesRunning, stagesFromLease,
   stagesFromRunResults, stagesFromProbeResults,
 } from '../utils/stages.js'
 
@@ -214,6 +216,29 @@ function _createDefectState() {
     await Promise.all([loadProposals(), loadStats(), loadKb()])
     return { ok: !err, error: err }
   }
+
+  // ── 别人发起的运行也要让步骤条动起来 ───────────────────────────────
+  // stageStates 原本只由**本标签页**的 start() 推进，所以外部脚本或另一个标签页
+  // 跑批量时，占用条显示得明明白白，步骤条却整排静止——看起来像"没在干活"。
+  // 租约每 3 秒读一次，够把呼吸灯与「第几步」续上；但本标签页自己在跑时**绝不抢**：
+  // SSE 的事件流比快照细得多（每步 start/done 都有），用快照去覆盖它是降级。
+  const { run: leaseRun } = useRunLease()
+  let leaseDriving = false
+  watch(leaseRun, (lease) => {
+    if (running.value) { leaseDriving = false; return }
+    const next = stagesFromLease(lease)
+    if (next) {
+      stageStates.value = next
+      leaseDriving = true
+      return
+    }
+    if (!leaseDriving) return
+    // 外部运行结束：我们手里没有它的结果数据，退回空态而不是假装「五步全绿」。
+    leaseDriving = false
+    stageStates.value = stagesIdle()
+    // 顺手把三份列表刷一次——外部运行刚落地的提案不该等人手动点「刷新」
+    Promise.all([loadProposals(), loadStats(), loadKb()])
+  })
 
   // ---------------------------------------------------------------- 提案
   const proposals = ref([])

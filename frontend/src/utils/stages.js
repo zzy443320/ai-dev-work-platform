@@ -75,3 +75,45 @@ export function stageAdvance(states, stageName, status) {
   }
   return next
 }
+
+/**
+ * 占用租约里的 stage 名 → 步骤条下标。
+ *
+ * 与 LIVE_STAGE_IDX 分开维护是必要的：那张表服务的是「事件推进」，一条没映射的名
+ * （verify / repro / agent）忽略掉就行，前后事件会自己把格子填满。这张表服务的是
+ * 「快照」——租约每 3 秒读一次，中间那些取证环节的名如果不归位，外部脚本跑到修复
+ * 循环那 7 轮时步骤条就会退回「定位」，看起来像卡住了。
+ */
+export const LEASE_STAGE_IDX = {
+  fetch: 0,
+  locate: 1,
+  verify: 1,        // 修复前的页面现场，仍是「定位」这一步的取证
+  repro: 2,         // 复现用例与 agentic 循环产出的都是「生成提案」这一步的活
+  agent: 2,
+  patch: 2,
+  proposal: 2,
+  gate: 3,
+  kb: 4,
+}
+
+/**
+ * 由服务端占用租约推导步骤条（别人发起的运行也要看得见进度）。
+ * @param {{running:boolean, kind?:string, stage?:string, index?:number}|null} lease
+ * @returns {string[]|null} 5 格状态；空闲时返回 null，由调用方决定退回哪一套
+ */
+export function stagesFromLease(lease) {
+  if (!lease || !lease.running) return null
+  const probe = lease.kind === 'probe'   // 试运行只走前两步，后三步不适用
+  const mapped = lease.stage ? LEASE_STAGE_IDX[lease.stage] : undefined
+  // 没映射上的阶段名（将来新增的取证环节）不瞎猜：按「已经取到工单」往下推一格，
+  // 呼吸灯落在能确认的那一步上。
+  let cur = mapped
+  if (cur === undefined) cur = (lease.index > 0) ? 1 : 0
+  if (probe && cur > 1) cur = 1
+  const out = ['idle', 'idle', 'idle', 'idle', 'idle']
+  for (let i = 0; i < 5; i++) {
+    if (probe && i > 1) { out[i] = 'off'; continue }
+    out[i] = i < cur ? 'done' : (i === cur ? 'active' : 'idle')
+  }
+  return out
+}
