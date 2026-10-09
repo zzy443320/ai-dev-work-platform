@@ -1,0 +1,204 @@
+/* ===========================================================================
+   primitives.css —— 全局基元打磨（tier 4）
+   九个页签共用的东西一次换到同一套语言：实底 + 发丝线 + 平；悬停只亮描边。
+   不做「卡片浮起 + 大投影」—— 密集列表里 translateY 会让整排内容抖，
+   而且那是通用 AI 面板的脸。
+   加载顺序：style.css → element-plus → theme.css → desk.css → **本文件**。
+   =========================================================================== */
+
+/* ---- 卡片家族 ---- */
+.usage-card, .kb-card, .pcard, .ext-card, .team-agent, .team-item, .stat-card {
+  background: var(--surf);
+  border: 1px solid var(--line);
+  border-radius: var(--r-m);
+  box-shadow: none;
+  transition: border-color .15s, background-color .15s;
+}
+.usage-card:hover, .kb-card:hover, .pcard:hover, .ext-card:hover,
+.team-agent:hover, .team-item:hover {
+  border-color: var(--line2);
+  background: var(--surf2);
+  transform: none;
+  box-shadow: none;
+}
+
+/* 首张汇总卡（区间内）：原来靠 180° 主色渐变铺底。改版后强调色只许出现在
+   描边与一条 2px 顶规上 —— 数字本身已经够重，底色再抢就成了噪音。 */
+.usage-card { padding: 14px 15px 13px }
+.usage-card.primary {
+  border-color: var(--ac-ln);
+  background: var(--surf);
+  box-shadow: inset 0 2px 0 var(--ac);
+}
+.usage-card-label { font-size: 10.5px; color: var(--txt4); letter-spacing: .09em; font-weight: 600 }
+.usage-card-value {
+  margin-top: 6px; font-size: 27px; font-weight: 600; letter-spacing: -.025em;
+  line-height: 1.1; color: var(--txt);
+}
+.usage-card-value .unit { font-size: 10.5px; font-weight: 500; color: var(--txt4); letter-spacing: .04em }
+.usage-card-sub { margin-top: 5px; font-size: 11px; color: var(--txt3); line-height: 1.6 }
+.usage-card-foot {
+  margin-top: 10px; padding-top: 9px; border-top: 1px solid var(--line3);
+  font-family: var(--mono); font-size: 10.5px; color: var(--txt3); gap: 9px;
+}
+.usage-card-foot .muted { font-size: 10px; color: var(--txt4) }
+
+/* 知识库卡左侧那条状态竖线：只在「复发」时有意义，常态压到几乎不可见 */
+.kb-card::before { opacity: .35 }
+.kb-card:hover::before { opacity: .8 }
+.kb-card.pattern.hot { border-left-color: var(--warn) }
+
+/* 提案卡：状态色走 2px 左规。3px 粗边在密行里比标题还显眼 */
+.pcard { border-left: 2px solid var(--line2) }
+.pcard:hover { transform: none }
+.pcard-top { gap: 6px }
+.pcard-title { font-size: 12.5px; font-weight: 600; letter-spacing: -.005em }
+.pcard-meta { gap: 5px 9px; font-size: 10.5px; color: var(--txt4) }
+.pcard-root { font-size: 11.5px; color: var(--txt3) }
+.dstat { font-weight: 700 }
+.cnt { border-radius: 4px; font-size: 10px; padding: 1px 5px; font-family: var(--mono) }
+.sha { font-family: var(--mono); color: var(--txt4) }
+
+/* ---- 分段控件：凹槽 + 浮起小胶囊，与页签头 / 主题切换同一套语言。
+   原来 .seg-btn.active 是实心主色 + 白字，一排三个时比内容还抢眼。 ---- */
+.seg { background: var(--surf3); border-color: var(--line); border-radius: 8px; padding: 2px; gap: 2px }
+.seg-btn { border-radius: 6px; color: var(--txt3); font-size: 12px; font-weight: 500 }
+.seg-btn:hover { color: var(--txt) }
+.seg-btn.active {
+  background: var(--surf); color: var(--txt); font-weight: 600;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .18);
+}
+
+/* ---- 徽标家族：统一 5px 圆角、10.5px 字、闸门态走等宽 ---- */
+.count-badge, .gate-badge, .st-pending, .st-gate_failed, .st-invalid,
+.st-apply_failed, .st-applied, .st-rejected, .usage-badge {
+  border-radius: 5px; font-size: 10.5px; font-weight: 600; letter-spacing: .01em;
+}
+.count-badge.alert { background: var(--ac); color: #fff }
+.gate-badge { font-family: var(--mono) }
+
+/* ---- 表格：发丝线 + 小字距表头 + 右对齐等宽数字 ---- */
+.usage-table th, .modal-body th {
+  font-size: 10px; font-weight: 500; letter-spacing: .09em; text-transform: uppercase;
+  color: var(--txt4); background: transparent;
+}
+.usage-table td, .modal-body td { border-color: var(--line3); color: var(--txt2) }
+.usage-table tbody tr:hover td, .modal-body tr:hover td { background: var(--panel) }
+.usage-table .num, .usage-table td.n, .modal-body td.num {
+  font-family: var(--mono); font-variant-numeric: tabular-nums; text-align: right;
+}
+.usage-table-wrap { border: 1px solid var(--line); border-radius: var(--r-m); overflow: hidden }
+/* 斑马纹去掉：一屏十几行时「隔行换色」会把列对齐的视线打断，发丝线足够 */
+.modal-body tr:nth-child(even) td { background: transparent }
+
+/* ---- 弹窗 ---- */
+.modal-box {
+  border-radius: var(--r-l); border: 1px solid var(--line2);
+  box-shadow: var(--shadow-pop);
+}
+.modal-head { border-bottom-color: var(--line) }
+.modal-head h3 { font-size: 14px; font-weight: 600; letter-spacing: -.01em }
+.modal-head .close { color: var(--txt4); border-radius: 6px }
+.modal-head .close:hover { background: var(--surf3); color: var(--txt) }
+.modal-meta { color: var(--txt3); font-size: 11.5px }
+.modal-body { color: var(--txt2) }
+.modal-body h2 { font-size: 13.5px; font-weight: 600; color: var(--txt) }
+.modal-body p, .modal-body li { color: var(--txt2) }
+.pm-sec + .pm-sec { border-top-color: var(--line3) }
+
+/* ---- 空态 / 说明块 / 横幅：安静下来 ---- */
+.empty {
+  color: var(--txt4); border: 1px dashed var(--line);
+  border-radius: var(--r-m); background: transparent;
+}
+.info-note {
+  border-radius: var(--r-s); border-left: 2px solid var(--ac); background: var(--ac-bg);
+  color: var(--txt2); font-size: 11.5px; line-height: 1.75;
+}
+.info-note b, .info-note strong { color: var(--txt); font-weight: 600 }
+.block-banner {
+  border-radius: var(--r-s); border-left: 2px solid var(--warn);
+  background: var(--wn-bg); color: var(--txt2); font-size: 12px;
+}
+.block-banner b { color: var(--wn) }
+.gate-hint, .mod-drawer-hint, .head-note { color: var(--txt4); font-size: 11.5px }
+
+/* ---- 参数摘要条与模块抽屉 ---- */
+.param-bar { background: var(--surf2); border-color: var(--line); border-radius: var(--r-s) }
+.param-bar-label { color: var(--txt3); font-weight: 600; font-size: 11.5px }
+.mod-drawer { background: var(--surf); border-left-color: var(--line) }
+.mod-drawer-head { border-bottom-color: var(--line) }
+.mod-drawer-title { font-size: 13.5px; font-weight: 600; letter-spacing: -.01em }
+.mod-drawer-title svg { color: var(--txt3) }
+.mod-drawer-foot { border-top-color: var(--line); background: var(--surf2) }
+.mod-drawer-close { color: var(--txt4); border-color: var(--line); border-radius: 6px }
+.mod-drawer-close:hover { background: var(--surf3); color: var(--txt); border-color: var(--line2) }
+
+/* ---- 表单控件 ---- */
+.field > span, .field-inline > span, .filter-wrap > span { color: var(--txt3); font-size: 11.5px }
+.field input:not(.el-input__inner):not(.el-textarea__inner):not(.el-select__input),
+.field select:not(.el-select__input),
+.field-inline input:not(.el-input__inner):not(.el-select__input),
+.filter-wrap select {
+  border-radius: var(--r-s); background: var(--surf2);
+  border: 1px solid var(--input-border); color: var(--txt);
+}
+.field input:focus, .field select:focus,
+.field-inline input:focus, .filter-wrap select:focus {
+  border-color: var(--ac); box-shadow: 0 0 0 3px var(--ac-bg);
+}
+.switch .track { background: var(--surf3); border: 1px solid var(--input-border) }
+.switch input:checked + .track { background: var(--ac); border-color: var(--ac) }
+.switch-label { color: var(--txt2) }
+.switch input:checked ~ .switch-label { color: var(--txt) }
+
+/* ---- 日志 / 终端 / 流式行 ---- */
+.log, #run-log, #team-log {
+  background: var(--term); border-color: var(--line); border-radius: var(--r-m);
+  font-family: var(--mono); font-size: 11.5px; line-height: 1.85; color: #93a0b8;
+}
+.live-line .t, .log .t { color: #4d5a70 }
+.ai-block-label { font-size: 10px; letter-spacing: .1em; color: var(--txt4) }
+.ai-stream { border-color: var(--line) }
+
+/* ---- 问答气泡 ---- */
+.chat-msg .chat-body, .chat-bubble {
+  border-radius: 12px; border: 1px solid var(--line);
+  background: var(--surf); box-shadow: none;
+}
+.chat-msg.me .chat-body, .chat-bubble.me { background: var(--ac-bg); border-color: var(--ac-ln) }
+.chat-chip {
+  border-radius: 999px; border-color: var(--line);
+  background: var(--surf2); color: var(--txt2); font-size: 11.5px;
+}
+.chat-chip.active { background: var(--ac-bg); border-color: var(--ac-ln); color: var(--ac) }
+.chat-input { border-color: var(--line); border-radius: var(--r-m); background: var(--surf) }
+
+/* ---- 长任务 ---- */
+.team-agent .role { font-size: 12px; font-weight: 600 }
+.team-item { border-left: 2px solid var(--line2) }
+.team-item.done { border-left-color: var(--success) }
+
+/* ---- 扩展能力 ---- */
+.ext-card .ext-name { font-size: 12.5px; font-weight: 600 }
+.ext-card.ext-off { opacity: .5 }
+.mcp-test-out {
+  border-radius: var(--r-s); background: var(--term); border: 1px solid var(--line);
+  font-family: var(--mono); font-size: 11.5px; color: #93a0b8;
+}
+
+/* ---- 配置模块 ---- */
+.config-grid .panel { background: var(--surf) }
+.gate-preview, .ai-test-out {
+  border-radius: var(--r-s); background: var(--term); border: 1px solid var(--line);
+  font-family: var(--mono); font-size: 11.5px;
+}
+
+/* ---- 更新日志 ---- */
+.ch-item { border-color: var(--line3) }
+.ch-val h1, .ch-val h2 { font-weight: 600; letter-spacing: -.01em }
+.ch-chip {
+  border-radius: 999px; border-color: var(--line);
+  background: var(--surf2); color: var(--txt2);
+}
+.ch-chip.active { background: var(--ac-bg); border-color: var(--ac-ln); color: var(--ac) }

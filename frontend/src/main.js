@@ -14,6 +14,9 @@ import './styles/theme.css'
 // 三栏工作台外壳层（2026-10-09 高级感改版）。必须在 theme.css 之后：
 // 它要覆盖的是 style.css / theme.css 里的外壳与控件观感，靠「后加载者生效」赢。
 import './styles/desk.css'
+// 全局基元（卡片 / 表格 / 弹窗 / 徽标 / 表单 / 日志 / 气泡）：与 desk.css 同一轮改版，
+// 单独一个文件是因为它覆盖的是 style.css 里那几十个页签共用的类，和外壳互不相干。
+import './styles/primitives.css'
 
 const app = createApp(App)
 app.mount('#app')
