@@ -24,7 +24,6 @@ import { api } from '../api/client.js'
 import ParamBar from '../components/ParamBar.vue'
 import ParamDrawer from '../components/ParamDrawer.vue'
 import RunLog from '../components/RunLog.vue'
-import BattleView from '../components/BattleView.vue'
 import RunLeaseBar from '../components/RunLeaseBar.vue'
 import ArtifactsPanel from '../components/ArtifactsPanel.vue'
 import ProposalCard from '../components/ProposalCard.vue'
@@ -212,10 +211,9 @@ onMounted(async () => {
         </button>
         <span class="cb-hint muted">{{ isCollapsed('run-console')
           ? '已收起 · 流水线仍在推进'
-          : (running ? '战场视图 · 跑完自动退回日志' : '实时阶段进展与大模型输出') }}</span>
+          : '实时阶段进展与大模型输出' }}</span>
       </div>
-      <BattleView v-if="running" />
-      <RunLog v-else
+      <RunLog
         :lines="lines" :live="live" :has-live="hasLive" :replay="replay"
         :result-html="resultHtml" :running="running" :title="logTitle"
         :on-open="openRunModal"

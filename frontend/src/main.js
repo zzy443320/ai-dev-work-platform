@@ -17,6 +17,8 @@ import './styles/desk.css'
 // 全局基元（卡片 / 表格 / 弹窗 / 徽标 / 表单 / 日志 / 气泡）：与 desk.css 同一轮改版，
 // 单独一个文件是因为它覆盖的是 style.css 里那几十个页签共用的类，和外壳互不相干。
 import './styles/primitives.css'
+// Boss 战场层（运行中整屏接管）。放最后：它要把上面几层的观感整个盖掉。
+import './styles/battle.css'
 
 const app = createApp(App)
 app.mount('#app')

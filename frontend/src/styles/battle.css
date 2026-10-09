@@ -1,0 +1,227 @@
+/* ===========================================================================
+   battle.css —— Boss 战场视图（tier 5 重做）：运行中**整屏接管**。
+   第一版做成了日志区里的一条窄带，四组信息（Boss 名牌 / 阶段条 / 我方单位 / 播报）
+   谁也挤不显眼，等于给日志换了个配色；整屏才有概念稿里那个战场骨架。
+   底色比 --term 再深一档，与页面其它部分明确切开 —— 它不是「一个面板」，是「另一个模式」。
+   挂在 App.vue 末尾，fixed 覆盖整屏；只在 running 为真时存在。
+   =========================================================================== */
+.battle-stage {
+  position: fixed; inset: 0; z-index: 66;
+  display: flex; flex-direction: column;
+  background:
+    radial-gradient(1100px 560px at 50% -10%, rgba(229,105,122,.10), transparent 62%),
+    radial-gradient(900px 480px at 50% 108%, rgba(124,140,255,.09), transparent 60%),
+    #05070c;
+  color: #b9c6dc; font-size: 12px; overflow: hidden;
+}
+/* 地面：一条透视网格 + 地平线亮带，给立绘一个「站着的地方」 */
+.battle-stage::before {
+  content: ''; position: absolute; left: -30%; right: -30%; bottom: 0; height: 34%;
+  pointer-events: none; opacity: .5;
+  background:
+    repeating-linear-gradient(90deg, rgba(124,140,255,.16) 0 1px, transparent 1px 74px),
+    repeating-linear-gradient(0deg, rgba(124,140,255,.10) 0 1px, transparent 1px 44px);
+  transform: perspective(520px) rotateX(64deg); transform-origin: bottom;
+}
+.battle-stage::after {
+  content: ''; position: absolute; left: 0; right: 0; bottom: 34%; height: 1px; pointer-events: none;
+  background: linear-gradient(90deg, transparent, rgba(124,140,255,.55), transparent);
+  box-shadow: 0 0 22px 3px rgba(124,140,255,.28);
+}
+.bs-enter-active, .bs-leave-active { transition: opacity .22s ease, transform .22s cubic-bezier(.22,.8,.3,1) }
+.bs-enter-from, .bs-leave-to { opacity: 0; transform: translateY(10px) }
+
+/* ---- 顶：Boss 名牌 + 血条 + 五段阶段条 ---- */
+.bs-bossbar {
+  position: relative; z-index: 2; flex: none; display: flex; gap: 22px; align-items: flex-start;
+  padding: 14px 20px 12px; border-bottom: 1px solid rgba(255,255,255,.08);
+  background: linear-gradient(180deg, rgba(5,7,12,.96), rgba(5,7,12,.6));
+}
+.bs-bb-l { flex: 1 1 520px; min-width: 0 }
+.bs-bname { display: flex; align-items: baseline; gap: 11px; flex-wrap: wrap }
+.bs-lv {
+  font-size: 9.5px; font-weight: 700; letter-spacing: .16em; color: #ff8497; padding: 3px 7px;
+  border-radius: 4px; background: rgba(229,105,122,.12); box-shadow: inset 0 0 0 1px rgba(229,105,122,.3);
+}
+.bs-bname h2 {
+  margin: 0; font-size: 17px; font-weight: 700; letter-spacing: -.015em; color: #eef2f9; line-height: 1.35;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%;
+}
+.bs-sub { font-size: 10.5px; color: #6f7f98 }
+.bs-hp {
+  position: relative; height: 17px; margin-top: 9px; border-radius: 4px; overflow: hidden;
+  background: #0a0d14; box-shadow: inset 0 0 0 1px rgba(255,255,255,.1);
+}
+.bs-hp i { position: absolute; inset: 0 auto 0 0; border-radius: 4px; transition: width .5s cubic-bezier(.22,.8,.3,1) }
+.bs-hp.ok i { background: linear-gradient(180deg, #ff8497, #e5697a 55%, #9b0f28) }
+.bs-hp.wn i { background: linear-gradient(180deg, #f2ce7c, #dfa63f 55%, #8a5a10) }
+.bs-hp.er i { background: linear-gradient(180deg, #f08a9a, #c0384a 55%, #6d0d1c) }
+.bs-hp em {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  font-style: normal; font-size: 9.5px; font-weight: 700; letter-spacing: .07em;
+  color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,.85);
+}
+.bs-bb-r { flex: none; display: flex; flex-direction: column; gap: 8px; align-items: flex-end }
+.bs-pips { display: flex; gap: 16px }
+.bs-pip { display: flex; flex-direction: column; align-items: center; gap: 5px; position: relative }
+.bs-pip:not(:last-child)::after {
+  content: ''; position: absolute; right: -16px; top: 12px; width: 16px; height: 1px; background: rgba(255,255,255,.14);
+}
+.bs-pip.done:not(:last-child)::after { background: rgba(67,201,139,.5) }
+/* 菱形节点：rotate 容器 + 反向 rotate 内容，比 clip-path 更好放对勾 */
+.bs-pd {
+  width: 25px; height: 25px; display: grid; place-items: center; font: 700 10.5px/1 var(--mono);
+  background: #0d1219; color: #5f6f88; border: 1px solid rgba(255,255,255,.16); transform: rotate(45deg);
+}
+.bs-pd span { transform: rotate(-45deg) }
+.bs-pip.done .bs-pd { color: #43c98b; border-color: #43c98b; background: rgba(67,201,139,.14) }
+.bs-pip.active .bs-pd {
+  color: #05070c; background: #dfa63f; border-color: #dfa63f;
+  box-shadow: 0 0 18px rgba(223,166,63,.75); animation: bs-throb 1.5s ease-in-out infinite;
+}
+.bs-pip.fail .bs-pd { color: #e5697a; border-color: #e5697a; background: rgba(229,105,122,.14) }
+.bs-pip.warn .bs-pd { color: #dfa63f; border-color: #dfa63f }
+@keyframes bs-throb { 50% { box-shadow: 0 0 30px rgba(223,166,63,1) } }
+.bs-pip u { text-decoration: none; font-size: 10px; color: #5f6f88; letter-spacing: .04em }
+.bs-pip.done u, .bs-pip.active u { color: #b9c6dc }
+.bs-clock { font-size: 10.5px; color: #6f7f98 }
+
+/* ---- 中段三栏 ---- */
+.bs-mid { position: relative; z-index: 2; flex: 1; min-height: 0; display: flex; gap: 16px; padding: 14px 20px }
+.bs-ucap {
+  font-size: 9.5px; font-weight: 700; letter-spacing: .16em; color: #5f6f88;
+  text-transform: uppercase; margin-bottom: 9px; display: flex; align-items: center; gap: 8px;
+}
+.bs-live {
+  color: #43c98b; font-size: 9px; padding: 2px 6px; border-radius: 3px;
+  background: rgba(67,201,139,.12); box-shadow: inset 0 0 0 1px rgba(67,201,139,.3);
+  animation: bs-blink 1.6s ease-in-out infinite;
+}
+.bs-live.off { opacity: .3; animation: none }
+@keyframes bs-blink { 50% { opacity: .45 } }
+
+.bs-party { flex: none; width: 258px; overflow: hidden; display: flex; flex-direction: column; gap: 9px }
+.bs-uc {
+  padding: 10px 11px; border-radius: 8px; background: rgba(13,18,25,.86);
+  border: 1px solid rgba(255,255,255,.08); border-left: 2px solid rgba(124,140,255,.55);
+}
+.bs-uc.off { border-left-color: rgba(255,255,255,.12); opacity: .5 }
+.bs-uc.ok { border-left-color: rgba(67,201,139,.6) }
+.bs-uc.cast { border-left-color: #dfa63f }
+.bs-uc-h { display: flex; align-items: center; gap: 9px }
+.bs-av {
+  width: 28px; height: 28px; flex: none; display: grid; place-items: center; font-size: 15px;
+  background: #05070c; border: 1px solid rgba(255,255,255,.1);
+  clip-path: polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%);
+}
+.bs-uc-n { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px }
+.bs-uc-n b { font-size: 12px; font-weight: 600; color: #dfe6f2 }
+.bs-uc-n i {
+  font-style: normal; font-size: 9.5px; color: #5f6f88; font-family: var(--mono);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.bs-uc-s { font: 700 9.5px/1 var(--mono); color: #7f8fa8; flex: none }
+.bs-uc.cast .bs-uc-s { color: #dfa63f }
+.bs-uc.ok .bs-uc-s { color: #43c98b }
+/* 施法条：不确定进度 —— 流式输出没有「完成百分比」可读，画个假进度就是骗人 */
+.bs-cast {
+  position: relative; height: 12px; margin-top: 8px; border-radius: 3px; overflow: hidden;
+  background: #05070c; box-shadow: inset 0 0 0 1px rgba(223,166,63,.3);
+}
+.bs-cast i {
+  position: absolute; inset: 0 auto 0 0; width: 40%;
+  background: repeating-linear-gradient(115deg, rgba(223,166,63,.85) 0 7px, rgba(223,166,63,.4) 7px 14px);
+  animation: bs-chant 1.6s linear infinite;
+}
+.bs-cast em {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  font-style: normal; font: 700 8.5px/1 var(--mono); letter-spacing: .06em; color: #fff; text-shadow: 0 1px 2px #000;
+}
+.bs-cast.off { opacity: .45 }
+.bs-cast.off i { animation: none; width: 0 }
+@keyframes bs-chant { 0% { width: 8% } 100% { width: 92% } }
+
+/* ---- 中央：Boss 立绘 + 法阵 + 护盾 + 弱点 ---- */
+.bs-arena { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px }
+.bs-boss { position: relative; width: 190px; height: 190px; display: grid; place-items: center; flex: none }
+.bs-glyph { font-size: 76px; line-height: 1; filter: drop-shadow(0 0 26px rgba(229,105,122,.55)); animation: bs-float 3.2s ease-in-out infinite }
+@keyframes bs-float { 50% { transform: translateY(-9px) } }
+.bs-ring { position: absolute; border-radius: 50%; border: 1px solid rgba(229,105,122,.35) }
+.bs-ring.r1 { inset: 26px; border-style: dashed; animation: bs-spin 26s linear infinite }
+.bs-ring.r2 { inset: 8px; border-color: rgba(229,105,122,.2); animation: bs-spin 40s linear infinite reverse }
+.bs-ring.r3 { inset: -10px; border-color: rgba(124,140,255,.18) }
+@keyframes bs-spin { to { transform: rotate(360deg) } }
+.bs-shield {
+  position: absolute; inset: -2px; border-radius: 50%; border: 2px solid rgba(67,201,139,.45);
+  box-shadow: 0 0 26px rgba(67,201,139,.28) inset;
+}
+/* 破甲：护盾环断成两段并转琥珀色 —— 一眼看出「这轮没有真闸门兜着」 */
+.bs-shield.broken {
+  border-color: rgba(223,166,63,.5); box-shadow: 0 0 22px rgba(223,166,63,.22) inset;
+  border-top-color: transparent; border-right-color: transparent; transform: rotate(28deg);
+}
+.bs-shieldline { font: 400 11px/1 var(--mono) }
+.bs-shieldline.wn { color: #dfa63f }
+.bs-shieldline.ok { color: #43c98b }
+.bs-weak {
+  width: min(560px, 100%); padding: 10px 13px; border-radius: 8px;
+  background: rgba(13,18,25,.8); border: 1px solid rgba(124,140,255,.2);
+}
+.bs-weak-h { font: 700 9.5px/1 var(--mono); letter-spacing: .14em; color: #7c8cff; margin-bottom: 6px }
+.bs-weak-t { margin: 0; font-size: 11.5px; line-height: 1.7; color: #9fb0cc; max-height: 76px; overflow: hidden }
+
+/* ---- 右：战斗播报 ---- */
+.bs-feedwrap { flex: none; width: 330px; display: flex; flex-direction: column; min-height: 0 }
+.bs-feed {
+  flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; gap: 1px;
+  padding: 8px 9px; border-radius: 8px; background: rgba(5,7,12,.72); border: 1px solid rgba(255,255,255,.07);
+}
+.bs-line { display: grid; grid-template-columns: 13px 32px 50px 1fr; gap: 7px; align-items: baseline; padding: 3px 1px; font-size: 11px; line-height: 1.55 }
+.bs-line:nth-child(odd) { background: rgba(255,255,255,.02) }
+.bs-g { text-align: center; font-weight: 700 }
+.bs-w { font-size: 9px; letter-spacing: .05em; opacity: .85 }
+.bs-t { color: #46536a; font-size: 10px }
+.bs-x { color: #93a0b8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.bs-line.hit .bs-g, .bs-line.hit .bs-w { color: #43c98b }
+.bs-line.miss .bs-g, .bs-line.miss .bs-w { color: #e5697a }
+.bs-line.deg .bs-g, .bs-line.deg .bs-w { color: #dfa63f }
+.bs-line.turn .bs-g, .bs-line.turn .bs-w { color: #7c8cff }
+.bs-line.turn .bs-x { color: #dfe6f2 }
+.bs-line.say .bs-g, .bs-line.say .bs-w { color: #5f6f88 }
+.bs-line.empty { color: #46536a; padding: 12px 2px }
+
+/* ---- 底：操作栏 ---- */
+.bs-hotbar {
+  position: relative; z-index: 2; flex: none; display: flex; align-items: center; gap: 10px;
+  padding: 10px 20px 12px; border-top: 1px solid rgba(255,255,255,.08);
+  background: linear-gradient(0deg, rgba(5,7,12,.96), rgba(5,7,12,.55));
+}
+.bs-k {
+  display: inline-flex; align-items: center; gap: 8px; height: 34px; padding: 0 12px;
+  border-radius: 7px; border: 1px solid rgba(255,255,255,.12); background: rgba(13,18,25,.9);
+  color: #b9c6dc; font: inherit; font-size: 12px; cursor: pointer;
+}
+.bs-k:hover { border-color: rgba(255,255,255,.24); background: rgba(20,26,36,.95) }
+.bs-k:disabled { opacity: .5; cursor: default }
+.bs-kk {
+  font-size: 9.5px; padding: 2px 5px; border-radius: 3px; color: #dfa63f;
+  background: rgba(223,166,63,.12); box-shadow: inset 0 0 0 1px rgba(223,166,63,.28);
+}
+.bs-kl { font-weight: 600 }
+.bs-kd { font-size: 9.5px; color: #46536a }
+#btn-battle-stop { border-color: rgba(229,105,122,.4); color: #f0a8b2 }
+#btn-battle-stop:hover { background: rgba(229,105,122,.12); border-color: rgba(229,105,122,.6) }
+.bs-hint { margin-left: auto; font-size: 10px; color: #46536a }
+
+/* 窄屏：三栏收窄、立绘缩小，保证播报不被挤没 */
+@media (max-width: 1280px) {
+  .bs-party { width: 208px }
+  .bs-feedwrap { width: 264px }
+  .bs-boss { width: 148px; height: 148px }
+  .bs-glyph { font-size: 58px }
+  .bs-pips { gap: 12px }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bs-glyph, .bs-ring, .bs-pip.active .bs-pd, .bs-cast i, .bs-live { animation: none }
+  .bs-hp i { transition: none }
+}
