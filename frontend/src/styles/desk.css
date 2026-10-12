@@ -638,3 +638,28 @@ body { font-size: 13px; letter-spacing: -0.003em; }
 
 /* 摘要条动作区：运行/试运行/刷新 —— 驾驶舱的常驻主操作行尾位 */
 .param-bar .pb-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; flex: none; }
+
+/* ===== 9. 主舞台撑满首屏（方向稿是满屏驾驶舱，不是横幅+长后台）=====
+   hero 抬到首屏主角：大环 + 双层氛围光 + 大数字。页面其余面板退到折叠线以下。 */
+.defect-hero {
+  min-height: 540px;
+  background:
+    radial-gradient(560px 320px at 50% 38%, rgba(76, 195, 255, 0.10), transparent 70%),
+    radial-gradient(420px 260px at 82% 100%, rgba(55, 214, 192, 0.07), transparent 70%),
+    var(--surf);
+  border-color: rgba(76, 195, 255, 0.22);
+  box-shadow: inset 0 0 60px rgba(76, 195, 255, 0.045), 0 0 0 1px rgba(76, 195, 255, 0.05);
+}
+.dh-stage { gap: 40px; padding: 14px 0 10px; }
+.dh-nums { width: 168px; gap: 14px; }
+.dh-nums .nu { padding: 16px 16px 14px; }
+.dh-nums .nu .v { font-size: 30px; }
+.dh-nums .nu .v em { font-size: 15px; }
+.dh-nums .nu .l { font-size: 11px; margin-top: 5px; }
+.dh-stagelist { width: 268px; }
+.dh-stagelist .stage-flow { gap: 11px; }
+.dh-stagelist .stage-flow .el-step { padding: 12px 15px; }
+.dh-stagelist .el-step__title { font-size: 13.5px; font-weight: 600; }
+.dh-stagelist .el-step__description { font-size: 11px; }
+.dh-title { font-size: 19px; }
+.dh-timer .big { font-size: 26px; }

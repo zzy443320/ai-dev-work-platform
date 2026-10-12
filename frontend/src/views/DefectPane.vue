@@ -261,7 +261,7 @@ onMounted(async () => {
         <div class="nu"><div class="v mono">{{ doneCount }}<em>/5</em></div><div class="l">阶段完成</div></div>
         <div class="nu"><div class="v mono">{{ openCount }}</div><div class="l">待审提案</div></div>
       </div>
-      <StageRing :states="stageStates" :running="running" />
+      <StageRing :states="stageStates" :running="running" :size="260" />
       <div class="dh-stagelist"><slot name="stage-flow" /></div>
     </div>
 

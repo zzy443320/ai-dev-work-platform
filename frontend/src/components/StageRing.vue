@@ -1,10 +1,10 @@
 <template>
-  <div class="stage-ring" :class="{ running }" aria-label="流水线阶段进度">
-    <svg viewBox="0 0 180 180" width="160" height="160">
-      <g transform="rotate(-90 90 90)">
+  <div class="stage-ring" :class="{ running, 'is-big': size >= 240 }" :style="ringStyle" aria-label="流水线阶段进度">
+    <svg :viewBox="`0 0 ${size} ${size}`">
+      <g :transform="`rotate(-90 ${size/2} ${size/2})`">
         <circle
           v-for="(seg, i) in segs" :key="i"
-          cx="90" cy="90" r="72" fill="none"
+          :cx="size/2" :cy="size/2" :r="R" fill="none"
           :class="`sr-seg sr-${seg.state}`"
           :stroke-dasharray="`${seg.arc} ${C}`"
           :stroke-dashoffset="-seg.off"
@@ -34,25 +34,26 @@
  */
 import { STAGES } from './tabs.js'
 
-const R = 72
-const C = 2 * Math.PI * R
-const GAP = C * 0.012           // 段间留一道缝，五段才像五「关」
-const ARC = C / 5 - GAP
-
 export default {
   name: 'StageRing',
   props: {
     /** stageStates：done / process / warn / fail / off / idle */
     states: { type: Array, default: () => [] },
     running: { type: Boolean, default: false },
+    /** 直径 px：驾驶舱主舞台用 260 大环（环是画面主角），窄容器可传小值 */
+    size: { type: Number, default: 160 },
   },
   computed: {
-    C() { return C },
+    R() { return this.size * 0.45 },
+    C() { return 2 * Math.PI * this.R },
+    ringStyle() { return { width: this.size + 'px', height: this.size + 'px' } },
     segs() {
+      const gap = this.C * 0.012
+      const arc = this.C / 5 - gap
       return STAGES.map((s, i) => ({
         state: this.states[i] || 'idle',
-        arc: ARC,
-        off: i * (ARC + GAP),
+        arc,
+        off: i * (arc + gap),
       }))
     },
     doneCount() {
@@ -78,9 +79,10 @@ export default {
 <style>
 /* 样式放全局层：desk.css 的加载顺序保证这里的规则能落到最终产物。
    段颜色只认真实状态，idle/off 是同一档的「没到」。 */
-.stage-ring { position: relative; width: 160px; height: 160px; flex: none; }
-.stage-ring svg { position: absolute; inset: 0; }
+.stage-ring { position: relative; flex: none; }
+.stage-ring svg { position: absolute; inset: 0; width: 100%; height: 100%; }
 .sr-seg { stroke-width: 12; stroke-linecap: butt; }
+.stage-ring.is-big .sr-seg { stroke-width: 15; }
 .sr-done { stroke: var(--success); }
 .sr-process {
   stroke: var(--ac);
@@ -95,6 +97,8 @@ export default {
   position: absolute; inset: 0; display: grid; place-content: center; text-align: center;
 }
 .sr-num { font-size: 30px; font-weight: 700; color: var(--text); letter-spacing: -0.02em; }
+.stage-ring.is-big .sr-num { font-size: 54px; }
+.stage-ring.is-big .sr-label { font-size: 13px; }
 .sr-num :deep(.sr-of), .sr-num .sr-of { font-size: 15px; color: var(--txt3); margin-left: 2px; }
 .sr-label { margin-top: 3px; font-size: 11px; color: var(--txt3); white-space: nowrap; }
 </style>
