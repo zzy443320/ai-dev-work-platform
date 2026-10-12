@@ -147,13 +147,10 @@
    ⚠️ <el-steps> 上不能开 align-center：那会让 Element 给每个 el-step 写内联
       flex-basis:20%，内联样式压不住，细轨会摊成五等分大盒子（踩过）。 */
 .stage-flow {
-  /* 不换行、也不裁：横向滚。阶段条一旦折成两三行就把主列最上面一大块吃掉了，
-     而它是「现在打到哪」的唯一常驻指示，宁可滚也要保持一行。 */
-  display: flex; align-items: center; gap: 0; flex-wrap: nowrap;
-  margin: 0 0 4px; padding: 0 0 2px; background: transparent; border: 0; border-radius: 0;
-  overflow-x: auto; overflow-y: hidden; scrollbar-width: none;
+  display: flex; align-items: center; gap: 0; flex-wrap: wrap;
+  margin: 0 0 4px; padding: 0; background: transparent; border: 0; border-radius: 0;
+  overflow: visible;
 }
-.stage-flow::-webkit-scrollbar { height: 0 }
 .stage-flow .el-step {
   /* !important 是被迫的：Element 在水平模式下给每个 el-step 写**内联**
      flex-basis: 25%，内联样式权重高于任何选择器。不用 !important 压不住，

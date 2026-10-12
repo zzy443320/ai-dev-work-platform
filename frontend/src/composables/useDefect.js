@@ -72,15 +72,6 @@ function _createDefectState() {
   const replay = ref([])
   /** 结构化结果 HTML（旧版 renderRunResults / renderProbeResults 的产物） */
   const resultHtml = ref('')
-  /**
-   * 当前正在处理的那条工单（{id, index, total, title}）与本轮开始时刻。
-   *
-   * 战场视图（Boss 战）要显示「本层第几只怪 / 还剩几只」，而这两个值原本只是
-   * pushLine 的临时参数、没进状态 —— 为了一个视图把它们提到状态里，
-   * 而不是让视图去正则解析日志文本（那种耦合改一句文案就断）。
-   */
-  const runTarget = ref(null)
-  const runStartedAt = ref(0)
 
   const logTitle = computed(() => (runKind.value === 'probe' ? '试运行结果' : '运行结果'))
   const hasLog = computed(() => !!resultHtml.value || lines.value.length > 0 || replay.value.length > 0)
@@ -92,8 +83,6 @@ function _createDefectState() {
     hasLive.value = false
     replay.value = []
     resultHtml.value = ''
-    runTarget.value = null
-    runStartedAt.value = Date.now()
   }
 
   function pushLine(text, kind = 'dim') {
@@ -159,9 +148,6 @@ function _createDefectState() {
         liveStage(evt)
       } else if (evt.type === 'defect') {
         currentDefect = evt.id || `#${evt.index}`
-        runTarget.value = {
-          id: currentDefect, index: evt.index, total: evt.total, title: evt.title || '',
-        }
         pushLine(`▶ 工单 ${currentDefect}（${evt.index}/${evt.total}）：${evt.title}`, 'head')
         resetLive()
         stageStates.value = kind === 'probe'
@@ -455,7 +441,6 @@ function _createDefectState() {
     // 流水线
     running, runKind, stageStates, lines, live, hasLive, replay,
     resultHtml, logTitle, hasLog, start, setResult, clearResult,
-    runTarget, runStartedAt,
     // 提案
     proposals, proposalsError, propFilter, propPage, pageItems, pageSlice,
     totalPages, curPage, pagerInfo, pagerNums, proposalBadge, openCount,
