@@ -40,7 +40,6 @@ import RunModal from './components/RunModal.vue'
 import AiModal from './components/AiModal.vue'
 import ChangelogModal from './components/ChangelogModal.vue'
 import CommandPalette from './components/CommandPalette.vue'
-import BattleView from './components/BattleView.vue'
 import { TABS, DEFAULT_TAB, ARTIFACT_TAB_LABEL, STAGE_FLOW_TAB, FILL_TABS, ICON_PATHS } from './components/tabs.js'
 import { useTheme } from './composables/useTheme.js'
 import { useConfigDrawer } from './composables/useConfigDrawer.js'
@@ -507,7 +506,5 @@ const healthText = computed(() => {
     <AiModal :visible="aiModalVisible" @close="closeAiModal" />
     <ChangelogModal />
     <CommandPalette />
-    <!-- 运行中整屏接管成 Boss 战场；跑完或点「退出战场」自动退回控制台日志 -->
-    <BattleView />
   </el-config-provider>
 </template>
