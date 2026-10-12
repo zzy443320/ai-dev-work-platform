@@ -10,18 +10,24 @@
 //   强制   —— 只解除占用（逃生口），后台线程仍会收尾并落它自己的提案。
 import { useRunLease } from '../composables/useRunLease.js'
 
+defineProps({
+  /** 常驻模式（驾驶舱塔台）：空闲也留一张「槽位空闲 · 可接单」卡，
+   *  塔台顶部不再忽有忽无；默认 false 保持原「只在占用时出现」行为。 */
+  always: { type: Boolean, default: false },
+})
+
 const { busy, leaseLine, leaseDetail, stopping, stopRun } = useRunLease()
 </script>
 
 <template>
-  <div class="run-lease" :class="{ 'is-stopping': stopping }" id="run-lease"
-       v-show="busy" :aria-live="'polite'">
+  <div class="run-lease" :class="{ 'is-stopping': stopping, 'is-idle': !busy }" id="run-lease"
+       v-show="busy || always" :aria-live="'polite'">
     <span class="run-lease-dot" aria-hidden="true" />
     <div class="run-lease-text">
-      <div class="run-lease-line">{{ leaseLine }}</div>
-      <div class="run-lease-detail" v-if="leaseDetail">{{ leaseDetail }}</div>
+      <div class="run-lease-line">{{ busy ? leaseLine : '槽位空闲 · 可接单' }}</div>
+      <div class="run-lease-detail" v-if="busy && leaseDetail">{{ leaseDetail }}</div>
     </div>
-    <div class="run-lease-acts">
+    <div class="run-lease-acts" v-if="busy">
       <el-button size="small" id="btn-run-stop" :disabled="stopping"
                  @click="stopRun(false)"
                  title="在阶段边界收口：不砍正在跑的模型调用与沙箱命令，不留半截提案">
@@ -44,6 +50,12 @@ const { busy, leaseLine, leaseDetail, stopping, stopRun } = useRunLease()
   border: 1px solid rgba(251, 191, 36, 0.3);
 }
 .run-lease.is-stopping { opacity: .82; }
+/* 常驻模式的空闲态：灰点静默不呼吸 —— 没活儿时动效是噪音 */
+.run-lease.is-idle {
+  background: var(--code-bg); color: var(--txt3);
+  border-color: var(--line);
+}
+.run-lease.is-idle .run-lease-dot { animation: none; opacity: .55; }
 .run-lease-dot {
   width: 8px; height: 8px; border-radius: 50%; flex: none; margin-top: 5px;
   background: currentColor; animation: run-lease-pulse 1.4s ease-in-out infinite;

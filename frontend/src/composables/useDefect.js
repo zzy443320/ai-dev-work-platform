@@ -72,6 +72,10 @@ function _createDefectState() {
   const replay = ref([])
   /** 结构化结果 HTML（旧版 renderRunResults / renderProbeResults 的产物） */
   const resultHtml = ref('')
+  /** 驾驶舱名牌：本轮正在修哪一单（defect 事件的 index/total/title/id），跑完保留最后一条 */
+  const currentTarget = ref(null)
+  /** 本轮开始时刻（ms），名牌计时器读它；没在跑就是 0 */
+  const startedAt = ref(0)
 
   const logTitle = computed(() => (runKind.value === 'probe' ? '试运行结果' : '运行结果'))
   const hasLog = computed(() => !!resultHtml.value || lines.value.length > 0 || replay.value.length > 0)
@@ -133,6 +137,7 @@ function _createDefectState() {
     if (running.value) return
     resetLog(kind)
     running.value = true
+    startedAt.value = Date.now()
     setRunStatus(kind === 'probe' ? '试运行中…' : '运行中…', 'running')
     stageStates.value = stagesRunning()
 
@@ -148,6 +153,10 @@ function _createDefectState() {
         liveStage(evt)
       } else if (evt.type === 'defect') {
         currentDefect = evt.id || `#${evt.index}`
+        currentTarget.value = {
+          index: evt.index || 0, total: evt.total || 0,
+          id: evt.id || '', title: evt.title || '',
+        }
         pushLine(`▶ 工单 ${currentDefect}（${evt.index}/${evt.total}）：${evt.title}`, 'head')
         resetLive()
         stageStates.value = kind === 'probe'
@@ -441,6 +450,7 @@ function _createDefectState() {
     // 流水线
     running, runKind, stageStates, lines, live, hasLive, replay,
     resultHtml, logTitle, hasLog, start, setResult, clearResult,
+    currentTarget, startedAt,
     // 提案
     proposals, proposalsError, propFilter, propPage, pageItems, pageSlice,
     totalPages, curPage, pagerInfo, pagerNums, proposalBadge, openCount,

@@ -494,11 +494,12 @@ body { font-size: 13px; letter-spacing: -0.003em; }
 .pl-foot .kbd { margin-right: 4px }
 .pl-foot .pl-brand { margin-left: auto; color: var(--txt4) }
 
-/* ===== 7. 缺陷修复驾驶舱主舞台（#defect-hero）=====
-   名牌 | 环形阶段盘 | agent 直播，三段一行；窄屏（参数抽屉开着时）允许折行。
-   所有数字都来自真实信号：环吃 stageStates，直播吃 live 流，没有编造的进度。 */
+/* ===== 7b. 缺陷修复驾驶舱主舞台 v2（#defect-hero）=====
+   名牌行（含运行动作）+ 数字列|环形盘|竖排阶段列表 + 护盾 chips。
+   顶部横细轨取消：#stage-flow 的 DOM 搬进 .dh-stagelist，el-steps 用
+   CSS 压成竖排卡（Element 给 el-step 写内联 flex-basis，只能 !important 压）。 */
 .defect-hero {
-  display: flex; align-items: center; gap: 22px;
+  display: flex; flex-direction: column; gap: 10px;
   padding: 14px 18px; margin-bottom: 12px;
   background:
     radial-gradient(420px 180px at 24% 0%, var(--bg-glow-1), transparent 70%),
@@ -506,39 +507,81 @@ body { font-size: 13px; letter-spacing: -0.003em; }
   border: 1px solid var(--line);
   border-radius: var(--r-l);
 }
-.dh-nameplate { min-width: 0; flex: 1; }
-.dh-kicker {
-  font-size: 10.5px; letter-spacing: 0.14em; color: var(--txt3); text-transform: none;
+.dh-mission { display: flex; align-items: center; gap: 13px; }
+.dh-badge {
+  width: 42px; height: 42px; border-radius: 11px; flex: none;
+  background: rgba(76, 195, 255, 0.12); box-shadow: inset 0 0 0 1px rgba(76, 195, 255, 0.4);
+  display: grid; place-items: center; color: var(--ac);
 }
-.dh-status {
-  margin-top: 6px; display: flex; align-items: center; gap: 8px;
-  font-size: 20px; font-weight: 700; color: var(--txt);
+.dh-title-wrap { min-width: 0; flex: 1; }
+.dh-title {
+  font-size: 16.5px; font-weight: 600; color: var(--text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.dh-status.is-run { color: var(--ac); }
-.dh-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--txt4); opacity: 0.6; flex: none; }
-.dh-status.is-run .dh-dot {
+.dh-meta { margin-top: 3px; display: flex; align-items: center; gap: 12px; font-size: 11.5px; color: var(--txt3); flex-wrap: wrap; }
+.dh-meta .tgt { color: var(--ac2); font-weight: 600; }
+.dh-state { display: inline-flex; align-items: center; gap: 6px; }
+.dh-state.is-run { color: var(--ac2); }
+.dh-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--txt4); opacity: 0.6; }
+.dh-state.is-run .dh-dot {
   background: var(--ac2); opacity: 1;
-  box-shadow: 0 0 10px rgba(55, 214, 192, 0.55);
+  box-shadow: 0 0 8px rgba(55, 214, 192, 0.55);
   animation: cockpit-breath 2.2s ease-in-out infinite;
 }
-.dh-hint { margin-top: 7px; font-size: 11.5px; color: var(--txt3); line-height: 1.6; }
-.dh-live {
-  flex: 0 0 320px; min-width: 0;
-  border: 1px solid var(--line); border-radius: var(--r-m);
-  background: var(--code-bg); padding: 10px 13px;
+.dh-hint2 { color: var(--txt4); }
+.dh-timer { text-align: right; flex: none; }
+.dh-timer .big { font-size: 21px; font-weight: 700; color: var(--ac2); }
+.dh-timer .lab { font-size: 10.5px; color: var(--txt4); }
+.dh-ops { display: flex; gap: 8px; align-items: center; flex: none; }
+
+.dh-stage { display: flex; align-items: center; justify-content: center; gap: 26px; padding: 6px 0 2px; }
+.dh-nums { display: flex; flex-direction: column; gap: 10px; width: 150px; flex: none; }
+.dh-nums .nu { border: 1px solid var(--line); border-radius: 11px; background: var(--code-bg); padding: 12px 14px; }
+.dh-nums .nu .v { font-size: 22px; font-weight: 700; color: var(--text); }
+.dh-nums .nu .v em { font-style: normal; font-size: 12px; color: var(--txt3); }
+.dh-nums .nu .l { font-size: 10px; color: var(--txt4); letter-spacing: 0.1em; margin-top: 3px; }
+
+/* 竖排阶段列表：el-steps 压成五张卡（图标左、两行文字右、连接线全隐）。
+   ⚠️ Element 给 .el-step 写内联 flex-basis，不用 !important 压不住（细轨时代踩过）。 */
+.dh-stagelist { flex: none; width: 248px; }
+.dh-stagelist .stage-flow {
+  display: flex; flex-direction: column; gap: 8px; flex-wrap: nowrap;
+  margin: 0; padding: 0; overflow: visible;
 }
-.dh-live-h {
-  display: flex; align-items: center; gap: 7px;
-  font-size: 10px; letter-spacing: 0.14em; color: var(--txt3);
+.dh-stagelist .stage-flow .el-step {
+  display: flex; flex-direction: row; align-items: center; gap: 11px;
+  flex: 0 0 auto !important; width: 100% !important;
+  /* Element 给最后一步写内联 max-width:20%（横排里末步没连接线）——
+     竖排卡不认这套，不压掉第 5 张卡会被挤成 50px 的小方块。 */
+  max-width: none !important; min-width: 0;
+  border: 1px solid var(--line); border-radius: 10px; background: var(--code-bg);
+  padding: 8px 12px;
 }
-.dh-live-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--txt4); flex: none; }
-.dh-live-tx {
-  margin-top: 7px; font-size: 12px; line-height: 1.65; color: var(--txt2);
-  font-family: var(--mono);
-  display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical;
-  overflow: hidden; word-break: break-all;
+.dh-stagelist .el-step__line { display: none; }
+.dh-stagelist .el-step__head { position: static; width: 22px; height: 22px; flex: none; }
+.dh-stagelist .el-step__icon { width: 22px; height: 22px; font-size: 11px; }
+.dh-stagelist .el-step__main { flex: 1; min-width: 0; padding: 0; margin: 0; text-align: left; }
+.dh-stagelist .el-step__title { font-size: 12.5px; line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dh-stagelist .el-step__description { font-size: 10px; margin: 0; padding: 0; line-height: 1.5; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.dh-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.dh-chip {
+  font-size: 11px; padding: 4px 11px; border-radius: 20px;
+  border: 1px solid var(--line); color: var(--txt2); background: var(--code-bg);
 }
-.dh-live-tx.is-live { color: var(--txt); }
+.dh-chip.is-ok { color: var(--success); border-color: var(--success-soft); box-shadow: inset 0 0 0 1px rgba(74, 222, 128, 0.25); }
+.dh-chip.is-warn { color: var(--warn); border-color: var(--warn-soft); box-shadow: inset 0 0 0 1px rgba(240, 168, 72, 0.25); }
+
+/* 今日裁决常驻摘要（审判台底部，没有待审时这块就是右列的全部内容） */
+.verdict {
+  border: 1px dashed var(--line2); border-radius: var(--r-m);
+  background: var(--code-bg); padding: 11px 13px;
+}
+.verdict .vt { font-size: 10.5px; letter-spacing: 0.12em; color: var(--txt4); }
+.verdict .vrow { display: flex; gap: 16px; margin-top: 9px; font-size: 12px; }
+.verdict .vrow b { font-size: 17px; font-weight: 700; color: var(--text); margin-right: 3px; }
+.verdict .g { color: var(--success); } .verdict .r { color: var(--danger); } .verdict .w { color: var(--txt2); }
+.verdict .vlast { margin-top: 8px; font-size: 10.5px; color: var(--txt4); line-height: 1.6; }
 
 /* ===== 8. 驾驶舱三列主舞台（容器 ≥1360 才启用）=====
    方向稿 A 的骨架：左列运行塔台（提案队列换壳）| 中列主舞台（头牌 + 日志 + 复现）
@@ -559,18 +602,17 @@ body { font-size: 13px; letter-spacing: -0.003em; }
   #pane-defect.active {
     grid-template-columns: 300px minmax(0, 1fr) 372px;
     grid-template-areas:
-      "flow  flow  flow"
       "tower hero  bench"
       "tower run   bench"
-      "tower repro bench"
+      "tower repro verdict"
       "stats stats stats"
       "kb    kb    kb";
   }
-  #pane-defect > [id="stage-flow"] { grid-area: flow; }
   #pane-defect > .defect-hero { grid-area: hero; }
   #pane-defect > #run-panel { grid-area: run; }
   #pane-defect > #proposal-panel { grid-area: tower; min-width: 0; align-self: start; }
   #pane-defect > #inspector-panel { grid-area: bench; }
+  #pane-defect > #today-verdict { grid-area: verdict; align-self: start; }
   #pane-defect > [id^="artifact-panel"] { grid-area: repro; }
   #pane-defect > #stats-panel { grid-area: stats; }
   #pane-defect > #kb-panel { grid-area: kb; }

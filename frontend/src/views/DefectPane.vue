@@ -10,7 +10,7 @@
 //
 // 与问答页签一样**必须解构 useDefect()**：`<script setup>` 只对顶层绑定做模板
 // 自动解包，写 `const d = useDefect()` 再在模板里用 `d.mineOnly` 会拿到 ref 对象。
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useDefect, PROP_PAGE_SIZE } from '../composables/useDefect.js'
 import { useArtifacts } from '../composables/useArtifacts.js'
 import { useFold } from '../composables/useFold.js'
@@ -38,7 +38,7 @@ const {
   mineOnly, skipVerify, limit, defectId,
   // 流水线
   running, stageStates, lines, live, hasLive, replay,
-  resultHtml, logTitle, start,
+  resultHtml, logTitle, start, currentTarget, startedAt,
   // 提案
   proposals, proposalsError, propFilter, pageItems, pageSlice,
   totalPages, curPage, pagerInfo, pagerNums, proposalBadge, openCount,
@@ -165,20 +165,42 @@ function esc(s) {
 /** 提案列表面板角标样式（有开放项时高亮） */
 const badgeAlert = computed(() => openCount.value > 0)
 
-/** 主舞台直播摘要：真实信号优先级 = 流式输出 > 启动提示 > 上一轮结论 > 空态引导。
- *  live.think / live.out 是纯文本流，用插值渲染不做 v-html —— 直播内容是模型
- *  产出，未消毒前进 DOM 是注入面。完整过程仍在下方运行日志（那里的渲染
- *  走 RunLog 自己的转义管线）。 */
-const liveText = computed(() => {
-  if (hasLive.value && live.value) {
-    const think = (live.value.think || '').trim()
-    const out = (live.value.out || '').trim()
-    return think || out || '模型输出中…'
+/** 名牌标题：defect 事件写入的当前工单；没有就如实说等待/待运行 */
+const missionTitle = computed(() => {
+  const t = currentTarget.value
+  if (!t) return running.value ? '已启动 · 等待第一张工单…' : '待运行 · 本轮目标会显示在这里'
+  return t.title || t.id || '（无标题工单）'
+})
+const doneCount = computed(() => stageStates.value.filter((s) => s === 'done').length)
+
+/** 名牌计时：running 时每秒走；停了定格在最后值，标签变「上轮耗时」——只报真实经过的时间 */
+const elapsed = ref(0)
+let tickTimer = 0
+const elapsedText = computed(() => {
+  const s = Math.floor(elapsed.value / 1000)
+  return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
+})
+function stopTick() { if (tickTimer) { window.clearInterval(tickTimer); tickTimer = 0 } }
+watch(running, (on) => {
+  stopTick()
+  if (on) {
+    elapsed.value = Date.now() - startedAt.value
+    tickTimer = window.setInterval(() => { elapsed.value = Date.now() - startedAt.value }, 1000)
+  } else if (startedAt.value) {
+    elapsed.value = Date.now() - startedAt.value
   }
-  if (running.value) return '流水线已启动，等待阶段事件…'
-  return lines.value && lines.value.length
-    ? '本轮已结束 · 完整过程见下方运行日志'
-    : '尚未运行。范围与参数在右侧抽屉里，点「运行」开始。'
+}, { immediate: true })
+onBeforeUnmount(stopTick)
+
+/** 今日裁决：proposals 全量按状态聚合（pageSlice 只是当前页，不能拿它数） */
+const verdict = computed(() => {
+  const v = { applied: 0, rejected: 0, pending: 0 }
+  for (const p of proposals.value) {
+    if (p.status === 'applied') v.applied++
+    else if (p.status === 'rejected') v.rejected++
+    else if (p.status === 'pending' || p.status === 'gate_failed') v.pending++
+  }
+  return v
 })
 
 onMounted(async () => {
@@ -193,31 +215,56 @@ onMounted(async () => {
 </script>
 
 <template>
-  <!-- 流水线步骤条：由 App.vue 以 #stage-flow 具名插槽注入（id 与状态类都在
-       那边绑好）。放在模块最顶部而不是全局头部 —— 它是**这个模块**的进度条，
-       横在整页头部会把整个版面（含 side 布局的左侧导航）往下挤。 -->
-  <slot name="stage-flow" />
-
-  <!-- 驾驶舱主舞台头牌：名牌 + 环形阶段盘 + agent 直播摘要。
-       每个数字都挂真实信号：环的段色就是 stageStates（与上方细轨同源），
-       直播文案只读流式文本，不编伤害值不摆假进度。 -->
+  <!-- 驾驶舱主舞台 v2：名牌行（含运行动作）+ 数字列|环形盘|竖排阶段列表 + 护盾 chips。
+       顶部横细轨取消 —— 阶段信息只说一遍，#stage-flow 的 DOM 与状态类原样搬进
+       竖排列表（契约靠 desk.css 重排保住）。每个数字都挂真实信号：
+       currentTarget 来自 defect 事件，计时来自 startedAt，环来自 stageStates；
+       取不到数的卡位（判读图/先例/返工/预算）宁缺毋滥，不放。 -->
   <section class="defect-hero" id="defect-hero">
-    <div class="dh-top">
-      <div class="dh-nameplate">
-        <div class="dh-kicker">缺陷修复 · 运行驾驶舱</div>
-        <div class="dh-status" :class="running ? 'is-run' : ''">
-          <span class="dh-dot" aria-hidden="true" />{{ running ? '运行中' : '待命' }}
-        </div>
-        <p class="dh-hint">补丁先在沙箱里真跑验收，跑通才成为提案；采纳才写工作区（不 commit、不 push）。</p>
+    <div class="dh-mission">
+      <div class="dh-badge" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2l1.9 3.8M16 2l-1.9 3.8M9 7h6a3 3 0 0 1 3 3v1h2v3h-2v2a3 3 0 0 1-3 3H9a3 3 0 0 1-3-3v-2H4v-3h2v-1a3 3 0 0 1 3-3Z" /></svg>
       </div>
-      <StageRing :states="stageStates" :running="running" />
-      <div class="dh-live">
-        <div class="dh-live-h">
-          <span class="dh-live-dot" aria-hidden="true" />AGENT 直播
+      <div class="dh-title-wrap">
+        <h3 class="dh-title">{{ missionTitle }}</h3>
+        <div class="dh-meta">
+          <span v-if="currentTarget" class="tgt mono">本轮 {{ currentTarget.index }}/{{ currentTarget.total }}</span>
+          <span class="dh-state" :class="running ? 'is-run' : ''"><span class="dh-dot" aria-hidden="true" />{{ running ? '运行中' : '待命' }}</span>
+          <span class="dh-hint2">补丁沙箱真跑验收才成提案 · 采纳才写工作区</span>
         </div>
-        <p class="dh-live-tx" :class="{ 'is-live': hasLive }">{{ liveText }}</p>
+      </div>
+      <div class="dh-timer" v-if="startedAt">
+        <div class="big mono">{{ elapsedText }}</div>
+        <div class="lab">{{ running ? '本轮耗时' : '上轮耗时' }}</div>
+      </div>
+      <div class="dh-ops">
+        <el-button type="primary" id="btn-run" :disabled="!canStart" @click="onStart('run')"
+                   :title="canStart ? '' : '槽位被占用，见左列运行塔台（可点「停止」）'">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="6 3 20 12 6 21 6 3" /></svg>
+          运行
+        </el-button>
+        <el-button id="btn-probe" :disabled="!canStart" @click="onStart('probe')"
+                :title="canStart ? '只拉取 ONES 工单并 AI 定位问题，不生成提案、不进审批、不写任何文件' : '槽位被占用，见左列运行塔台（可点「停止」）'">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></svg>
+          试运行
+        </el-button>
+        <el-button id="btn-defect-refresh" @click="refreshAll()"
+                   title="重新拉取提案 / 统计 / 知识库列表">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.6-6.3" /><polyline points="21 3 21 9 15 9" /></svg>
+          刷新
+        </el-button>
       </div>
     </div>
+
+    <div class="dh-stage">
+      <div class="dh-nums">
+        <div class="nu"><div class="v mono">{{ doneCount }}<em>/5</em></div><div class="l">阶段完成</div></div>
+        <div class="nu"><div class="v mono">{{ openCount }}</div><div class="l">待审提案</div></div>
+      </div>
+      <StageRing :states="stageStates" :running="running" />
+      <div class="dh-stagelist"><slot name="stage-flow" /></div>
+    </div>
+
     <!-- 护盾 chip 读真实闸门配置：降级态一眼可见，不用点进配置页确认。
          复现用例 chip 是引导不是状态断言 —— 数据在 repro 面板里，不假装有数。 -->
     <div class="dh-chips">
@@ -239,36 +286,14 @@ onMounted(async () => {
       </button>
     </div>
     <!-- 主区只放过程与产物：参数摘要条 + 实时运行日志。工单范围、Limit、
-         试运行/运行这些一次性输入搬进了右侧参数抽屉（见文件末尾的 ParamDrawer）。
-         驾驶舱改版：运行/试运行/刷新是常驻主操作，从抽屉 footer 提到摘要条
-         动作区 —— 抽屉默认收起后，按钮不能再藏在只有点开才见的浮层里。 -->
-    <ParamBar name="defect" action="运行参数" :items="summary">
-      <div class="pb-actions">
-        <el-button type="primary" id="btn-run" :disabled="!canStart" @click="onStart('run')"
-                   :title="canStart ? '' : '槽位被占用，见上方运行占用条（可点「停止」）'">
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="6 3 20 12 6 21 6 3" /></svg>
-          运行
-        </el-button>
-        <el-button id="btn-probe" :disabled="!canStart" @click="onStart('probe')"
-                :title="canStart ? '只拉取 ONES 工单并 AI 定位问题，不生成提案、不进审批、不写任何文件' : '槽位被占用，见上方运行占用条（可点「停止」）'">
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></svg>
-          试运行
-        </el-button>
-        <el-button id="btn-defect-refresh" @click="refreshAll()"
-                   title="重新拉取提案 / 统计 / 知识库列表">
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.6-6.3" /><polyline points="21 3 21 9 15 9" /></svg>
-          刷新
-        </el-button>
-      </div>
-    </ParamBar>
-
-    <!-- 占用条：槽位被别的来源（外部脚本 / 另一个标签页）占着时，这里就是唯一
-         能看到「是谁、到哪了、能不能停」的地方——以前只能干等一句 409。 -->
-    <RunLeaseBar />
+         一次性输入搬进了右侧参数抽屉（见文件末尾的 ParamDrawer）。
+         v2：运行/试运行/刷新已上移到主舞台名牌行；租约条移到左列塔台。 -->
+    <ParamBar name="defect" action="运行参数" :items="summary" />
 
     <!-- 控制台区：日志收成一块可折叠的终端面板（IDE 底部面板那个形态）。
          默认展开 —— #run-log 的 420px 限高与空态占位都由 style.css 锁着，
-         折叠只收内容不删 DOM，所以 :empty::before 那套占位逻辑不受影响。 -->
+         折叠只收内容不删 DOM，所以 :empty::before 那套占位逻辑不受影响。
+         驾驶舱语义下它就是「AGENT 直播」：实时阶段进展与大模型输出。 -->
     <div class="console" :class="{ 'console-collapsed': isCollapsed('run-console') }">
       <div class="console-bar">
         <button type="button" class="cb-toggle" id="btn-console-toggle"
@@ -279,9 +304,9 @@ onMounted(async () => {
                :style="{ transform: isCollapsed('run-console') ? 'rotate(-90deg)' : 'none' }">
             <polyline points="6 9 12 15 18 9" />
           </svg>
-          <span>运行日志</span>
+          <span>AGENT 直播 · 运行日志</span>
         </button>
-        <span class="cb-hint muted">{{ isCollapsed('run-console') ? '已收起 · 流水线仍在下方推进' : '实时阶段进展与大模型输出' }}</span>
+        <span class="cb-hint muted">{{ isCollapsed('run-console') ? '已收起 · 流水线仍在推进 · ⌃` 开合' : '实时阶段进展与大模型输出 · ⌃` 收起' }}</span>
       </div>
       <RunLog
         :lines="lines" :live="live" :has-live="hasLive" :replay="replay"
@@ -317,6 +342,10 @@ onMounted(async () => {
         </el-select>
       </label>
     </div>
+    <!-- 占用条（v2 移到塔台顶部，常驻模式）：槽位被别的来源（外部脚本 / 另一个
+         标签页）占着时这里是「是谁、到哪了、能不能停」；空闲时显示待命卡，
+         塔台顶部不再忽有忽无。 -->
+    <RunLeaseBar always />
     <div class="block-banner" :class="{ hidden: !repoBanner }" id="repo-banner"
          v-html="repoBanner" />
     <!-- 队列（master）：卡片排成一列密行而不是一屏三张的网格 ——
@@ -341,6 +370,17 @@ onMounted(async () => {
   <!-- 检视器（detail）：与队列并排，点行即换。放在 #proposal-panel 之后、
        复现用例面板之前 —— 两者在 #pane-defect 的同一行栅格里（见 desk.css）。 -->
   <ProposalInspector :proposal="selProposal" @expand="onExpand" />
+
+  <!-- 今日裁决常驻摘要：没有待审时审判台也不空（数字来自 proposals 全量聚合）。 -->
+  <div class="verdict" id="today-verdict">
+    <div class="vt">今日裁决 · {{ verdict.applied + verdict.rejected + verdict.pending }} 份已处理</div>
+    <div class="vrow">
+      <span class="g"><b class="mono">{{ verdict.applied }}</b>采纳</span>
+      <span class="r"><b class="mono">{{ verdict.rejected }}</b>拒绝</span>
+      <span class="w"><b class="mono">{{ verdict.pending }}</b>待审</span>
+    </div>
+    <p class="vlast">「采纳」只写入工作区（不 commit、不 push），由你确认后自行提交。</p>
+  </div>
 
   <!-- 复现用例：agentic 修复循环在沙箱里跑红→绿的那份用例（type=repro 的产出物）。
        提案补丁不支持新建文件，所以它单独挂在这里，点采纳才会进仓库。
