@@ -51,6 +51,7 @@ import { useHealth } from './composables/useHealth.js'
 import { useRunLease } from './composables/useRunLease.js'
 import { useArtifacts } from './composables/useArtifacts.js'
 import { useDefect } from './composables/useDefect.js'
+import { useTeam } from './composables/useTeam.js'
 import { useSettings } from './composables/useSettings.js'
 import { useProposalModal } from './composables/useProposalModal.js'
 import { useKbModal } from './composables/useKbModal.js'
@@ -81,7 +82,9 @@ const { openArtifact, loadArtifacts } = useArtifacts()
 // 缺陷页签的数据：切到该页签时要重拉（流水线刚产出的提案得立刻可见）。
 // stageStates 由这里传给 #stage-flow —— 步骤条与真实结果联动。
 // 与 DefectPane 共享同一套状态：useDefect 是模块级单例。
-const { ensure, stageStates } = useDefect()
+const { ensure, stageStates, running: defectRunning } = useDefect()
+// 长任务作业的运行态：只读它的 running 给左轨状态灯用（不触发任何加载副作用）。
+const { running: teamRunning } = useTeam()
 
 // 配置（侧栏 + 大模型弹窗）、三个详情弹窗与更新日志各自是模块级单例
 const { loadSettings } = useSettings()
@@ -201,13 +204,33 @@ onMounted(() => {
   startLeasePoll()
   window.addEventListener('keydown', onEsc)
   attachHotkeys()
+  // 驾驶舱顶条的时钟：30s 一拍足够（显示 HH:MM，不追求秒级）
+  tickClock()
+  clockTimer = window.setInterval(tickClock, 30_000)
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onEsc)
   detachHotkeys()
   stopLeasePoll()
+  if (clockTimer) window.clearInterval(clockTimer)
 })
+
+/** 顶条时钟（驾驶舱状态条的组成部分，纯装饰性信号） */
+let clockTimer = 0
+const clock = ref('')
+function tickClock() {
+  const d = new Date()
+  clock.value = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
+/** 运行脉搏：顶条上一眼看清「现在有没有活儿在跑」。租约句最权威（别人占用也算在跑） */
+const pulseText = computed(() => {
+  if (leaseBusy.value) return leaseShortLine.value
+  if (defectRunning.value || teamRunning.value) return '运行中 · 槽位已占用'
+  return '空闲 · 槽位可接单'
+})
+const pulseOn = computed(() => leaseBusy.value || defectRunning.value || teamRunning.value)
 
 // 页签切换后按需拉数据（旧版是在 switchTab 里直接调 loadArtifacts / ensure 等）。
 // 产出物面板按当前页签的类型拉列表；缺陷修复页签旧版会直接 return，不动列表。
@@ -283,6 +306,14 @@ const healthText = computed(() => {
         <div class="top-meta mono" id="health">{{ healthText }}</div>
       </div>
 
+      <!-- 驾驶舱运行脉搏：一眼看清「现在有没有活儿在跑」。呼吸点只在有活儿时亮，
+           空闲时是一颗静的灰点 —— 持续呼吸的装饰动效在空闲状态下是噪音。
+           文案优先读租约短句：别人（外部脚本/另一个标签页）占着槽位也算「在跑」。 -->
+      <div class="cockpit-pulse" id="run-pulse" :class="{ on: pulseOn }">
+        <span class="cp-dot" aria-hidden="true" />
+        <span class="cp-text">{{ pulseText }}</span>
+      </div>
+
       <!-- 顶部导航布局（top）专用：页签搬到顶栏、紧贴品牌右侧（主列里的页签头
            由 .layout-top 的样式隐藏，pane 内容留在原位不动）。文字型导航形态：
            等宽均分整条空间，活动项用「文字宽度下划线」表示（下划线挂在 .tt-label
@@ -341,6 +372,9 @@ const healthText = computed(() => {
         <span class="omni-ph">搜索模块、动作、工单…</span>
         <span class="kbd">⌘K</span>
       </button>
+
+      <!-- 驾驶舱时钟：状态条右端的时间锚点（mono，30s 一拍） -->
+      <span class="topbar-clock mono" id="topbar-clock">{{ clock }}</span>
 
       <div class="top-actions">
         <el-tag id="status" class="status-tag" :type="statusType" effect="light" round
@@ -414,6 +448,10 @@ const healthText = computed(() => {
                    stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
                    v-html="ICON_PATHS[tabBy[name].icon]" />
               <span>{{ tabBy[name].label }}</span>
+              <!-- 驾驶舱状态灯：该模块有活儿在跑时亮，一眼知道该去哪儿看。
+                   长任务是紫点（与它的模块色一致），缺陷修复是青点。 -->
+              <span v-if="(name === 'team' && teamRunning) || (name === 'defect' && defectRunning)"
+                    class="nav-dot" :class="name === 'team' ? 'is-team' : 'is-defect'" aria-hidden="true" />
             </button>
           </el-tooltip>
         </div>

@@ -13,62 +13,62 @@
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root, [data-theme="dark"] {
-  /* 表面：底 → 面板 → 浮起，三档冷灰，不用纯黑（纯黑下描边会显脏） */
-  --bg: #0e1015;
-  --panel: rgba(255, 255, 255, 0.035);
-  --panel-solid: #161a21;
-  --bg-glow-1: rgba(124, 140, 255, 0.05);
-  --bg-glow-2: rgba(157, 123, 255, 0.04);
-  --surf: #161a21;      /* 面板 */
-  --surf2: #1a1f28;     /* 面板内的次级面（表头、代码框外框） */
-  --surf3: #202631;     /* 控件底、分段槽 */
+  /* 表面：蓝黑驾驶舱底色。底 → 面板 → 浮起，三档冷蓝灰，不用纯黑 */
+  --bg: #0a0f1c;
+  --panel: rgba(140, 170, 230, 0.04);
+  --panel-solid: #0f1626;
+  --bg-glow-1: rgba(76, 195, 255, 0.05);
+  --bg-glow-2: rgba(55, 214, 192, 0.04);
+  --surf: #0f1626;      /* 面板 */
+  --surf2: #131b2e;     /* 面板内的次级面（表头、代码框外框） */
+  --surf3: #16203a;     /* 控件底、分段槽 */
 
-  /* 描边：发丝线三档。旧 --border 抬到 7%（原来 9% 偏亮，面板之间像被框住） */
-  --border: rgba(255, 255, 255, 0.07);
-  --border-strong: rgba(255, 255, 255, 0.11);
-  --line: rgba(255, 255, 255, 0.07);
-  --line2: rgba(255, 255, 255, 0.11);
-  --line3: rgba(255, 255, 255, 0.04);
+  /* 描边：蓝白发丝线三档 */
+  --border: rgba(150, 180, 235, 0.10);
+  --border-strong: rgba(150, 180, 235, 0.16);
+  --line: rgba(150, 180, 235, 0.10);
+  --line2: rgba(150, 180, 235, 0.16);
+  --line3: rgba(150, 180, 235, 0.055);
 
   /* 文字：四级。层级主要靠字重与色阶，不靠字号乱跳 */
-  --text: #e7eaf0;
-  --text-dim: #a4adbd;
-  --muted: #6d7789;
-  --txt: #e7eaf0;
-  --txt2: #a4adbd;
-  --txt3: #6d7789;
-  --txt4: #4c5566;
+  --text: #dbe4f5;
+  --text-dim: #9fb0cc;
+  --muted: #6b7a99;
+  --txt: #dbe4f5;
+  --txt2: #9fb0cc;
+  --txt3: #6b7a99;
+  --txt4: #4a5878;
 
   /* 强调色：兜底值。实际由 useTheme 按 data-style 以 inline style 写在 <html> 上 */
-  --primary: #7c8cff;
-  --primary-2: #9d7bff;
-  --primary-soft: rgba(124, 140, 255, 0.10);
-  --ac: #7c8cff;
-  --ac2: #9d7bff;
-  --ac-bg: rgba(124, 140, 255, 0.10);
-  --ac-ln: rgba(124, 140, 255, 0.28);
+  --primary: #4cc3ff;
+  --primary-2: #37d6c0;
+  --primary-soft: rgba(76, 195, 255, 0.10);
+  --ac: #4cc3ff;
+  --ac2: #37d6c0;
+  --ac-bg: rgba(76, 195, 255, 0.10);
+  --ac-ln: rgba(76, 195, 255, 0.30);
 
   /* 语义色：饱和度收一档，深色下不再刺眼；soft 是它们的 10% 底 */
-  --success: #43c98b; --success-soft: rgba(67, 201, 139, 0.10);
-  --warn:    #dfa63f; --warn-soft:    rgba(223, 166, 63, 0.10);
+  --success: #4ade80; --success-soft: rgba(74, 222, 128, 0.10);
+  --warn:    #f0a848; --warn-soft:    rgba(240, 168, 72, 0.10);
   --danger:  #e5697a; --danger-soft:  rgba(229, 105, 122, 0.10);
   --ok: var(--success); --wn: var(--warn); --er: var(--danger);
 
-  --code-bg: #0b0d12;
-  --term: #0b0d12;                       /* 控制台抽屉底色 */
-  --kbd: rgba(255, 255, 255, 0.06);      /* 键帽底 */
-  --input-bg: rgba(255, 255, 255, 0.05);
-  /* 输入控件专用描边：暗色下通用 --border(7%) 太弱，输入框会和面板糊成一块 */
-  --input-border: rgba(255, 255, 255, 0.13);
-  --input-border-hover: rgba(255, 255, 255, 0.22);
+  --code-bg: #0b1120;
+  --term: #0b1120;                       /* 控制台抽屉底色 */
+  --kbd: rgba(150, 180, 235, 0.08);      /* 键帽底 */
+  --input-bg: rgba(150, 180, 235, 0.06);
+  /* 输入控件专用描边：暗色下通用 --border 太弱，输入框会和面板糊成一块 */
+  --input-border: rgba(150, 180, 235, 0.18);
+  --input-border-hover: rgba(150, 180, 235, 0.30);
   /* 阴影只给浮层（弹窗 / 下拉 / 抽屉）。面板用描边分层，不靠投影 */
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.40), 0 12px 32px -12px rgba(0, 0, 0, 0.60);
-  --shadow-pop: 0 24px 64px -16px rgba(0, 0, 0, 0.70), 0 0 0 1px rgba(255, 255, 255, 0.06);
+  --shadow-pop: 0 24px 64px -16px rgba(0, 0, 0, 0.70), 0 0 0 1px rgba(150, 180, 235, 0.08);
 
   /* 形状与节奏：4px 栅格，控件 7 / 面板 10 / 浮层 14 */
   --r-s: 7px; --r-m: 10px; --r-l: 14px;
   --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-5: 22px;
-  --topbar-h: 46px;
+  --topbar-h: 34px;
   --mono: ui-monospace, "SF Mono", "Cascadia Mono", Consolas, monospace;
   color-scheme: dark;
 }

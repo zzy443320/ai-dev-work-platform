@@ -15,7 +15,7 @@
    / `.stage` 这些名字都被 tests/ 下的界面用例锁着，本层**只改外观不改结构**。
    =========================================================================== */
 
-/* ===== 1. 顶栏：46px 细条 ===== */
+/* ===== 1. 顶栏：34px 状态条（驾驶舱外壳）===== */
 .topbar {
   --topbar-pt: 0px;
   --topbar-pb: 0px;
@@ -23,94 +23,123 @@
   /* gap 必须 ≤12：用例断言「页签条紧贴品牌右侧」的容差是 12px，
      顶栏间距再大就会把它顶出容差（原来 14px 就踩了这个线）。 */
   gap: 10px;
-  margin: -20px -28px 14px;
-  padding: 0 14px 0 16px;
-  background: var(--surf);
+  margin: -20px -28px 12px;
+  padding: 0 12px 0 14px;
+  background: rgba(10, 15, 28, 0.85);
   border-bottom: 1px solid var(--line);
   /* 顶栏是常驻件，给它一点底噪而不是完全平 —— 深色下与 --bg 只差一档 */
   box-shadow: none;
 }
-.brand { gap: 10px; min-width: 0; }
+.brand { gap: 8px; min-width: 0; }
 .logo {
-  width: 24px; height: 24px; border-radius: 6px; flex: none;
+  width: 20px; height: 20px; border-radius: 6px; flex: none;
   background: linear-gradient(140deg, var(--primary), var(--primary-2));
   box-shadow: none;
 }
-.logo svg { width: 13px; height: 13px; }
-/* 品牌名单行、副标题挪成品牌右侧的单行摘要：46px 装不下两行 */
+.logo svg { width: 11px; height: 11px; }
+/* 品牌名单行：驾驶舱状态条里品牌只是一枚「当前在哪」的铭牌 */
 .title-block { min-width: 0; }
-.title-block h1 { font-size: 13px; font-weight: 600; letter-spacing: -0.01em; white-space: nowrap; }
+.title-block h1 {
+  font-size: 12.5px; font-weight: 600; letter-spacing: 0.04em; white-space: nowrap;
+  color: var(--txt2);
+}
 .title-block .subtitle { display: none; }
-.top-actions { gap: 8px; }
-/* 46px 的顶栏是「一行」，右侧操作组全部按 28px 高一档收 */
+.top-actions { gap: 6px; }
+/* 34px 状态条：右侧操作组全部按 24px 高一档收 */
 .top-actions .icon-btn,
-.top-actions > .el-button.is-circle { width: 28px; height: 28px; border-radius: var(--r-s); }
+.top-actions > .el-button.is-circle { width: 24px; height: 24px; border-radius: 6px; }
 .icon-btn { border-color: var(--line); background: transparent; color: var(--txt3); }
 .icon-btn:hover { color: var(--txt); background: var(--surf3); border-color: transparent; }
-.top-actions > .el-select.style-picker { --el-select-width: 92px; width: 92px; }
-.style-picker .el-select__wrapper { min-height: 28px; height: 28px; }
+.top-actions > .el-select.style-picker { --el-select-width: 88px; width: 88px; }
+.style-picker .el-select__wrapper { min-height: 24px; height: 24px; border-radius: 6px; }
 .layout-switch { border-radius: var(--r-s); border-color: var(--line); background: transparent; }
-.ls-btn { width: 26px; height: 24px; border-radius: 5px; }
+.ls-btn { width: 24px; height: 21px; border-radius: 5px; }
 .ls-btn.active { background: var(--ac-bg); color: var(--ac); }
+
+/* 运行脉搏：品牌右侧的「有没有活儿在跑」一眼位。呼吸点只在有活儿时亮 ——
+   空闲时一颗静灰点，持续呼吸的装饰动效在空闲状态下是噪音。 */
+.cockpit-pulse {
+  display: flex; align-items: center; gap: 7px; flex: none;
+  font-size: 11.5px; color: var(--txt3); white-space: nowrap;
+}
+.cockpit-pulse .cp-dot {
+  width: 7px; height: 7px; border-radius: 50%; flex: none;
+  background: var(--txt4); opacity: 0.6;
+}
+.cockpit-pulse.on { color: var(--txt2); }
+.cockpit-pulse.on .cp-dot {
+  background: var(--ac2); opacity: 1; box-shadow: 0 0 8px rgba(55, 214, 192, 0.55);
+  animation: cockpit-breath 2.2s ease-in-out infinite;
+}
+@keyframes cockpit-breath { 0%, 100% { opacity: 0.4; transform: scale(0.85); } 50% { opacity: 1; transform: scale(1); } }
+.cockpit-pulse .cp-text { max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
+
+/* 状态条右端的时钟：mono 等宽避免每 30s 一跳时抖版 */
+.topbar-clock { flex: none; font-size: 11.5px; color: var(--txt4); letter-spacing: 0.05em; }
 
 /* 健康摘要：品牌右侧单行等宽小字（原来是标题下第二行 .subtitle）。
    等宽是因为它会随 AI 模式 / 仓库状态变长变短，比例字会让顶栏轻微抖动。
-   必须限宽并允许收缩：top 布局下页签条要 ≥756px 才不会在 1440 上溢出，
-   摘要不限宽就会把页签条挤成滚动态（用例「1440 装得下」正是断言这个）。 */
+   必须限宽并允许收缩：摘要不限宽就会把页签条挤成滚动态。 */
 .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
 .top-meta {
   font-family: var(--mono); font-size: 11px; color: var(--txt4);
   padding-left: 10px; border-left: 1px solid var(--line);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  flex: 0 1 auto; min-width: 0; max-width: 230px;
+  flex: 0 1 auto; min-width: 0; max-width: 210px;
 }
-/* top 布局下页签条优先，摘要让位（右侧状态药丸仍在，信息没丢） */
-.topbar-top .top-meta { display: none; }
+/* top 布局下页签条优先，摘要与脉搏让位（右侧状态药丸仍在，信息没丢） */
+.topbar-top .top-meta, .topbar-top .cockpit-pulse, .topbar-top .topbar-clock { display: none; }
 
 /* 状态药丸：从「大胶囊」收成小徽标，脉冲只保留在 running 上 */
-.status-tag.el-tag { height: 24px; padding: 0 9px; font-size: 11.5px; font-weight: 500; border-radius: 6px; }
+.status-tag.el-tag { height: 20px; padding: 0 8px; font-size: 11px; font-weight: 500; border-radius: 5px; }
 
 /* 页签条的水平外边距归零：style.css 给了 `margin: 0 6px`，而顶栏现在自带 10px gap，
    两者相加 16px 会顶破「页签条紧贴品牌右侧 ≤12px」这条容差。间距交给 gap 一处管。 */
 .topbar-tabs { margin-left: 0; margin-right: 0; }
 
-/* ===== 2. 图标栏（原分组导航）===== */
+/* ===== 2. 左缘模块轨（驾驶舱导航）===== */
 .layout {
-  grid-template-columns: 52px minmax(0, 1fr);
-  gap: 14px;
+  grid-template-columns: 46px minmax(0, 1fr);
+  gap: 12px;
 }
 .layout.layout-top { grid-template-columns: minmax(0, 1fr); }
 .side-nav {
   position: sticky;
-  top: calc(var(--topbar-h) + 14px + 20px);
+  top: calc(var(--topbar-h) + 12px + 20px);
   align-self: start;
   gap: 2px;
   padding: 4px 0;
-  max-height: calc(100vh - var(--topbar-h) - 62px);
+  max-height: calc(100vh - var(--topbar-h) - 58px);
   overflow-y: auto; scrollbar-width: none;
 }
 .side-nav::-webkit-scrollbar { width: 0; }
-/* 分组名在 52px 宽的轨道里放不下 —— 降级成一条分隔线。
+/* 分组名在 46px 宽的轨道里放不下 —— 降级成一条分隔线。
    保留 DOM 与文字（用例数的是 .nav-item，无障碍树里也需要分组语义）。 */
 .nav-group { display: flex; flex-direction: column; gap: 2px; }
 .nav-group-label {
-  font-size: 0; color: transparent; padding: 0; margin: 6px 16px 6px;
+  font-size: 0; color: transparent; padding: 0; margin: 6px 14px 6px;
   height: 1px; min-height: 1px; background: var(--line); overflow: hidden;
 }
 .nav-item {
   position: relative;
-  width: 36px; height: 34px; margin: 0 auto; padding: 0;
-  display: grid; place-items: center; border-radius: 8px;
+  width: 34px; height: 34px; margin: 0 auto; padding: 0;
+  display: grid; place-items: center; border-radius: 9px;
   color: var(--txt3); font-size: 0;   /* 文字靠 tooltip，不占宽度 */
 }
 .nav-item svg { width: 16px; height: 16px; opacity: 1; }
 .nav-item > span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
 .nav-item:hover { background: var(--surf3); color: var(--txt); }
-.nav-item.active { background: var(--ac-bg); color: var(--ac); font-weight: 400; }
-.nav-item.active::before {
-  content: ''; position: absolute; left: -8px; top: 9px; bottom: 9px; width: 2px;
-  border-radius: 2px; background: var(--ac);
+.nav-item.active {
+  background: var(--ac-bg); color: var(--ac); font-weight: 400;
+  box-shadow: inset 0 0 0 1px var(--ac-ln);
 }
+/* 状态灯：该模块有活儿在跑时右上角亮一颗 —— 缺陷修复青、长任务紫。 */
+.nav-dot {
+  position: absolute; right: 4px; top: 4px;
+  width: 6px; height: 6px; border-radius: 50%;
+}
+.nav-dot.is-defect { background: var(--ac2); box-shadow: 0 0 6px rgba(55, 214, 192, 0.8); animation: cockpit-breath 2.2s ease-in-out infinite; }
+.nav-dot.is-team { background: #b48cff; box-shadow: 0 0 6px rgba(180, 140, 255, 0.8); animation: cockpit-breath 2.2s ease-in-out infinite; }
 
 /* ===== 3. 面板：实底 + 发丝线 + 平 ===== */
 .panel {
