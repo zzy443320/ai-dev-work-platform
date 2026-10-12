@@ -26,7 +26,8 @@ const STYLE_KEY = 'fixer-style'
  * 强调色只出现在选中态 / 主按钮 / 进度三处，所以色本身要更干净、更不刺眼。
  */
 export const STYLES = [
-  { key: 'indigo', label: '靛青', primary: '#7c8cff', accent: '#9d7bff', onLight: '#4a54d6' },
+  // 驾驶舱主色：指挥蓝 + 松石青（onLight 仍是浅色主题下的可读主色）
+  { key: 'indigo', label: '指挥蓝', primary: '#4cc3ff', accent: '#37d6c0', onLight: '#1f6fd0' },
   { key: 'blue', label: '海蓝', primary: '#4c8dff', accent: '#5ce1ff', onLight: '#1f5fd0' },
   { key: 'teal', label: '松石', primary: '#2bb5a8', accent: '#4fd6c2', onLight: '#0f7f76' },
   { key: 'amber', label: '琥珀', primary: '#d69526', accent: '#f0c060', onLight: '#a06a10' },

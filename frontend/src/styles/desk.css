@@ -304,6 +304,7 @@ body { font-size: 13px; letter-spacing: -0.003em; }
 #pane-defect > #run-panel,
 #pane-defect > #stats-panel,
 #pane-defect > #kb-panel,
+#pane-defect > .defect-hero,
 #pane-defect > [id^="artifact-panel"] { grid-column: 1 / -1; }
 #pane-defect > #proposal-panel { grid-column: 1; min-width: 0; }
 #pane-defect > #inspector-panel { grid-column: 2; min-width: 0; align-self: start; }
@@ -492,3 +493,49 @@ body { font-size: 13px; letter-spacing: -0.003em; }
 }
 .pl-foot .kbd { margin-right: 4px }
 .pl-foot .pl-brand { margin-left: auto; color: var(--txt4) }
+
+/* ===== 7. 缺陷修复驾驶舱主舞台（#defect-hero）=====
+   名牌 | 环形阶段盘 | agent 直播，三段一行；窄屏（参数抽屉开着时）允许折行。
+   所有数字都来自真实信号：环吃 stageStates，直播吃 live 流，没有编造的进度。 */
+.defect-hero {
+  display: flex; align-items: center; gap: 22px;
+  padding: 14px 18px; margin-bottom: 12px;
+  background:
+    radial-gradient(420px 180px at 24% 0%, var(--bg-glow-1), transparent 70%),
+    var(--surf);
+  border: 1px solid var(--line);
+  border-radius: var(--r-l);
+}
+.dh-nameplate { min-width: 0; flex: 1; }
+.dh-kicker {
+  font-size: 10.5px; letter-spacing: 0.14em; color: var(--txt3); text-transform: none;
+}
+.dh-status {
+  margin-top: 6px; display: flex; align-items: center; gap: 8px;
+  font-size: 20px; font-weight: 700; color: var(--txt);
+}
+.dh-status.is-run { color: var(--ac); }
+.dh-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--txt4); opacity: 0.6; flex: none; }
+.dh-status.is-run .dh-dot {
+  background: var(--ac2); opacity: 1;
+  box-shadow: 0 0 10px rgba(55, 214, 192, 0.55);
+  animation: cockpit-breath 2.2s ease-in-out infinite;
+}
+.dh-hint { margin-top: 7px; font-size: 11.5px; color: var(--txt3); line-height: 1.6; }
+.dh-live {
+  flex: 0 0 320px; min-width: 0;
+  border: 1px solid var(--line); border-radius: var(--r-m);
+  background: var(--code-bg); padding: 10px 13px;
+}
+.dh-live-h {
+  display: flex; align-items: center; gap: 7px;
+  font-size: 10px; letter-spacing: 0.14em; color: var(--txt3);
+}
+.dh-live-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--txt4); flex: none; }
+.dh-live-tx {
+  margin-top: 7px; font-size: 12px; line-height: 1.65; color: var(--txt2);
+  font-family: var(--mono);
+  display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical;
+  overflow: hidden; word-break: break-all;
+}
+.dh-live-tx.is-live { color: var(--txt); }

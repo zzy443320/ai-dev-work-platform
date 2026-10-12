@@ -21,6 +21,7 @@ import { useModuleParams } from '../composables/useModuleParams.js'
 // 「选中 / 放大」两个动作，判定逻辑一律留在 composable 里，不在页签内复制一套。
 import { useProposalModal } from '../composables/useProposalModal.js'
 import { api } from '../api/client.js'
+import StageRing from '../components/StageRing.vue'
 import ParamBar from '../components/ParamBar.vue'
 import ParamDrawer from '../components/ParamDrawer.vue'
 import RunLog from '../components/RunLog.vue'
@@ -161,6 +162,22 @@ function esc(s) {
 /** 提案列表面板角标样式（有开放项时高亮） */
 const badgeAlert = computed(() => openCount.value > 0)
 
+/** 主舞台直播摘要：真实信号优先级 = 流式输出 > 启动提示 > 上一轮结论 > 空态引导。
+ *  live.think / live.out 是纯文本流，用插值渲染不做 v-html —— 直播内容是模型
+ *  产出，未消毒前进 DOM 是注入面。完整过程仍在下方运行日志（那里的渲染
+ *  走 RunLog 自己的转义管线）。 */
+const liveText = computed(() => {
+  if (hasLive.value && live.value) {
+    const think = (live.value.think || '').trim()
+    const out = (live.value.out || '').trim()
+    return think || out || '模型输出中…'
+  }
+  if (running.value) return '流水线已启动，等待阶段事件…'
+  return lines.value && lines.value.length
+    ? '本轮已结束 · 完整过程见下方运行日志'
+    : '尚未运行。范围与参数在右侧抽屉里，点「运行」开始。'
+})
+
 onMounted(async () => {
   // 占用先读一次：进页面就该立刻知道「有人在跑」，不等 3 秒轮询的下一拍
   refreshLease()
@@ -175,6 +192,26 @@ onMounted(async () => {
        那边绑好）。放在模块最顶部而不是全局头部 —— 它是**这个模块**的进度条，
        横在整页头部会把整个版面（含 side 布局的左侧导航）往下挤。 -->
   <slot name="stage-flow" />
+
+  <!-- 驾驶舱主舞台头牌：名牌 + 环形阶段盘 + agent 直播摘要。
+       每个数字都挂真实信号：环的段色就是 stageStates（与上方细轨同源），
+       直播文案只读流式文本，不编伤害值不摆假进度。 -->
+  <section class="defect-hero" id="defect-hero">
+    <div class="dh-nameplate">
+      <div class="dh-kicker">缺陷修复 · 运行驾驶舱</div>
+      <div class="dh-status" :class="running ? 'is-run' : ''">
+        <span class="dh-dot" aria-hidden="true" />{{ running ? '运行中' : '待命' }}
+      </div>
+      <p class="dh-hint">补丁先在沙箱里真跑验收，跑通才成为提案；采纳才写工作区（不 commit、不 push）。</p>
+    </div>
+    <StageRing :states="stageStates" :running="running" />
+    <div class="dh-live">
+      <div class="dh-live-h">
+        <span class="dh-live-dot" aria-hidden="true" />AGENT 直播
+      </div>
+      <p class="dh-live-tx" :class="{ 'is-live': hasLive }">{{ liveText }}</p>
+    </div>
+  </section>
 
   <section class="panel collapsible" id="run-panel" :class="{ collapsed: isCollapsed('run-panel') }">
     <div class="panel-head">

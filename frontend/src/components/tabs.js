@@ -35,6 +35,20 @@ export const ARTIFACT_TAB_LABEL = {
 export const STAGE_FLOW_TAB = 'defect'
 
 /**
+ * 流水线五阶段的唯一事实来源。App.vue 的阶段细轨与 StageRing 的环形盘
+ * 都读这一份 —— 阶段名改了两边必须一起变，所以收拢成常量而不是各自写字面量。
+ * 键用 label 不用 name：check_vue_migration 用 name:'(\w+)' 的正则数页签顺序，
+ * 这里的 name 会把断言搅乱。
+ */
+export const STAGES = [
+  { label: '拉取', desc: 'ONES 工单' },
+  { label: '定位', desc: 'git grep + AI' },
+  { label: '生成提案', desc: 'SEARCH-REPLACE' },
+  { label: '闸门', desc: '命令或降级' },
+  { label: '沉淀', desc: '知识库卡片' },
+]
+
+/**
  * 「占满型」页签：内容区要吃掉主列的剩余高度（问答这种对话式工作台）。
  *
  * 只有这些页签会让 `.col-main` 的 #tabs 行走 `1fr`。其余页签一律按内容自然流、

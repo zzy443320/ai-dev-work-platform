@@ -40,7 +40,7 @@ import RunModal from './components/RunModal.vue'
 import AiModal from './components/AiModal.vue'
 import ChangelogModal from './components/ChangelogModal.vue'
 import CommandPalette from './components/CommandPalette.vue'
-import { TABS, DEFAULT_TAB, ARTIFACT_TAB_LABEL, STAGE_FLOW_TAB, FILL_TABS, ICON_PATHS } from './components/tabs.js'
+import { TABS, DEFAULT_TAB, ARTIFACT_TAB_LABEL, STAGE_FLOW_TAB, STAGES, FILL_TABS, ICON_PATHS } from './components/tabs.js'
 import { useTheme } from './composables/useTheme.js'
 import { useConfigDrawer } from './composables/useConfigDrawer.js'
 import { useModuleParams } from './composables/useModuleParams.js'
@@ -157,13 +157,7 @@ const tabBy = Object.fromEntries(TABS.map((t) => [t.name, t]))
 // 这里翻译成 el-step 认识的状态；同时把原始标签当 class 挂上去 ——
 // 用例断言的是 `.stage` 上的 done/warn/fail 字样，Element 自己的
 // is-finish / is-error 命名对不上，保留原文最稳。
-const STAGES = [
-  { name: '拉取', desc: 'ONES 工单' },
-  { name: '定位', desc: 'git grep + AI' },
-  { name: '生成提案', desc: 'SEARCH-REPLACE' },
-  { name: '闸门', desc: '命令或降级' },
-  { name: '沉淀', desc: '知识库卡片' },
-]
+// 阶段名与描述收拢在 tabs.js 的 STAGES（StageRing 环形盘读同一份）。
 const STEP_STATUS = {
   active: 'process',
   done: 'finish',
@@ -511,10 +505,10 @@ const healthText = computed(() => {
                 <el-steps v-show="showStageFlow" id="stage-flow" class="stage-flow">
                   <el-step
                     v-for="(s, i) in STAGES"
-                    :key="s.name"
+                    :key="s.label"
                     class="stage"
                     :class="stageState(i)"
-                    :title="s.name"
+                    :title="s.label"
                     :description="s.desc"
                     :status="stageStatus(i)"
                   />
