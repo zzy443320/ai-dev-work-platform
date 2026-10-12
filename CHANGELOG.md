@@ -525,3 +525,9 @@
 - 做法：设计令牌集中在 style.css 顶部一层，旧变量名全部保留、新增一组语义别名，改配色只改这一处；外壳覆盖放 frontend/src/styles/desk.css、基元覆盖放 primitives.css，靠 Vite 产出的 v2.*.css 在 style.css 之后加载赢过旧规则，两千多条既有规则一行没动。战场视图每个数字都挂真实信号：HP 是还没打通的阶段占比（active 不算打通）、目标与序号来自 defect 事件（为此把 runTarget 提到 useDefect 状态里，而不是让视图去正则解析日志文本）、护盾读闸门降级配置、施法条是大模型此刻的流式输出、播报原样复用日志行只按 kind 换图标不编伤害值；刻意没做「回合蓝条」，因为每轮实际用掉几轮没有流式计数可读，凭空画一条就是骗人。三处踩坑：el-steps 的 align-center 会给每步写内联 flex-basis 只能 !important 压；RunLog 组件的根是 .log-wrap 而 #run-log 是它里面的 pre，折叠选择器打错就完全无效；useHotkeys 写在 const activeTab 之前会撞 TDZ，表现是页面全白且控制台干净。快捷键给「焦点在输入框」开了豁免，否则在决策备注里打字会跳选中行、按回车会变成采纳。
 - 文件：frontend/src/styles/desk.css、primitives.css、components/CommandPalette.vue、components/BattleView.vue、components/ProposalInspector.vue、components/ProposalCard.vue、composables/usePalette.js、useHotkeys.js、useProposalModal.js、useDefect.js、views/DefectPane.vue、App.vue、main.js、web/static/style.css
 - 影响：刷新页面即生效，无需重启后端。选中态与快捷键是新增能力，旧操作路径全部保留。两处界面用例按新模型重写并保留原意图：面板间距断言改成按行分组再量（两列并排后按旧的「相邻两块」算法会算出负数假失败），点提案卡改成先验证进检视器、再验证「放大」开弹窗。顶栏高度断言从写死 76 改成读 --topbar-h 声明值。多栏总闸的容器查询阈值随外壳重推（图标栏让主列在同一视口下宽了约 160px，旧阈值会提前劈两栏）。check_vue_all 全套 15 个用例非零退出 0 个，eslint 0 error，九个页签深浅两套共 18 张真截图无报错。
+
+## 2026-10-12 10:40 · 回退 · 移除 Boss 战场视图，游戏化整体下线
+- 内容：运行中不再整屏接管成 Boss 战场，流水线全程回到控制台日志。上一条目里「日志区自动切成战场视图」一段随之作废，其余改版（三栏工作台、master-detail 审批、⌘K、统计页 KPI 卡）全部保留。
+- 做法：`git revert` 两个提交（3a6bab9 整屏战场、f78cb11 第五梯队引入），前端源码与构建产物一并清干净。f78cb11 里顺带修的「阶段细轨 flex-wrap 折行吃掉主列」与游戏无关，单独保留：.stage-flow 仍是不换行 + 横向滚。运行目标（工单序号/标题）回到 pushLine 的临时参数，不再占用 useDefect 状态。
+- 文件：frontend/src/components/BattleView.vue（删除）、frontend/src/styles/battle.css（删除）、App.vue、main.js、useDefect.js、DefectPane.vue、desk.css、primitives.css、web/static/vue/*（重新构建）
+- 影响：刷新页面即生效，无需重启后端。运行中的等待体验回到日志视图；⌃` 日志开合快捷键不受影响。验收：前端构建零报错，check_vue_all 全套用例真跑通过，源码与产物均无战场残留。
