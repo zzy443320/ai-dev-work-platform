@@ -20,6 +20,7 @@ import { useModuleParams } from '../composables/useModuleParams.js'
 // 检视器与弹窗共用一份详情状态（见 useProposalModal 顶部注释）。这里只取
 // 「选中 / 放大」两个动作，判定逻辑一律留在 composable 里，不在页签内复制一套。
 import { useProposalModal } from '../composables/useProposalModal.js'
+import { useSettings } from '../composables/useSettings.js'
 import { api } from '../api/client.js'
 import StageRing from '../components/StageRing.vue'
 import ParamBar from '../components/ParamBar.vue'
@@ -54,6 +55,8 @@ const { isCollapsed, toggleFold } = useFold()
 const { openRunModal } = useRunModal()
 const { close: closeParams } = useModuleParams()
 const { pinnedId, selectInline } = useProposalModal()
+// 护盾 chip 读闸门配置的降级态（form 是模块级单例，App 启动时已 loadSettings）。
+const { form: settingsForm } = useSettings()
 
 /**
  * master-detail：点队列行 = 选中并在右侧检视器展开，**不再**直接弹全屏窗。
@@ -184,6 +187,8 @@ onMounted(async () => {
   await ensure()
   await loadRepoBanner()
   await loadArtifacts('repro')
+  // 主舞台底部的分类指标带（stats-panel 通栏化后就是它的数据源），幂等 GET
+  loadStats()
 })
 </script>
 
@@ -197,19 +202,29 @@ onMounted(async () => {
        每个数字都挂真实信号：环的段色就是 stageStates（与上方细轨同源），
        直播文案只读流式文本，不编伤害值不摆假进度。 -->
   <section class="defect-hero" id="defect-hero">
-    <div class="dh-nameplate">
-      <div class="dh-kicker">缺陷修复 · 运行驾驶舱</div>
-      <div class="dh-status" :class="running ? 'is-run' : ''">
-        <span class="dh-dot" aria-hidden="true" />{{ running ? '运行中' : '待命' }}
+    <div class="dh-top">
+      <div class="dh-nameplate">
+        <div class="dh-kicker">缺陷修复 · 运行驾驶舱</div>
+        <div class="dh-status" :class="running ? 'is-run' : ''">
+          <span class="dh-dot" aria-hidden="true" />{{ running ? '运行中' : '待命' }}
+        </div>
+        <p class="dh-hint">补丁先在沙箱里真跑验收，跑通才成为提案；采纳才写工作区（不 commit、不 push）。</p>
       </div>
-      <p class="dh-hint">补丁先在沙箱里真跑验收，跑通才成为提案；采纳才写工作区（不 commit、不 push）。</p>
+      <StageRing :states="stageStates" :running="running" />
+      <div class="dh-live">
+        <div class="dh-live-h">
+          <span class="dh-live-dot" aria-hidden="true" />AGENT 直播
+        </div>
+        <p class="dh-live-tx" :class="{ 'is-live': hasLive }">{{ liveText }}</p>
+      </div>
     </div>
-    <StageRing :states="stageStates" :running="running" />
-    <div class="dh-live">
-      <div class="dh-live-h">
-        <span class="dh-live-dot" aria-hidden="true" />AGENT 直播
-      </div>
-      <p class="dh-live-tx" :class="{ 'is-live': hasLive }">{{ liveText }}</p>
+    <!-- 护盾 chip 读真实闸门配置：降级态一眼可见，不用点进配置页确认。
+         复现用例 chip 是引导不是状态断言 —— 数据在 repro 面板里，不假装有数。 -->
+    <div class="dh-chips">
+      <span class="dh-chip" :class="settingsForm.gate.degraded ? 'is-warn' : 'is-ok'">
+        护盾 · {{ settingsForm.gate.degraded ? '降级为语法检查' : '闸门真跑' }}
+      </span>
+      <span class="dh-chip">复现用例 · 沙箱先跑红再修绿，挂在本页下方待你采纳</span>
     </div>
   </section>
 
@@ -224,8 +239,28 @@ onMounted(async () => {
       </button>
     </div>
     <!-- 主区只放过程与产物：参数摘要条 + 实时运行日志。工单范围、Limit、
-         试运行/运行这些一次性输入搬进了右侧参数抽屉（见文件末尾的 ParamDrawer）。 -->
-    <ParamBar name="defect" action="运行参数" :items="summary" />
+         试运行/运行这些一次性输入搬进了右侧参数抽屉（见文件末尾的 ParamDrawer）。
+         驾驶舱改版：运行/试运行/刷新是常驻主操作，从抽屉 footer 提到摘要条
+         动作区 —— 抽屉默认收起后，按钮不能再藏在只有点开才见的浮层里。 -->
+    <ParamBar name="defect" action="运行参数" :items="summary">
+      <div class="pb-actions">
+        <el-button type="primary" id="btn-run" :disabled="!canStart" @click="onStart('run')"
+                   :title="canStart ? '' : '槽位被占用，见上方运行占用条（可点「停止」）'">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="6 3 20 12 6 21 6 3" /></svg>
+          运行
+        </el-button>
+        <el-button id="btn-probe" :disabled="!canStart" @click="onStart('probe')"
+                :title="canStart ? '只拉取 ONES 工单并 AI 定位问题，不生成提案、不进审批、不写任何文件' : '槽位被占用，见上方运行占用条（可点「停止」）'">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></svg>
+          试运行
+        </el-button>
+        <el-button id="btn-defect-refresh" @click="refreshAll()"
+                   title="重新拉取提案 / 统计 / 知识库列表">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.6-6.3" /><polyline points="21 3 21 9 15 9" /></svg>
+          刷新
+        </el-button>
+      </div>
+    </ParamBar>
 
     <!-- 占用条：槽位被别的来源（外部脚本 / 另一个标签页）占着时，这里就是唯一
          能看到「是谁、到哪了、能不能停」的地方——以前只能干等一句 409。 -->
@@ -373,7 +408,11 @@ onMounted(async () => {
        「刷新」也留在这里（和运行/试运行同组）：它刷的是提案/统计/知识库三份列表，
        用的时机就是「准备跑之前先看看现状」。面板头不放按钮是为了不改动
        .panel-head 那套 h2 + fold + 筛选的既有排布（提案面板就长那样）。 -->
-  <ParamDrawer name="defect" title="运行参数"
+  <!-- 驾驶舱三列（塔台|主舞台|审判台）需要首屏就把右列让给审判台，
+       所以这个抽屉改成默认收起：参数是「改的时候才看」的东西，摘要条
+       （ParamBar）常驻，点「修改运行参数」再浮出。抽屉开着时容器变窄，
+       三列自动降级两列 —— 让位与浮层行为沿用 style.css 的既有机制。 -->
+  <ParamDrawer name="defect" title="运行参数" :default-open="false"
                hint="工单范围与运行方式。点「运行 / 试运行」后抽屉自动收起，主区就是实时日志。">
     <label class="switch">
       <input type="checkbox" id="opt-mine" v-model="mineOnly">
@@ -393,23 +432,5 @@ onMounted(async () => {
              placeholder="填 ONES 工单的 UUID；留空则拉最近工单列表">
     </label>
     <div class="info-note" id="dry-warn">说明：「试运行」只拉取 ONES 工单并 AI 定位问题（不生成提案、不进审批、不写文件），用来独立验证连通性和定位效果；<br>「运行」走完整流水线产出提案（补丁 + diff + 闸门结果 + 截图），同样不改动目标仓库，人工采纳才写工作区（不 commit、不 push）。<br>运行过程中可实时看到每个阶段的进展，以及大模型的思考与输出。</div>
-
-    <template #footer>
-      <el-button type="primary" id="btn-run" :disabled="!canStart" @click="onStart('run')"
-                 :title="canStart ? '' : '槽位被占用，见上方运行占用条（可点「停止」）'">
-        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="6 3 20 12 6 21 6 3" /></svg>
-        运行
-      </el-button>
-      <el-button id="btn-probe" :disabled="!canStart" @click="onStart('probe')"
-              :title="canStart ? '只拉取 ONES 工单并 AI 定位问题，不生成提案、不进审批、不写任何文件' : '槽位被占用，见上方运行占用条（可点「停止」）'">
-        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></svg>
-        试运行
-      </el-button>
-      <el-button id="btn-defect-refresh" @click="refreshAll()"
-                 title="重新拉取提案 / 统计 / 知识库列表">
-        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.6-6.3" /><polyline points="21 3 21 9 15 9" /></svg>
-        刷新
-      </el-button>
-    </template>
   </ParamDrawer>
 </template>

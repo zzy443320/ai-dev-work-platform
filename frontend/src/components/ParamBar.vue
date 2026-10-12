@@ -45,5 +45,9 @@ const hasTodo = computed(() => props.items.some((i) => i.tone === 'todo'))
       </svg>
       {{ btnText }}
     </el-button>
+    <!-- 动作区插槽：驾驶舱改版后「运行」这类主操作是常驻件，不藏在抽屉里。
+         调用方放 .pb-actions（margin-left:auto 推到行尾；宽屏下主列给抽屉
+         让出 436px，行尾即内容区右缘，抽屉开着也盖不到这里）。 -->
+    <slot />
   </div>
 </template>

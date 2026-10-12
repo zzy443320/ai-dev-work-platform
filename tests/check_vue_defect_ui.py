@@ -188,7 +188,11 @@ def run(base: str, dirs, *, errors: list) -> None:
         check("切到缺陷修复页后 .active",
               page.eval_on_selector("#pane-defect", "el => el.classList.contains('active')"))
 
-        # ── 1. 面板顺序（check_panel_fold.py 契约）──
+        # ── 1. 面板顺序（check_panel_fold.py 契约的驾驶舱三列版）──
+        # 原断言量四面板 top 递增，那是单列/两列时代的「阅读顺序」。
+        # 三列主舞台（塔台|主舞台|审判台）下 top 递增不再成立 —— 意图不变：
+        # DOM 源顺序必须仍是 运行 → 提案 → 统计 → 知识库（折叠记忆、
+        # 无障碍树与 1440 两列降级布局都依赖它），改用 compareDocumentPosition 断言。
         order = ["run-panel", "proposal-panel", "stats-panel", "kb-panel"]
         tops = page.evaluate("""ids => ids.map(id => {
           const el = document.getElementById(id);
@@ -196,31 +200,25 @@ def run(base: str, dirs, *, errors: list) -> None:
         })""", order)
         check("四个面板齐全且在页面里",
               all(t is not None for t in tops), str(tops))
-        check("面板顺序：运行 → 提案 → 统计 → 知识库",
-              tops == sorted(tops), str([round(t) for t in tops]))
+        dom_ordered = page.evaluate("""ids => {
+          const els = ids.map(id => document.getElementById(id));
+          for (let i = 1; i < els.length; i++) {
+            if (!(els[i - 1].compareDocumentPosition(els[i]) & Node.DOCUMENT_POSITION_FOLLOWING))
+              return false;
+          }
+          return true;
+        }""", order)
+        check("面板 DOM 顺序：运行 → 提案 → 统计 → 知识库", dom_ordered, str(order))
 
-        # 面板间隙 >=12px —— 2026-10-09 三栏改版后必须**按行分组**再量：
-        # 队列(#proposal-panel) 与检视器(#inspector-panel) 是同一行的两列，
-        # 用旧写法「相邻两块 top - 前一块 bottom」会算出负数（-368），
-        # 而这条断言真正要守的是「上下两行之间不许贴死」。
-        # 同时补一条同行不重叠：两列之间必须留正间隙，否则就是栅格塌了。
-        gap = page.evaluate("""() => {
-          const ps = [...document.querySelectorAll('#pane-defect > .panel')]
-            .filter(el => !el.classList.contains('hidden'));
-          const rows = [];
-          for (const el of ps) {
-            const r = el.getBoundingClientRect();
-            const row = rows.find((x) => Math.abs(x.top - r.top) <= 4);
-            if (row) { row.right = Math.max(row.right, r.right); row.els.push(el.id); }
-            else rows.push({ top: r.top, bottom: r.bottom, right: r.right, els: [el.id] });
-          }
-          const out = [];
-          for (let i = 1; i < rows.length; i++) {
-            out.push(Math.round(rows[i].top - rows[i - 1].bottom));
-          }
-          return out;
+        # 面板间隙 >=12px —— 2026-10-09 三栏改版按行分组量过；驾驶舱三列下
+        # 塔台/审判台是跨行面板，任何 rect 相减都会把跨行算成负间距。
+        # 间距本来就是 grid gap 一处管的，直接断言计算值最诚实：行/列 gap >= 12。
+        gaps = page.evaluate("""() => {
+          const cs = getComputedStyle(document.querySelector('#pane-defect'));
+          return { rowGap: parseFloat(cs.rowGap), colGap: parseFloat(cs.columnGap) };
         }""")
-        check("面板行间距 >= 12px", bool(gap) and min(gap) >= 12, str(gap))
+        check("面板行/列间距 >= 12px（grid gap）",
+              gaps["rowGap"] >= 12 and gaps["colGap"] >= 12, str(gaps))
         side = page.evaluate("""() => {
           const a = document.querySelector('#proposal-panel').getBoundingClientRect();
           const b = document.querySelector('#inspector-panel').getBoundingClientRect();
