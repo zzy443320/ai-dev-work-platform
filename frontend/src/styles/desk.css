@@ -787,3 +787,23 @@ body { font-size: 13px; letter-spacing: -0.003em; }
 }
 /* 人工介入台：按钮组是「随时能按」的红色件，卡底沉一档 */
 #team-intervene-panel { background: var(--code-bg); }
+
+/* ===== 14. 工具四屏驾驶舱（需求开发 / 接口联调 / 代码测试 / 扩展能力）=====
+   三块「过程 + 产物」主面板（#req-panel / #api-panel / #test-panel）是各自
+   模块的舞台：氛围光 + 亮描边；预览区（#figma-tree / #test-preview）是
+   终端的观感（term 底 + 描边），它是 AI 的输入依据，不是普通文本块。 */
+#req-panel, #api-panel, #test-panel {
+  background:
+    radial-gradient(520px 240px at 50% 0%, rgba(76, 195, 255, 0.07), transparent 70%),
+    var(--surf);
+  border-color: rgba(76, 195, 255, 0.2);
+}
+#figma-tree, #test-preview {
+  background: var(--term); border: 1px solid var(--line2);
+  border-radius: var(--r-m); padding: 12px 14px;
+}
+/* 扩展能力：技能 + MCP 两 panel 并排（容器 ≥1240） */
+@container main (min-width: 1240px) {
+  #pane-extensions.active { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; }
+}
+#ext-skill-panel, #ext-mcp-panel { background: var(--code-bg); }
