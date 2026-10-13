@@ -123,9 +123,7 @@
 .block-banner b { color: var(--wn) }
 .gate-hint, .mod-drawer-hint, .head-note { color: var(--txt4); font-size: 11.5px }
 
-/* ---- 参数摘要条与模块抽屉 ---- */
-.param-bar { background: var(--surf2); border-color: var(--line); border-radius: var(--r-s) }
-.param-bar-label { color: var(--txt3); font-weight: 600; font-size: 11.5px }
+/* ---- 模块抽屉（现只剩扩展能力的表单浮层；任务模块参数已改走 params.css）---- */
 .mod-drawer { background: var(--surf); border-left-color: var(--line) }
 .mod-drawer-head { border-bottom-color: var(--line) }
 .mod-drawer-title { font-size: 13.5px; font-weight: 600; letter-spacing: -.01em }

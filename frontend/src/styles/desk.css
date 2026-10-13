@@ -636,9 +636,6 @@ body { font-size: 13px; letter-spacing: -0.003em; }
   #stats-panel .stat-card { background: var(--code-bg); border-radius: var(--r-m); }
 }
 
-/* 摘要条动作区：运行/试运行/刷新 —— 驾驶舱的常驻主操作行尾位 */
-.param-bar .pb-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; flex: none; }
-
 /* ===== 9. 主舞台撑满首屏（方向稿是满屏驾驶舱，不是横幅+长后台）=====
    hero 抬到首屏主角：大环 + 双层氛围光 + 大数字。页面其余面板退到折叠线以下。 */
 .defect-hero {

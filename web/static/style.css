@@ -388,17 +388,20 @@ body {
   background: rgba(8, 11, 20, 0.45);
 }
 
-/* ===== 模块参数抽屉（ParamDrawer / ParamBar）=====
-   六个任务型模块的输入区。形态照配置抽屉（固定右侧浮层 + 自身内滚），但两点不同：
+/* ===== 表单型浮层抽屉（ParamDrawer）=====
+   2026-10-13 参数形态改版后**只剩扩展能力在用**（技能 / MCP 两个新增表单）：
+   五个任务模块的参数已经换成 schema 驱动的就地控件条 / 常驻参数轨
+   （见 frontend/src/styles/params.css），不再有浮层，也不再让主列腾位。
+   保留的这两条契约不变：
    · 显隐走 `.hidden`（display:none）而不是 visibility+transform —— 关着的抽屉不该
      留在可访问性树里抢 Tab 序，界面用例读的也是 `.hidden`；入场动画靠 animation
      在 display:none → 显示时天然重播。
-   · **默认打开，所以刻意做成非模态**：宽屏下不铺遮罩，改由 `.col-main.params-open`
-     让出右侧 436px，主区的过程与产物始终可见（模态抽屉默认打开等于常年盖住半屏）。
-     窄屏（视口 ≤1100）让不出空间，才退回「遮罩 + 浮层」的模态形态。
+   · 列表管理型默认关着（点「新增」才开），所以宽屏下不铺遮罩，改由
+     `.col-main.params-open` 让出右侧 436px；窄屏（视口 ≤1100）让不出空间，
+     才退回「遮罩 + 浮层」的模态形态。
    · 挂在各模块 pane 内部，el-tab-pane 切走时一起消失，不会跨页签残留。
    · z-index 56/59：压在配置抽屉(60)之下、配置遮罩(55)之上。
-   宽度 420px 比配置抽屉宽一点：里面装的是长文本域（接口文档、代码参考），
+   宽度 420px 比配置抽屉宽一点：里面装的是长文本域（MCP 的 env / headers），
    348px 会把 textarea 压成一列一个字。 */
 .mod-mask {
   position: fixed; inset: 0; z-index: 56;
@@ -469,29 +472,6 @@ body {
 }
 .src-state.ok { color: var(--success); border-color: var(--success-soft); background: var(--success-soft); }
 .src-state.bad { color: var(--danger); border-color: var(--danger-soft); background: var(--danger-soft); }
-
-/* 主区顶部的参数摘要条 */
-.param-bar {
-  display: flex; align-items: center; flex-wrap: wrap; gap: 8px 10px;
-  margin-bottom: 14px; padding: 9px 12px;
-  border: 1px solid var(--border); border-radius: 10px;
-  background: var(--input-bg);
-}
-.param-bar-label { font-size: 12px; font-weight: 600; color: var(--text-dim); }
-.param-chip {
-  display: inline-flex; align-items: center; gap: 6px;
-  max-width: 340px; padding: 3px 9px; border-radius: 999px;
-  background: var(--panel); border: 1px solid var(--border);
-  font-size: 11.5px; color: var(--text);
-}
-.param-chip b { font-weight: 600; color: var(--muted); flex: none; }
-.param-chip i { font-style: normal; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* 「还没填」用告警色而不是红：这是提示，不是错误 */
-.param-chip.todo { color: var(--warn); border-color: var(--warn-soft); background: var(--warn-soft); }
-.param-chip.todo b { color: var(--warn); }
-.param-bar .el-button.is-on {
-  color: var(--primary); border-color: var(--primary); background: var(--primary-soft);
-}
 
 /* 顶栏布局切换器：两个排列图标按钮，选中态用主色 */
 .layout-switch {
