@@ -17,6 +17,8 @@ import ParamField from './ParamField.vue'
 const props = defineProps({
   name: { type: String, required: true },
   model: { type: Object, required: true },
+  /** 标签解析器，透传给 ParamField（见其注释：以后端数据为准的标签走这条） */
+  optLabel: { type: Function, default: null },
 })
 
 const mod = computed(() => paramModule(props.name) || { fields: [] })
@@ -43,7 +45,7 @@ const missing = computed(() => mod.value.fields.filter((f) => {
   <div class="pstrip" :id="`param-strip-${name}`">
     <div class="pstrip-row">
       <span class="pstrip-title">{{ mod.title }}</span>
-      <ParamField v-for="f in inline" :key="f.key" :field="f" :model="model" variant="strip" />
+      <ParamField v-for="f in inline" :key="f.key" :field="f" :model="model" variant="strip" :opt-label="optLabel" />
       <button v-if="advanced.length" type="button" class="pstrip-more"
               :id="`btn-${name}-params-more`" :aria-expanded="moreOpen"
               @click="moreOpen = !moreOpen">
@@ -57,12 +59,15 @@ const missing = computed(() => mod.value.fields.filter((f) => {
     </div>
 
     <div v-if="body.length" class="pstrip-body">
-      <ParamField v-for="f in body" :key="f.key" :field="f" :model="model" variant="strip" />
+      <ParamField v-for="f in body" :key="f.key" :field="f" :model="model" variant="strip" :opt-label="optLabel" />
     </div>
 
     <div v-if="moreOpen && advanced.length" class="pstrip-adv">
-      <ParamField v-for="f in advanced" :key="f.key" :field="f" :model="model" variant="strip" />
+      <ParamField v-for="f in advanced" :key="f.key" :field="f" :model="model" variant="strip" :opt-label="optLabel" />
     </div>
+
+    <!-- 模块专属解释（与 ParamRail 的 notes 槽同用途）：讲的是这些参数怎么选 -->
+    <slot name="notes" />
 
     <div v-if="mod.hint" class="pstrip-hint">{{ mod.hint }}</div>
   </div>

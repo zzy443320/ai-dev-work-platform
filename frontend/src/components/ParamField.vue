@@ -24,6 +24,10 @@ const props = defineProps({
   model: { type: Object, required: true },
   /** strip = 就地控件条里的一格；rail = 参数轨里的一行（标签在上、更宽） */
   variant: { type: String, default: 'strip' },
+  /** 可选的标签解析器 (field, option) => string。
+      长任务作业的「参与角色」名字与 emoji 以后端 /api/team/roles 为准，
+      schema 里的 label 只是兜底 —— 拿活的盖死的，界面才不会和后端说两套话。 */
+  optLabel: { type: Function, default: null },
 })
 
 const f = computed(() => props.field)
@@ -72,14 +76,24 @@ function restoreDefault() {
 /** 数字格显示成「2 轮」这种带单位的值；空值回落到占位 */
 const numberText = computed(() => (empty.value ? '' : `${value.value}`))
 
+/** 说明文字的落点：轨里有整行空间，直接排在控件下面；
+    控件条里显示出来会把一行撑成两行、格子参差 —— 改成 title 悬停。 */
+const showHint = computed(() => props.variant === 'rail' && !!f.value.hint)
+
+/** 标签解析：给了 optLabel 就用它（以后端数据为准），否则回落到 schema 的 label */
+function textOf(opt, fallback) {
+  return props.optLabel ? props.optLabel(f.value, opt) : fallback
+}
+
 /** select 的 change：原生 select 的 value 本来就是字符串，直接写回（写 Number 会让
     schema 的 default 比对失配，「默认」角标就永远不出现） */
 function onSelect(e) { write(e.target.value) }
 </script>
 
 <template>
-  <div v-if="visible" class="pf" :class="[`pf-${f.kind}`, `pf-${variant}`,
-       { 'is-missing': missing, 'is-open': !clamped }]" :id="wrapperId">
+  <div class="pf" :class="[`pf-${f.kind}`, `pf-${variant}`,
+       { 'is-missing': missing, 'is-open': !clamped, hidden: !visible }]" :id="wrapperId"
+       :title="f.hint || ''">
     <!-- 开关：标签跟在控件后面，一格一行，不占标签列 -->
     <template v-if="f.kind === 'switch'">
       <label class="pf-switch">
@@ -87,7 +101,7 @@ function onSelect(e) { write(e.target.value) }
         <span class="pf-track" aria-hidden="true" />
         <span class="pf-label">{{ f.label }}</span>
       </label>
-      <span v-if="f.hint" class="pf-hint">{{ f.hint }}</span>
+      <span v-if="showHint" class="pf-hint">{{ f.hint }}</span>
     </template>
 
     <!-- 角色组：一个参数四个子开关，子 id 沿用 schema（#team-role-coder …） -->
@@ -99,10 +113,10 @@ function onSelect(e) { write(e.target.value) }
           <input type="checkbox" :id="opt.id" :checked="!!(value || {})[opt.key]"
                  :disabled="!!opt.locked" @change="onRolePart(opt, $event)">
           <span class="pf-track" aria-hidden="true" />
-          <span class="pf-label">{{ opt.label }}</span>
+          <span class="pf-label">{{ textOf(opt, opt.label) }}</span>
         </label>
       </div>
-      <span v-if="f.hint" class="pf-hint">{{ f.hint }}</span>
+      <span v-if="showHint" class="pf-hint">{{ f.hint }}</span>
     </div>
 
     <!-- 分段：保留 .seg / .seg-btn[data-mode] 契约 -->
@@ -113,7 +127,7 @@ function onSelect(e) { write(e.target.value) }
                 :class="{ active: value === opt.value }" :data-mode="opt.value"
                 @click="onSegment(opt)">{{ opt.label }}</button>
       </div>
-      <span v-if="f.hint" class="pf-hint">{{ f.hint }}</span>
+      <span v-if="showHint" class="pf-hint">{{ f.hint }}</span>
     </div>
 
     <!-- 长文本：strip 里两行截断（点一下给全高），轨里直接按 rows 给高 -->
@@ -132,7 +146,7 @@ function onSelect(e) { write(e.target.value) }
       <textarea :id="f.id" v-bind:value="value" :rows="clamped ? 2 : (f.rows || 4)"
                 :placeholder="f.placeholder || ''" :class="{ clamped }"
                 @input="onText" @focus="expanded = true"></textarea>
-      <span v-if="f.hint" class="pf-hint">{{ f.hint }}</span>
+      <span v-if="showHint" class="pf-hint">{{ f.hint }}</span>
     </div>
 
     <!-- 短控件：标签在左、值在右，一行一格 -->

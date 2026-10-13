@@ -116,12 +116,18 @@ input.pf-ctl { width: 210px; }
 .prail-foot { flex: none; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
   padding: 11px 14px; border-top: 1px solid var(--border); background: var(--input-bg); }
 
+/* 分段（取稿通道）：标签、按钮组、说明各占一行地排，说明不能挤在按钮尾巴上 */
+.pf-seg { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+.pf-seg .pf-hint { flex-basis: 100%; }
+
 /* 轨里的字段：标签在上、控件占满宽（长表单要的是可读，不是一行塞满） */
 .pf-rail { display: flex; flex-direction: column; gap: 4px; }
 .pf-rail.pf-switch-field { flex-direction: row; }
-.pf-rail .pf-inline { display: flex; flex-direction: column; align-items: stretch; gap: 4px;
+.pf-rail .pf-inline { display: grid; gap: 4px;
   border: 0; background: transparent; padding: 0; box-shadow: none !important; }
 .pf-rail .pf-label { font-size: 11.5px; color: var(--text-dim); }
+/* 角标不跟着 grid 拉伸 —— 否则「默认」会撑成一条和输入框同宽的空白框 */
+.pf-rail .pf-req, .pf-rail .pf-opt, .pf-rail .pf-def { justify-self: start; }
 .pf-rail .pf-ctl, .pf-rail .pf-textarea textarea { width: 100%;
   border: 1px solid var(--border); border-radius: 8px; background: var(--input-bg);
   padding: 6px 9px; }

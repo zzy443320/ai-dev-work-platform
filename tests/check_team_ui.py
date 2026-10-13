@@ -69,9 +69,7 @@ def main() -> int:
                 failures.append(f"时间线筛选没有按角色填充：{opts!r}")
 
             # ── 3. 跑一次作业（Mock，秒级完成） ──
-            # 驾驶舱改版：作业参数抽屉默认收起，填表前先点开
-            page.click("#btn-team-params")
-            page.wait_for_timeout(300)
+            # 参数形态改版：作业表单在常驻参数轨里，填表前不再需要点开抽屉
             page.fill("#team-title", "UI 自检 · 旧表格组件迁移")
             page.fill("#team-task",
                       "把 src/views 下的列表页统一迁移到新表格组件，接口调用改到 src/api/v2，"

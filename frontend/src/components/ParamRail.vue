@@ -16,6 +16,8 @@ import ParamField from './ParamField.vue'
 const props = defineProps({
   name: { type: String, required: true },
   model: { type: Object, required: true },
+  /** 标签解析器，透传给 ParamField（见其注释） */
+  optLabel: { type: Function, default: null },
 })
 
 const mod = computed(() => paramModule(props.name) || { fields: [] })
@@ -52,11 +54,11 @@ const missing = computed(() => mod.value.fields.filter((f) => {
     <div class="prail-body">
       <template v-if="core.length">
         <div class="prail-grp">核心</div>
-        <ParamField v-for="f in core" :key="f.key" :field="f" :model="model" variant="rail" />
+        <ParamField v-for="f in core" :key="f.key" :field="f" :model="model" variant="rail" :opt-label="optLabel" />
       </template>
       <template v-if="common.length">
         <div class="prail-grp">常用</div>
-        <ParamField v-for="f in common" :key="f.key" :field="f" :model="model" variant="rail" />
+        <ParamField v-for="f in common" :key="f.key" :field="f" :model="model" variant="rail" :opt-label="optLabel" />
       </template>
       <template v-if="advanced.length">
         <div class="prail-grp">
@@ -66,9 +68,14 @@ const missing = computed(() => mod.value.fields.filter((f) => {
           </button>
         </div>
         <template v-if="openAdv">
-          <ParamField v-for="f in advanced" :key="f.key" :field="f" :model="model" variant="rail" />
+          <ParamField v-for="f in advanced" :key="f.key" :field="f" :model="model" variant="rail" :opt-label="optLabel" />
         </template>
       </template>
+
+      <!-- 模块专属的解释性文字（如 Figma 取稿通道的能力差异）。
+           放在轨里而不是主区：它讲的是「这些参数怎么选」，离参数远就没人看。
+           id 沿用改版前契约（#req-figma-hint 有界面用例锁）。 -->
+      <slot name="notes" />
     </div>
 
     <div class="prail-foot"><slot name="actions" /></div>

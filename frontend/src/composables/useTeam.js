@@ -17,6 +17,7 @@ import { api } from '../api/client.js'
 import { sseConsume } from './useSse.js'
 import { useToast } from './useToast.js'
 import { setRunStatus } from './useRunStatus.js'
+import { schemaDefault } from './useParamSchema.js'
 
 /** 后端 /api/team/roles 不可用时的兜底。旧版 app.js:3142 —— 逐条照搬 */
 export const TEAM_ROLE_FALLBACK = [
@@ -60,15 +61,16 @@ export function useTeam() {
   // ---- 角色定义（首次进入页签时拉一次，失败用兜底）----
   const roles = ref([])
 
-  // ---- 表单 ----
-  const title = ref('')
-  const scope = ref('')
-  const framework = ref(TEAM_FRAMEWORKS[0])
-  const rounds = ref(2)
-  const task = ref('')
-  const notes = ref('')
+  // ---- 表单（默认值来自 /api/params/schema，见 web/params_schema.py）----
+  const title = ref(schemaDefault('team', 'title', ''))
+  const scope = ref(schemaDefault('team', 'scope', ''))
+  const framework = ref(schemaDefault('team', 'framework', TEAM_FRAMEWORKS[0]))
+  const rounds = ref(schemaDefault('team', 'rounds', 2))
+  const task = ref(schemaDefault('team', 'task', ''))
+  const notes = ref(schemaDefault('team', 'notes', ''))
   /** 四个角色开关。planner 恒为 true（没有决策官就无法拆解任务） */
-  const roleOn = ref({ planner: true, coder: true, tester: true, reviewer: true })
+  const roleOn = ref(schemaDefault('team', 'roleOn',
+    { planner: true, coder: true, tester: true, reviewer: true }))
 
   // ---- 作业状态（一份聚合对象，与旧版 TEAM 同构）----
   const state = ref(teamNewState())

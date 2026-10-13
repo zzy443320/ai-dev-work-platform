@@ -132,6 +132,12 @@ def run(base: str, *, errors: list, consoles: list) -> None:
             page.wait_for_timeout(350)
             check(f"#pane-{tab} 切过去 .active",
                   page.eval_on_selector(f"#pane-{tab}", "el => el.classList.contains('active')"))
+            # 参数轨把 advanced 组默认折叠（新契约）：先展开再数控件，
+            # 否则「齐全」这条锁的其实是折叠前那份旧版全展开形态。
+            adv = page.query_selector(f"#btn-{tab}-params-advanced")
+            if adv:
+                adv.click()
+                page.wait_for_timeout(200)
             missing = page.evaluate("""ids => ids.filter(id => !document.getElementById(id))""", ids)
             check(f"{tab} 页控件齐全（{len(ids)} 个）", not missing, str(missing))
 
@@ -146,10 +152,12 @@ def run(base: str, *, errors: list, consoles: list) -> None:
         # ── 3. 需求开发：Figma 取稿通道切换落 localStorage ──
         page.evaluate("() => switchTab('reqdev')")
         page.wait_for_timeout(300)
-        # 驾驶舱改版：参数抽屉默认收起（首屏给多列布局让出宽度），
-        # 填字段前先点开 —— 打开抽屉本身就是这个模块的交互契约。
-        page.click("#btn-reqdev-params")
-        page.wait_for_timeout(300)
+        # 参数形态改版（2026-10-13）：reqdev 七条参数含长文本 → **常驻参数轨**。
+        # 轨是这一屏 grid 的真实第二列，不再是要点开、还会让主列让位的浮层抽屉，
+        # 所以「先点修改参数」这一步消失；反过来锁住新契约。
+        check("参数轨常驻（无抽屉）",
+              page.is_visible("#param-rail-reqdev")
+              and not page.query_selector("#btn-reqdev-params"))
         page.click("#req-figma-mode .seg-btn[data-mode='browser']")
         page.wait_for_timeout(200)
         saved = page.evaluate("() => localStorage.getItem('figma-fetch-mode')")
@@ -184,10 +192,11 @@ def run(base: str, *, errors: list, consoles: list) -> None:
         # ── 5. 跑一次 Mock 任务：接口联调（表单最简，只要求粘贴文档）──
         page.evaluate("() => switchTab('apidebug')")
         page.wait_for_timeout(300)
-        # 驾驶舱改版：参数抽屉默认收起（首屏给多列布局让出宽度），
-        # 填字段前先点开 —— 打开抽屉本身就是这个模块的交互契约。
-        page.click("#btn-apidebug-params")
-        page.wait_for_timeout(300)
+        # 参数形态改版：apidebug 的接口文档是 rows=10 长文本 → 走常驻参数轨，
+        # 直接填即可（原先「先点修改参数开抽屉」那一步随抽屉一起消失）。
+        check("参数轨常驻（无抽屉）",
+              page.is_visible("#param-rail-apidebug")
+              and not page.query_selector("#btn-apidebug-params"))
         page.fill("#api-doc", '{"paths": {"/api/v1/list": {"get": {}}}}')
         page.click("#btn-apidebug")
         try:

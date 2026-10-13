@@ -190,9 +190,11 @@ def run(base: str, *, errors: list) -> None:
               opts and opts[0][0] == "all" and len(opts) >= 5, str(opts))
 
         # ── 5. 跑一次作业（Mock，秒级完成）：点真实「开始作业」按钮 ──
-        # 驾驶舱改版：作业参数抽屉默认收起（首屏给双列布局让宽度），填表前先点开
-        page.click("#btn-team-params")
-        page.wait_for_timeout(300)
+        # 参数形态改版（2026-10-13）：作业表单在**常驻参数轨**里，不再是要点开的
+        # 浮层抽屉 —— 「先点修改作业参数」这一步随抽屉消失，控件常驻即可填。
+        check("作业参数轨常驻（无抽屉）",
+              page.is_visible("#param-rail-team")
+              and not page.query_selector("#btn-team-params"))
         page.fill("#team-title", "UI 自检 · 旧表格组件迁移")
         page.fill("#team-task",
                   "把 src/views 下的列表页统一迁移到新表格组件，接口调用改到 src/api/v2，"

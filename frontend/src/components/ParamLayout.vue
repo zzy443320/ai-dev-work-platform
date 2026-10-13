@@ -24,6 +24,8 @@ const props = defineProps({
   name: { type: String, required: true },
   /** useParamModel() 的返回值 */
   model: { type: Object, required: true },
+  /** 标签解析器 (field, option) => string，透传给渲染器（角色名以后端为准时用） */
+  optLabel: { type: Function, default: null },
 })
 
 const mod = computed(() => paramModule(props.name))
@@ -40,13 +42,15 @@ const rail = computed(() => paramLayout(props.name) === 'rail')
 
   <div v-else class="pane-cols" :class="rail ? 'cols-rail' : 'cols-strip'">
     <div class="pane-col-main">
-      <ParamStrip v-if="!rail" :name="name" :model="model">
+      <ParamStrip v-if="!rail" :name="name" :model="model" :opt-label="optLabel">
         <template #actions><slot name="actions" /></template>
+        <template #notes><slot name="notes" /></template>
       </ParamStrip>
       <slot />
     </div>
-    <ParamRail v-if="rail" :name="name" :model="model">
+    <ParamRail v-if="rail" :name="name" :model="model" :opt-label="optLabel">
       <template #actions><slot name="actions" /></template>
+      <template #notes><slot name="notes" /></template>
     </ParamRail>
   </div>
 </template>

@@ -16,15 +16,14 @@ import { useArtifacts } from '../composables/useArtifacts.js'
 import { useFold } from '../composables/useFold.js'
 import { useRunLease } from '../composables/useRunLease.js'
 import { useRunModal } from '../composables/useRunModal.js'
-import { useModuleParams } from '../composables/useModuleParams.js'
 // 检视器与弹窗共用一份详情状态（见 useProposalModal 顶部注释）。这里只取
 // 「选中 / 放大」两个动作，判定逻辑一律留在 composable 里，不在页签内复制一套。
 import { useProposalModal } from '../composables/useProposalModal.js'
 import { useSettings } from '../composables/useSettings.js'
+import { useParamModel } from '../composables/useParamModel.js'
 import { api } from '../api/client.js'
 import StageRing from '../components/StageRing.vue'
-import ParamBar from '../components/ParamBar.vue'
-import ParamDrawer from '../components/ParamDrawer.vue'
+import ParamStrip from '../components/ParamStrip.vue'
 import RunLog from '../components/RunLog.vue'
 import RunLeaseBar from '../components/RunLeaseBar.vue'
 import ArtifactsPanel from '../components/ArtifactsPanel.vue'
@@ -53,7 +52,6 @@ const {
 
 const { isCollapsed, toggleFold } = useFold()
 const { openRunModal } = useRunModal()
-const { close: closeParams } = useModuleParams()
 const { pinnedId, selectInline } = useProposalModal()
 // 护盾 chip 读闸门配置的降级态（form 是模块级单例，App 启动时已 loadSettings）。
 const { form: settingsForm } = useSettings()
@@ -93,17 +91,15 @@ const canStart = computed(() => !running.value && !leaseBusy.value)
 // 因为 ARTIFACT_TAB_LABEL 不含 defect），所以必须自己带 id-suffix 防止与其它页签串 id。
 const { openArtifact, loadArtifacts } = useArtifacts()
 
-/** 摘要条：跑之前一眼看清「这次要处理哪些工单、会不会截图」 */
-const summary = computed(() => [
-  { label: '范围', value: mineOnly.value ? '只看我负责的' : '全部工单' },
-  { label: '页面验收', value: skipVerify.value ? '跳过截图' : '会截图验收' },
-  { label: 'Limit', value: String(limit.value ?? '') || '未填', tone: limit.value ? '' : 'todo' },
-  { label: '工单', value: (defectId.value || '').trim() ? '指定 UUID' : '拉最近列表' },
-])
+/**
+ * 运行参数（2026-10-13 参数形态改版）：四条参数、无长文本 → **就地控件条**。
+ * 定义来自 /api/params/schema；控件 id 沿用 #opt-mine / #opt-skip-verify /
+ * #opt-limit / #opt-defect，读写都落回 useDefect 的那四个 ref。
+ */
+const params = useParamModel({ mineOnly, skipVerify, limit, defectId })
 
-/** 运行 / 试运行都会往主区写日志，先收抽屉再跑，主区整宽看过程 */
+/** 运行 / 试运行都会往主区写日志 */
 async function onStart(kind) {
-  closeParams('defect')
   await start(kind)
   // 跑完（无论成败）都回读一次占用：被停止时线程还在阶段边界收尾，
   // 界面上那条「仍在运行」必须跟着真实租约走，不能靠本地标记猜。
@@ -285,10 +281,13 @@ onMounted(async () => {
         <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9" /></svg>
       </button>
     </div>
-    <!-- 主区只放过程与产物：参数摘要条 + 实时运行日志。工单范围、Limit、
-         一次性输入搬进了右侧参数抽屉（见文件末尾的 ParamDrawer）。
+    <!-- 主区只放过程与产物：参数条 + 实时运行日志。
+         参数形态改版（2026-10-13）：四条参数走**就地控件条**（定义在
+         /api/params/schema），不再有右侧浮层抽屉 —— 摘要 chip 只能看不能改、
+         改要先开抽屉、抽屉一开主列让位 436px 这三件事一起消失。
          v2：运行/试运行/刷新已上移到主舞台名牌行；租约条移到左列塔台。 -->
-    <ParamBar name="defect" action="运行参数" :items="summary" />
+    <ParamStrip name="defect" :model="params" />
+    <div class="info-note" id="dry-warn">说明：「试运行」只拉取 ONES 工单并 AI 定位问题（不生成提案、不进审批、不写文件），用来独立验证连通性和定位效果；<br>「运行」走完整流水线产出提案（补丁 + diff + 闸门结果 + 截图），同样不改动目标仓库，人工采纳才写工作区（不 commit、不 push）。<br>运行过程中可实时看到每个阶段的进展，以及大模型的思考与输出。</div>
 
     <!-- 控制台区：日志收成一块可折叠的终端面板（IDE 底部面板那个形态）。
          默认展开 —— #run-log 的 420px 限高与空态占位都由 style.css 锁着，
@@ -448,29 +447,4 @@ onMounted(async () => {
        「刷新」也留在这里（和运行/试运行同组）：它刷的是提案/统计/知识库三份列表，
        用的时机就是「准备跑之前先看看现状」。面板头不放按钮是为了不改动
        .panel-head 那套 h2 + fold + 筛选的既有排布（提案面板就长那样）。 -->
-  <!-- 驾驶舱三列（塔台|主舞台|审判台）需要首屏就把右列让给审判台，
-       所以这个抽屉改成默认收起：参数是「改的时候才看」的东西，摘要条
-       （ParamBar）常驻，点「修改运行参数」再浮出。抽屉开着时容器变窄，
-       三列自动降级两列 —— 让位与浮层行为沿用 style.css 的既有机制。 -->
-  <ParamDrawer name="defect" title="运行参数" :default-open="false"
-               hint="工单范围与运行方式。点「运行 / 试运行」后抽屉自动收起，主区就是实时日志。">
-    <label class="switch">
-      <input type="checkbox" id="opt-mine" v-model="mineOnly">
-      <span class="track" /><span class="switch-label">只看我负责的</span>
-    </label>
-    <label class="switch">
-      <input type="checkbox" id="opt-skip-verify" v-model="skipVerify">
-      <span class="track" /><span class="switch-label">跳过页面截图</span>
-    </label>
-    <label class="field-inline">
-      <span>Limit</span>
-      <input type="number" id="opt-limit" v-model.number="limit" min="1" max="20">
-    </label>
-    <label class="field">
-      <span>工单 UUID（留空 = 拉取最近列表）</span>
-      <input type="text" id="opt-defect" v-model="defectId"
-             placeholder="填 ONES 工单的 UUID；留空则拉最近工单列表">
-    </label>
-    <div class="info-note" id="dry-warn">说明：「试运行」只拉取 ONES 工单并 AI 定位问题（不生成提案、不进审批、不写文件），用来独立验证连通性和定位效果；<br>「运行」走完整流水线产出提案（补丁 + diff + 闸门结果 + 截图），同样不改动目标仓库，人工采纳才写工作区（不 commit、不 push）。<br>运行过程中可实时看到每个阶段的进展，以及大模型的思考与输出。</div>
-  </ParamDrawer>
 </template>

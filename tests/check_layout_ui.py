@@ -88,29 +88,37 @@ def run():
         check("需求 Figma 提示分行", brs.get("req-figma-hint", 0) >= 1, str(brs))
         check("问答说明条分行", brs.get("chat", 0) >= 2, str(brs))
 
-        # ---- 3. 需求开发：输入全在参数抽屉里，主区只剩摘要条与过程区 ----
+        # ---- 3. 需求开发：输入在常驻参数轨里，主区只剩过程区 ----
         pg.evaluate("() => switchTab('reqdev')")
         pg.wait_for_timeout(300)
-        # 驾驶舱改版：抽屉默认收起（首屏给多列布局让宽度），点摘要条才开。
-        # 「装得下全部输入 + 开着让位」两条意图不变，改成开抽屉后量。
-        pg.click("#btn-reqdev-params")
-        pg.wait_for_timeout(300)
+        # 参数形态改版（2026-10-13）：抽屉（fixed 浮层 + 主列让位）换成**布局第二列**。
+        # 原来锁的三条意图逐条平移，不降标准：
+        #   「主区只剩摘要条与过程区」→ 主区只剩过程区，输入一格都不在里头；
+        #   「抽屉装得下全部输入」    → 轨里字段数 >= 5；
+        #   「开着让位不遮挡过程区」  → 更强：轨不是浮层（position 不是 fixed），
+        #                              主列也不再靠 padding-right 腾地方，列数是稳定的。
         split = pg.evaluate("""() => {
           const panel = document.getElementById('req-panel');
-          const drawer = document.getElementById('mod-drawer-reqdev');
-          return {mainFields: panel.querySelectorAll('.field').length,
-                  drawerFields: drawer.querySelectorAll('.field').length,
-                  bar: !!panel.querySelector('.param-bar'),
+          const rail = document.getElementById('param-rail-reqdev');
+          const pane = document.getElementById('pane-reqdev');
+          return {mainFields: panel.querySelectorAll('.pf, .field').length,
+                  railFields: rail.querySelectorAll('.pf').length,
+                  railPos: getComputedStyle(rail).position,
+                  railW: Math.round(rail.getBoundingClientRect().width),
+                  panelW: Math.round(panel.getBoundingClientRect().width),
                   tree: !!document.getElementById('figma-tree'),
-                  open: !drawer.classList.contains('hidden'),
+                  drawerGone: !document.getElementById('mod-drawer-reqdev'),
                   padR: parseFloat(getComputedStyle(document.querySelector('.col-main')).paddingRight)};
         }""")
-        check("需求开发：主区没有输入字段，只剩摘要条 + 设计稿结构",
-              split["mainFields"] == 0 and split["bar"] and split["tree"], str(split))
-        check("需求开发：点摘要条打开抽屉、装下全部输入",
-              split["open"] and split["drawerFields"] >= 5, str(split))
-        check("抽屉开着时主列让出右侧空间（非模态，不遮挡过程区）",
-              split["padR"] >= 400, str(split["padR"]))
+        check("需求开发：主区只剩过程区，输入一格都不在里头",
+              split["mainFields"] == 0 and split["tree"], str(split))
+        check("需求开发：参数轨装下全部输入（>=5 格）", split["railFields"] >= 5, str(split))
+        check("参数轨是布局的一列而不是浮层",
+              split["railPos"] != "fixed" and split["railW"] >= 280, str(split))
+        check("主列不再靠 padding-right 让位（列数稳定）",
+              split["padR"] < 400 and split["drawerGone"], str(split))
+        check("主区与轨并排后仍各有宽度（没被挤成 0）",
+              split["panelW"] >= 480, str(split))
         pg.screenshot(path=str(OUT / "reqdev-layout.png"))
 
         # ---- 4. 统计说明条：分段之间有间隔 ----
@@ -133,22 +141,24 @@ def run():
         check("长任务说明条分行", tn >= 2, f"br={tn}")
         ts = pg.evaluate("""() => {
           const panel = document.getElementById('team-run-panel');
-          const drawer = document.getElementById('mod-drawer-team');
-          return {mainFields: panel.querySelectorAll('.field').length,
-                  drawerFields: drawer.querySelectorAll('.field').length,
-                  bar: !!panel.querySelector('.param-bar'),
+          const rail = document.getElementById('param-rail-team');
+          return {mainFields: panel.querySelectorAll('.pf, .field').length,
+                  railFields: rail.querySelectorAll('.pf').length,
+                  railPos: getComputedStyle(rail).position,
+                  drawerGone: !document.getElementById('mod-drawer-team'),
                   // 干预按钮组留在主区（对着看板用），且空闲时整行隐藏
                   interveneInMain: !!panel.querySelector('#btn-team-pause'),
                   interveneHidden: panel.querySelector('.team-run-actions')
                     .classList.contains('hidden'),
-                  // 开始作业在抽屉 footer 里
-                  startInDrawer: !!drawer.querySelector('#btn-team-run')};
+                  // 开始作业在参数轨的常驻动作条里
+                  startInRail: !!rail.querySelector('#btn-team-run')};
         }""")
-        check("长任务：作业表单全在抽屉里，主区只剩摘要条",
-              ts["mainFields"] == 0 and ts["bar"] and ts["drawerFields"] >= 5, str(ts))
+        check("长任务：作业表单全在参数轨里，主区只剩过程与产物",
+              ts["mainFields"] == 0 and ts["railFields"] >= 5 and ts["drawerGone"], str(ts))
+        check("长任务：参数轨是布局的一列而不是浮层", ts["railPos"] != "fixed", str(ts))
         check("长任务：运行中干预留在主区、空闲时整行隐藏",
               ts["interveneInMain"] and ts["interveneHidden"], str(ts))
-        check("长任务：「开始作业」在抽屉动作条里", ts["startInDrawer"], str(ts))
+        check("长任务：「开始作业」在参数轨的常驻动作条里", ts["startInRail"], str(ts))
         pg.screenshot(path=str(OUT / "team-layout.png"))
 
         pg.evaluate("() => switchTab('chat')")

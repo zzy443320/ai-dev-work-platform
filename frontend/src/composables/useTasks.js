@@ -11,7 +11,7 @@
 // ⚠️ 这两段 HTML 的每一个外部字段都必须过 escapeHtml：内容来自 Figma（外部
 // 站点）和目标仓库里的任意文件，一个 `<img src=x onerror=...>` 就是执行脚本。
 // 其余拼 HTML 的地方（useDefect / proposalRender / useSettings）都是这么做的。
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import { api } from '../api/client.js'
 import { escapeHtml } from '../utils/format.js'
 import { useToast } from './useToast.js'
@@ -41,8 +41,12 @@ export function useTasks() {
 
   function setFigmaMode(mode) {
     figmaMode.value = mode === 'browser' ? 'browser' : 'token'
-    try { localStorage.setItem(FIGMA_MODE_KEY, figmaMode.value) } catch (e) { /* 隐私模式 */ }
   }
+  // 落盘跟着**状态**走，不跟着某个调用方走：参数轨里的分段控件是直接写 ref 的
+  // （渲染器不认识 setFigmaMode 这种模块专属 setter），写在 setter 里会漏掉那条路径。
+  watch(figmaMode, (m) => {
+    try { localStorage.setItem(FIGMA_MODE_KEY, m) } catch (e) { /* 隐私模式 */ }
+  })
 
   async function fetchFigma() {
     if (fetching.value) return
@@ -75,18 +79,18 @@ export function useTasks() {
   /** 拉取失败时 #figma-tree 的纯文本（旧版是 textContent，错误后 :empty 不生效） */
   const figmaError = ref('')
 
-  // ---- reqdev 表单 ----
+  // ---- reqdev 表单（默认值来自 /api/params/schema）----
   const figmaUrl = ref('')
   const figmaToken = ref('')
-  const reqFramework = ref('React + TypeScript')
+  const reqFramework = ref(schemaDefault('reqdev', 'reqFramework', 'React + TypeScript'))
   const reqDesc = ref('')
   const reqContext = ref('')
   const reqNotes = ref('')
 
-  // ---- apidebug 表单 ----
+  // ---- apidebug 表单（同上）----
   const apiDoc = ref('')
   const apiBase = ref('')
-  const apiFramework = ref('React + TypeScript')
+  const apiFramework = ref(schemaDefault('apidebug', 'apiFramework', 'React + TypeScript'))
   const apiContext = ref('')
   const apiNotes = ref('')
 

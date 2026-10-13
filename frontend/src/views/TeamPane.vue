@@ -14,14 +14,13 @@
 // 解包，写 `const t = useTeam()` 再在模板里用 `t.task` 会拿到 ref 对象本身。
 import { computed, onMounted, ref, watch } from 'vue'
 import { useTeam, AGENT_STATUS, ITEM_STATUS, RUN_STATUS, VERDICT_TEXT,
-  INTERVENE_TEXT, TEAM_FRAMEWORKS, TEAM_ROLE_KEYS } from '../composables/useTeam.js'
+  INTERVENE_TEXT } from '../composables/useTeam.js'
 import { useFold } from '../composables/useFold.js'
 import { useToast } from '../composables/useToast.js'
 import { useRunModal } from '../composables/useRunModal.js'
-import { useModuleParams } from '../composables/useModuleParams.js'
+import { useParamModel } from '../composables/useParamModel.js'
 import { relTime } from '../utils/format.js'
-import ParamBar from '../components/ParamBar.vue'
-import ParamDrawer from '../components/ParamDrawer.vue'
+import ParamLayout from '../components/ParamLayout.vue'
 import TeamAgentCard from '../components/TeamAgentCard.vue'
 import TeamPlanItem from '../components/TeamPlanItem.vue'
 
@@ -37,22 +36,15 @@ const {
 
 const { isCollapsed, toggleFold } = useFold()
 const { toast } = useToast()
-const { close: closeParams } = useModuleParams()
 
-/** 摘要条：不开抽屉也能看清「这次派给谁、改哪、要不要返工」 */
-const summary = computed(() => {
-  // roleOn 是 ref 包对象，脚本里取值必须带 .value（模板里才自动解包）
-  const chosen = TEAM_ROLE_KEYS.filter((k) => roleOn.value[k])
-  const short = { planner: '决策', coder: '编码', tester: '测试', reviewer: '复核' }
-  const roleText = chosen.map((k) => short[k] || k).join('·')
-  return [
-    { label: '标题', value: (title.value || '').trim() || '未填', tone: (title.value || '').trim() ? '' : 'todo' },
-    { label: '范围', value: (scope.value || '').trim() || '不限' },
-    { label: '技术栈', value: framework.value || '未选', tone: framework.value ? '' : 'todo' },
-    { label: '角色', value: roleText || '仅决策官' },
-    { label: '返工', value: `${rounds.value ?? 0} 轮` },
-  ]
-})
+/**
+ * 作业参数（2026-10-13 参数形态改版）：七条参数含任务描述长文本 → **常驻参数轨**。
+ * 字段定义来自 /api/params/schema；读写落回 useTeam 的那几个 ref，
+ * start() 拼 payload 的逻辑一行没改。控件 id 沿用 #team-title / #team-task /
+ * #team-scope / #team-framework / #team-rounds / #team-role-* / #team-notes。
+ */
+const params = useParamModel(
+  { title, task, scope, framework, roleOn, rounds, notes })
 
 const emit = defineEmits(['open-artifact'])
 
@@ -64,6 +56,16 @@ function roleEmoji(id) {
 function roleName(id) {
   const r = roles.value.find((x) => x.id === id)
   return r ? r.name : id
+}
+
+/** 角色格的显示名以后端 /api/team/roles 为准（emoji + 名字），schema 的 label 兜底。
+    决策官锁死不可关，也在这里补上说明，免得界面只给一个点不动的开关。 */
+function roleLabel(field, opt) {
+  const named = roleName(opt.key)
+  const base = named && named !== opt.key
+    ? `${roleEmoji(opt.key) ? roleEmoji(opt.key) + ' ' : ''}${named}`
+    : opt.label
+  return opt.locked ? `${base}（始终参与）` : base
 }
 
 /** 运行中/暂停中才允许介入，模板里多处判断 */
@@ -85,8 +87,6 @@ function onRunClick(id) {
 
 /** 用户点了「开始作业」 */
 function onStart() {
-  // 开始作业后要看的是看板与时间线，先收抽屉让主区占满
-  closeParams('team')
   start()
 }
 
@@ -157,8 +157,14 @@ onMounted(async () => {
 </script>
 
 <template>
-  <!-- 作业表单 -->
-  <section class="panel collapsible" id="team-run-panel"
+  <ParamLayout name="team" :model="params" :opt-label="roleLabel">
+    <template #actions>
+      <el-button type="primary" id="btn-team-run" :disabled="running" @click="onStart">开始作业</el-button>
+      <el-button id="btn-team-history-refresh" @click="loadRuns()">刷新历史</el-button>
+    </template>
+
+    <!-- 作业表单 -->
+    <section class="panel collapsible" id="team-run-panel"
            :class="{ collapsed: isCollapsed('team-run-panel') }">
     <div class="panel-head">
       <h2>
@@ -169,12 +175,11 @@ onMounted(async () => {
         <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9" /></svg>
       </el-button>
     </div>
-    <!-- 布局（2026-09-30 第二次改版）：主区只留「参数摘要 + 运行中的干预按钮 + 说明」，
-         作业表单（标题/范围/技术栈/角色/描述/约定）与「开始作业」搬进右侧参数抽屉。
+    <!-- 布局（2026-10-13 参数形态改版）：作业表单（标题/范围/技术栈/角色/描述/约定）
+         搬进**常驻参数轨**（见 ParamLayout + /api/params/schema），主区只剩过程与产物。
          暂停 / 继续 / 重规划 / 跳过 / 终止刻意**留在主区**：它们是跑起来之后对着看板
-         和实时时间线用的运行中控制，不是输入参数，塞在抽屉里等于让你边看边开抽屉。
+         和实时时间线用的运行中控制，不是输入参数，塞在参数轨里等于让你边看边开抽屉。
          整行只在 running 时出现（空闲时五个禁用按钮是纯噪音）。 -->
-    <ParamBar name="team" action="作业参数" :items="summary" />
 
     <div class="run-form team-run-actions" :class="{ hidden: !running }">
       <span class="scope-label">运行中干预</span>
@@ -191,63 +196,6 @@ onMounted(async () => {
     </div>
   </section>
 
-  <!-- ── 右侧参数抽屉：作业表单 + 开始作业 ── -->
-  <ParamDrawer name="team" title="作业参数" :default-open="false"
-               hint="任务越大越要把「改成什么样」和「哪些不许动」写清楚（点摘要条「修改作业参数」展开）。点「开始作业」后主区就是看板与实时时间线。">
-    <label class="field">
-      <span>任务标题</span>
-      <el-input type="text" id="team-title" v-model="title" placeholder="例如：订单列表页从旧架构迁移到新架构" />
-    </label>
-    <label class="field">
-      <span>改造范围（glob，可留空）</span>
-      <el-input type="text" id="team-scope" v-model="scope" placeholder="src/views/order/** , src/api/**" />
-    </label>
-    <label class="field">
-      <span>技术栈</span>
-      <el-select id="team-framework" v-model="framework" placeholder="选择技术栈">
-        <el-option v-for="f in TEAM_FRAMEWORKS" :key="f" :value="f" :label="f" :data-value="f" />
-      </el-select>
-    </label>
-    <label class="field">
-      <span>最多返工轮次</span>
-      <el-input type="number" id="team-rounds" v-model.number="rounds" :min="0" :max="5" />
-    </label>
-    <div class="field">
-      <span>参与角色</span>
-      <div class="run-form team-roles-bar">
-        <!-- 决策官始终参与：disabled；其余角色用 el-switch 替代原来自绘 .switch -->
-        <label class="role-line">
-          <el-switch id="team-role-planner" v-model="roleOn.planner" disabled title="没有决策官就无法拆解任务，因此它始终参与" />
-          <span class="switch-label">🧭 决策官（始终参与）</span>
-        </label>
-        <label class="role-line">
-          <el-switch id="team-role-coder" v-model="roleOn.coder" />
-          <span class="switch-label">⌨️ 编码工程师</span>
-        </label>
-        <label class="role-line">
-          <el-switch id="team-role-tester" v-model="roleOn.tester" />
-          <span class="switch-label">🧪 测试工程师</span>
-        </label>
-        <label class="role-line">
-          <el-switch id="team-role-reviewer" v-model="roleOn.reviewer" />
-          <span class="switch-label">🔍 复核官</span>
-        </label>
-      </div>
-    </div>
-    <label class="field">
-      <span>任务描述（越大越模糊的任务越要写清目标与不做什么）</span>
-      <el-input type="textarea" id="team-task" :rows="6" v-model="task" placeholder="要改什么、改成什么样、哪些必须保持不变（对外接口 / 埋点 / 兼容性）。例如：把 src/views 下的 12 个列表页统一迁移到新表格组件，接口调用改为 src/api/v2，页面路由与参数保持不变。" />
-    </label>
-    <label class="field">
-      <span>其他约定（可选）</span>
-      <el-input type="text" id="team-notes" v-model="notes" placeholder="目录规范、必须复用的工具函数、禁止引入的依赖等" />
-    </label>
-
-    <template #footer>
-      <el-button type="primary" id="btn-team-run" :disabled="running" @click="onStart">开始作业</el-button>
-      <el-button id="btn-team-history-refresh" @click="loadRuns()">刷新历史</el-button>
-    </template>
-  </ParamDrawer>
 
   <!-- 子 Agent 看板 -->
   <section class="panel collapsible" id="team-board-panel"
@@ -434,4 +382,5 @@ onMounted(async () => {
     </div>
     <p class="panel-note">点开任意一次作业可以回看它的计划、每个角色的动作轨迹与人工介入记录（不含大模型逐字输出——那部分体量太大，不落盘）。</p>
   </section>
+  </ParamLayout>
 </template>

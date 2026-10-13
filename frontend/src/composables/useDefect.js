@@ -10,6 +10,7 @@ import { sseConsume } from './useSse.js'
 import { useToast } from './useToast.js'
 import { useRunLease } from './useRunLease.js'
 import { setRunStatus } from './useRunStatus.js'
+import { schemaDefault } from './useParamSchema.js'
 import { STATUS_ORDER, isOpenStatus } from '../utils/labels.js'
 
 // 步骤条的状态推导是纯函数，住在 utils/stages.js（可在 Node 里直调断言）。
@@ -52,11 +53,12 @@ function hms() {
 function _createDefectState() {
   const { toast } = useToast()
 
-  // ---- 表单 ----
-  const mineOnly = ref(true)
-  const skipVerify = ref(false)
-  const limit = ref(4)
-  const defectId = ref('')
+  // ---- 表单（默认值来自 /api/params/schema，见 web/params_schema.py）----
+  // 第二参数是「schema 没到位」时的兜底，正常情况下不会用到（main.js 先拉后挂载）。
+  const mineOnly = ref(schemaDefault('defect', 'mineOnly', true))
+  const skipVerify = ref(schemaDefault('defect', 'skipVerify', false))
+  const limit = ref(schemaDefault('defect', 'limit', 4))
+  const defectId = ref(schemaDefault('defect', 'defectId', ''))
 
   // ---- 流水线 ----
   const running = ref(false)
@@ -467,9 +469,14 @@ function _createDefectState() {
 // 模块级单例：DefectPane 与 ProposalModal（提案详情弹窗）必须共享同一套状态。
 // 教训同 useArtifacts：工厂式 ref 会让每个调用方各拿一套，弹窗 decide 后
 // reload 刷的是 B 套状态，页面上渲染的 A 套纹丝不动。
-const sharedDefect = _createDefectState()
+//
+// 但**不能**在模块顶层就 new 出来：表单默认值现在读 /api/params/schema，
+// 而模块求值发生在 main.js 那次 await 之前（import 提升），拿到的只会是兜底值。
+// 改成首次 useDefect() 时惰性建 —— 那一定在挂载之后，schema 已到位。
+let sharedDefect = null
 
 export function useDefect() {
+  if (!sharedDefect) sharedDefect = _createDefectState()
   return sharedDefect
 }
 
