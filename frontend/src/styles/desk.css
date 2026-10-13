@@ -757,3 +757,33 @@ body { font-size: 13px; letter-spacing: -0.003em; }
 }
 /* 会话栏与产出物浮层卡沉底 */
 #pane-chat .rail-card { background: var(--code-bg); }
+
+/* ===== 13. 长任务驾驶舱（容器 ≥1240 重排）=====
+   方向稿 A4 的骨架：左列「发起 + 子 Agent 看板 + 工作项」是战场本体，
+   右列「历史作业 / 人工介入 / 时间线」是控制塔。六面板 DOM 顺序与
+   id 不动（check_team_ui 按 #team-history / #team-intervene-hint 找）。 */
+@container main (min-width: 1240px) {
+  #pane-team.active {
+    grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr);
+    grid-template-areas:
+      "run     history"
+      "board   intervene"
+      "plan    timeline";
+    align-items: start;
+  }
+  #pane-team > section:nth-of-type(1) { grid-area: run; }
+  #pane-team > section:nth-of-type(2) { grid-area: board; min-height: 340px; }
+  #pane-team > section:nth-of-type(3) { grid-area: plan; }
+  #pane-team > section:nth-of-type(4) { grid-area: timeline; }
+  #pane-team > section:nth-of-type(5) { grid-area: intervene; }
+  #pane-team > section:nth-of-type(6) { grid-area: history; }
+}
+/* 子 Agent 看板 = 本页主角：氛围光 + 亮描边（与缺陷 hero、统计趋势同一语言） */
+#team-board-panel {
+  background:
+    radial-gradient(480px 220px at 50% 0%, rgba(180, 140, 255, 0.07), transparent 70%),
+    var(--surf);
+  border-color: rgba(180, 140, 255, 0.22);
+}
+/* 人工介入台：按钮组是「随时能按」的红色件，卡底沉一档 */
+#team-intervene-panel { background: var(--code-bg); }
