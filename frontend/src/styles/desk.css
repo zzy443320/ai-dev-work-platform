@@ -672,13 +672,14 @@ body { font-size: 13px; letter-spacing: -0.003em; }
   #pane-stats.active {
     grid-template-columns: minmax(0, 1fr) 380px;
     grid-template-areas:
-      "cards cards"
-      "trend kinds"
-      "tasks recent";
+      "cards  cards"
+      "trend  kinds"
+      "tasks  tasks"
+      "recent recent";
     align-items: start;
   }
   #pane-stats > section:nth-of-type(1) { grid-area: cards; }
-  #pane-stats > section:nth-of-type(2) { grid-area: trend; min-height: 430px; }
+  #pane-stats > section:nth-of-type(2) { grid-area: trend; }
   #pane-stats > section:nth-of-type(3) { grid-area: kinds; }
   #pane-stats > section:nth-of-type(4) { grid-area: tasks; min-width: 0; }
   #pane-stats > section:nth-of-type(5) { grid-area: recent; min-width: 0; }
@@ -807,3 +808,17 @@ body { font-size: 13px; letter-spacing: -0.003em; }
   #pane-extensions.active { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; }
 }
 #ext-skill-panel, #ext-mcp-panel { background: var(--code-bg); }
+
+/* ===== 15. 行高耦合的空白：长面板自己滚，别把同行兄弟吊出一截空 =====
+   grid 一行的高度 = 行内最高面板。历史作业 10 张卡、时间线几十行，
+   不封顶就会把左列的看板/表单撑出大片空白。给长面板 max-height +
+   内部滚动（驾驶舱惯例：队列类面板自己滚，页面不失控）。 */
+#team-history-panel { max-height: 640px; overflow: hidden; display: flex; flex-direction: column; }
+#team-history-panel > .panel-head { flex: none; }
+#team-history-panel #team-history { overflow-y: auto; flex: 1; min-height: 0; }
+#team-timeline-panel { max-height: 520px; overflow: hidden; display: flex; flex-direction: column; }
+#team-timeline-panel > .panel-head { flex: none; }
+#team-timeline-panel .log-wrap { overflow-y: auto; flex: 1; min-height: 0; }
+/* 统计页构成面板与趋势同行：构成也封顶内滚，趋势 420 图不再被吊高 */
+#pane-stats > section:nth-of-type(3) { max-height: 560px; overflow: hidden; display: flex; flex-direction: column; }
+#pane-stats > section:nth-of-type(3) .usage-split { overflow-y: auto; flex: 1; min-height: 0; }

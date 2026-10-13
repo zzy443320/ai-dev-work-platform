@@ -24,7 +24,7 @@ const props = defineProps({
 
 const { theme } = useTheme()
 
-const CHART_H = 250
+const CHART_H = 420
 // 旧的 viewBox 内边距（1000×250 里 PL/PR/PT/PB）直接当 ECharts 的 grid 像素边距，
 // 保证轴刻度位置与旧版视觉一致。
 const PL = 54, PR = 14, PT = 14, PB = 34
