@@ -369,6 +369,10 @@ def run(base: str, dirs, *, errors: list) -> None:
 
         # ── Enter 发送 ──
         page.fill("#chat-text", "用 Enter 直接发送")
+        # flaky 修复：fill 写 DOM 与 Vue v-model 更新不在同一拍 —— 没等到
+        # 发送钮解禁就 press Enter，发送处理器读到空串、消息根本没发出去，
+        # wait_replies 干等 40s 超时（本用例此前随机挂的根因）。
+        page.wait_for_selector("#btn-chat-send:not([disabled])", timeout=5000)
         page.press("#chat-text", "Enter")
         wait_replies(page, 1)
         check("Enter 直接发送并清空输入框",
