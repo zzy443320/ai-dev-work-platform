@@ -200,6 +200,25 @@ def run(base: str, *, errors: list) -> None:
                   "把 src/views 下的列表页统一迁移到新表格组件，接口调用改到 src/api/v2，"
                   "页面路由与查询参数保持不变。")
         page.click("#btn-team-run")
+        # 跑动中参数区必须**定格**：后端按启动时的参数开跑，界面上那份表单
+        # 再可编辑就是骗人（改版前靠抽屉自动收起掩盖了这点）。
+        try:
+            page.wait_for_selector("#pane-team .plock", timeout=8000)
+            lock = page.evaluate("""() => {
+              const el = document.querySelector('#pane-team .plock');
+              const txt = el ? el.innerText : '';
+              return {railGone: !document.getElementById('param-rail-team'),
+                      hasTitle: txt.includes('UI 自检 · 旧表格组件迁移'),
+                      hasRoles: txt.includes('参与角色'),
+                      note: txt.includes('对这一批无效'),
+                      stillEditable: !!document.querySelector('#pane-team #team-title')};
+            }""")
+            check("跑动中参数轨换成「本批配置」定格卡", lock["railGone"] and lock["hasTitle"], str(lock))
+            check("定格卡说清这一批用了什么、为什么改不动",
+                  lock["hasRoles"] and lock["note"], str(lock))
+            check("定格期间不再渲染可编辑表单", not lock["stillEditable"], str(lock))
+        except Exception as e:
+            check("跑动中出现定格卡（8s 内）", False, str(e)[:120])
         try:
             page.wait_for_function(
                 "() => { const el = document.querySelector('#team-run-meta');"
@@ -210,6 +229,9 @@ def run(base: str, *, errors: list) -> None:
 
         done_cards = page.query_selector_all("#team-agents .team-agent.done")
         check("有角色卡进入「已完成」", len(done_cards) > 0)
+        check("跑完之后参数轨恢复可编辑表单",
+              page.is_visible("#param-rail-team") and page.is_visible("#team-title")
+              and not page.query_selector("#pane-team .plock"))
         items = page.query_selector_all("#team-plan .team-item")
         check("工作项已渲染（plan 事件接上）", len(items) > 0)
         lines = page.query_selector_all("#team-log .live-line")

@@ -24,6 +24,7 @@ import { useParamModel } from '../composables/useParamModel.js'
 import { api } from '../api/client.js'
 import StageRing from '../components/StageRing.vue'
 import ParamStrip from '../components/ParamStrip.vue'
+import ParamLocked from '../components/ParamLocked.vue'
 import RunLog from '../components/RunLog.vue'
 import RunLeaseBar from '../components/RunLeaseBar.vue'
 import ArtifactsPanel from '../components/ArtifactsPanel.vue'
@@ -98,8 +99,20 @@ const { openArtifact, loadArtifacts } = useArtifacts()
  */
 const params = useParamModel({ mineOnly, skipVerify, limit, defectId })
 
+/** 本批配置定格（理由见 ParamLocked 文件头）：点运行的那一刻抓快照，跑动中只读展示 */
+const batch = ref([])
+function snapshotBatch() {
+  batch.value = [
+    { label: '工单范围', value: mineOnly.value ? '只看我负责的' : '全部工单' },
+    { label: '最多处理', value: `${limit.value ?? '—'} 个` },
+    { label: '页面验收', value: skipVerify.value ? '跳过截图' : '会截图验收' },
+    { label: '工单', value: (defectId.value || '').trim() ? '指定 UUID' : '拉最近列表' },
+  ]
+}
+
 /** 运行 / 试运行都会往主区写日志 */
 async function onStart(kind) {
+  snapshotBatch()
   await start(kind)
   // 跑完（无论成败）都回读一次占用：被停止时线程还在阶段边界收尾，
   // 界面上那条「仍在运行」必须跟着真实租约走，不能靠本地标记猜。
@@ -286,7 +299,9 @@ onMounted(async () => {
          /api/params/schema），不再有右侧浮层抽屉 —— 摘要 chip 只能看不能改、
          改要先开抽屉、抽屉一开主列让位 436px 这三件事一起消失。
          v2：运行/试运行/刷新已上移到主舞台名牌行；租约条移到左列塔台。 -->
-    <ParamStrip name="defect" :model="params" />
+    <ParamLocked v-if="running" class="plock-wide" title="运行参数" :items="batch"
+                 note="流水线按启动时的参数推进，跑动中改这些值对这一批无效；本轮结束后表单恢复可编辑。" />
+    <ParamStrip v-else name="defect" :model="params" />
     <div class="info-note" id="dry-warn">说明：「试运行」只拉取 ONES 工单并 AI 定位问题（不生成提案、不进审批、不写文件），用来独立验证连通性和定位效果；<br>「运行」走完整流水线产出提案（补丁 + diff + 闸门结果 + 截图），同样不改动目标仓库，人工采纳才写工作区（不 commit、不 push）。<br>运行过程中可实时看到每个阶段的进展，以及大模型的思考与输出。</div>
 
     <!-- 控制台区：日志收成一块可折叠的终端面板（IDE 底部面板那个形态）。

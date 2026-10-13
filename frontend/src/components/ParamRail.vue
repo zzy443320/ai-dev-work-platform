@@ -38,7 +38,7 @@ const missing = computed(() => mod.value.fields.filter((f) => {
 </script>
 
 <template>
-  <aside class="prail" :id="`param-rail-${name}`" :aria-label="`${mod.title}（参数轨）`">
+  <aside class="prail pcol" :id="`param-rail-${name}`" :aria-label="`${mod.title}（参数轨）`">
     <div class="prail-head">
       <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor"
            stroke-width="2" stroke-linecap="round" stroke-linejoin="round">

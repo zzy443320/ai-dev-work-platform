@@ -113,6 +113,35 @@ input.pf-ctl { width: 210px; }
 .prail-foot { flex: none; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
   padding: 11px 14px; border-top: 1px solid var(--border); background: var(--input-bg); }
 
+/* ---- 本批定格卡（跑动中顶替参数轨占同一列）---- */
+.plock { position: sticky; top: 12px; display: flex; flex-direction: column; gap: 10px;
+  border: 1px solid var(--border); border-radius: 12px; background: var(--panel-solid);
+  padding: 13px 14px; }
+.plock-head { display: flex; align-items: center; gap: 8px; }
+.plock-head b { font-size: 13px; font-weight: 600; color: var(--text); }
+.plock-live { width: 7px; height: 7px; border-radius: 99px; background: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-soft); flex: none; }
+.plock-tag { margin-left: auto; font-size: 10px; color: var(--txt4, #4a5878);
+  border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; flex: none; }
+.plock-list { display: flex; flex-direction: column; gap: 7px; }
+.plock-row { display: grid; grid-template-columns: 84px minmax(0, 1fr); gap: 8px;
+  align-items: baseline; }
+.plock-row dt { font-size: 11.5px; color: var(--muted); }
+.plock-row dd { margin: 0; font-size: 12.5px; color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.plock-note { font-size: 11px; line-height: 1.65; color: var(--text-dim);
+  border-top: 1px dashed var(--border); padding-top: 9px; }
+.plock .el-button { align-self: flex-start; }
+/* strip 模式（缺陷修复 / 代码测试）跑动中：定格卡横躺在原来参数条那一行 */
+.plock-wide { position: static; grid-column: 1 / -1; flex-direction: row;
+  align-items: center; flex-wrap: wrap; gap: 8px 16px; padding: 10px 12px; }
+.plock-wide .plock-head { flex: none; }
+.plock-wide .plock-tag { margin-left: 8px; }
+.plock-wide .plock-list { flex-direction: row; flex-wrap: wrap; gap: 6px 18px; }
+.plock-wide .plock-row { grid-template-columns: none; gap: 6px; }
+.plock-wide .plock-row dd { max-width: 260px; }
+.plock-wide .plock-note { flex-basis: 100%; border-top: 0; padding-top: 0; }
+
 /* 分段（取稿通道）：标签、按钮组、说明各占一行地排，说明不能挤在按钮尾巴上 */
 .pf-seg { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
 .pf-seg .pf-hint { flex-basis: 100%; }
@@ -135,10 +164,10 @@ input.pf-ctl { width: 210px; }
 
 /* 窄屏：轨不再挤成一列 —— 降到主区下方，仍然是布局的一部分（不是浮层） */
 @media (max-width: 1180px) {
-  #pane-team.active:has(> .prail),
-  #pane-reqdev.active:has(> .prail),
-  #pane-apidebug.active:has(> .prail) { grid-template-columns: minmax(0, 1fr); }
-  .prail { position: static; max-height: none; grid-column: 1 / -1; grid-row: auto; }
+  #pane-team.active:has(> .pcol),
+  #pane-reqdev.active:has(> .pcol),
+  #pane-apidebug.active:has(> .pcol) { grid-template-columns: minmax(0, 1fr); }
+  .pcol { position: static; max-height: none; grid-column: 1 / -1; grid-row: auto; }
 }
 
 /* ===========================================================================
@@ -153,11 +182,13 @@ input.pf-ctl { width: 210px; }
  * 也不会去改 style.css 那条通用页签规则。
  * ======================================================================== */
 .pstrip { grid-column: 1 / -1; min-width: 0; }
-.prail { grid-column: -2 / -1; grid-row: 1 / -1; min-width: 0; align-self: start; }
+/* .pcol = 占「参数列」的那件东西：空闲时是参数轨，跑动中是本批定格卡。
+   两者共用一列，点「开始作业」不会让整屏跳版式。 */
+.pcol { grid-column: -2 / -1; grid-row: 1 / -1; min-width: 0; align-self: start; }
 
-#pane-team.active:has(> .prail),
-#pane-reqdev.active:has(> .prail),
-#pane-apidebug.active:has(> .prail) {
+#pane-team.active:has(> .pcol),
+#pane-reqdev.active:has(> .pcol),
+#pane-apidebug.active:has(> .pcol) {
   /* align-items:start 是必需的：轨自身有 max-height，行高被它撑到 ~780px，
      默认 stretch 会把主区面板一起拉长，中间出现一大块空洞（1440 实拍见过）。 */
   grid-template-columns: minmax(0, 1fr) var(--prail-w);
@@ -170,7 +201,7 @@ input.pf-ctl { width: 210px; }
    本条与上面同权重但更靠后，且比 desk.css 的 `#pane-team.active` 多一个 :has，
    所以赢；不靠 !important。 */
 @container main (min-width: 1240px) {
-  #pane-team.active:has(> .prail) {
+  #pane-team.active:has(> .pcol) {
     grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr) var(--prail-w);
   }
 }

@@ -14,7 +14,7 @@
 // 解包，写 `const t = useTeam()` 再在模板里用 `t.task` 会拿到 ref 对象本身。
 import { computed, onMounted, ref, watch } from 'vue'
 import { useTeam, AGENT_STATUS, ITEM_STATUS, RUN_STATUS, VERDICT_TEXT,
-  INTERVENE_TEXT } from '../composables/useTeam.js'
+  INTERVENE_TEXT, TEAM_ROLE_KEYS } from '../composables/useTeam.js'
 import { useFold } from '../composables/useFold.js'
 import { useToast } from '../composables/useToast.js'
 import { useRunModal } from '../composables/useRunModal.js'
@@ -85,8 +85,27 @@ function onRunClick(id) {
   openRun(id)
 }
 
+/**
+ * 本批配置定格：点「开始作业」的那一刻抓一份快照，跑动中用它替换可编辑参数轨。
+ * 后端是按启动时的参数开跑的，跑动中再改界面上的表单对这一批无效 ——
+ * 与其让人误以为改了会生效，不如把这一批到底用什么在跑明说（方向稿 A4
+ * 左下那张「本批配置 · 可中途改」就是这个意思）。
+ */
+const batch = ref([])
+const ROLE_SHORT = { planner: '决策官', coder: '编码工程师', tester: '测试工程师', reviewer: '复核官' }
+
 /** 用户点了「开始作业」 */
 function onStart() {
+  const roles = TEAM_ROLE_KEYS.filter((k) => roleOn.value[k])
+    .map((k) => ROLE_SHORT[k] || k).join(' · ')
+  batch.value = [
+    { label: '任务标题', value: (title.value || '').trim() || '（未填）' },
+    { label: '参与角色', value: roles || '仅决策官' },
+    { label: '改造范围', value: (scope.value || '').trim() || '不限，由决策官判断' },
+    { label: '技术栈', value: framework.value || '未选' },
+    { label: '最多返工', value: `${rounds.value ?? 0} 轮` },
+    { label: '其他约定', value: (notes.value || '').trim() || '无' },
+  ]
   start()
 }
 
@@ -157,7 +176,9 @@ onMounted(async () => {
 </script>
 
 <template>
-  <ParamLayout name="team" :model="params" :opt-label="roleLabel">
+  <ParamLayout name="team" :model="params" :opt-label="roleLabel"
+               :locked="running" :locked-items="batch"
+               locked-note="流水线按启动时的参数推进，跑动中改这些值对这一批无效；本轮结束后表单恢复可编辑，改完就是下一批的配置。">
     <template #actions>
       <el-button type="primary" id="btn-team-run" :disabled="running" @click="onStart">开始作业</el-button>
       <el-button id="btn-team-history-refresh" @click="loadRuns()">刷新历史</el-button>

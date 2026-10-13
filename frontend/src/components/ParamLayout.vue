@@ -21,6 +21,7 @@ import { computed } from 'vue'
 import { paramLayout, paramModule } from '../composables/useParamSchema.js'
 import ParamStrip from './ParamStrip.vue'
 import ParamRail from './ParamRail.vue'
+import ParamLocked from './ParamLocked.vue'
 
 const props = defineProps({
   name: { type: String, required: true },
@@ -28,6 +29,12 @@ const props = defineProps({
   model: { type: Object, required: true },
   /** 标签解析器 (field, option) => string，透传给渲染器（角色名以后端为准时用） */
   optLabel: { type: Function, default: null },
+  /** 跑动中：参数区定格成只读摘要（为什么要有它，见 ParamLocked 文件头） */
+  locked: { type: Boolean, default: false },
+  /** 定格项 [{ label, value }] —— 由调用方在**点运行的那一刻**抓快照 */
+  lockedItems: { type: Array, default: () => [] },
+  /** 定格卡上那句「为什么现在改不了、什么时候能改」 */
+  lockedNote: { type: String, default: '' },
 })
 
 // 三个插槽：
@@ -43,21 +50,31 @@ const rail = computed(() => !!mod.value && paramLayout(props.name) === 'rail')
   <!-- schema 没到位（正常不会发生：main.js 先拉后挂载）：只交主区，不渲染参数区 -->
   <slot v-if="!mod" />
 
-  <!-- A 就地控件条：参数条在前，主区面板跟着排，两者都是页签 grid 的直接子节点 -->
-  <template v-else-if="!rail">
-    <ParamStrip :name="name" :model="model" :opt-label="optLabel">
+  <!-- 空闲：可编辑参数区。strip 模式排在主区之前（占整行），rail 模式排在主区之后
+       （钉在最后一列）—— 顺序就是 DOM 顺序，两种形态共用一个分支。 -->
+  <template v-else-if="!locked">
+    <ParamStrip v-if="!rail" :name="name" :model="model" :opt-label="optLabel">
       <template #actions><slot name="actions" /></template>
       <template #notes><slot name="notes" /></template>
     </ParamStrip>
     <slot />
-  </template>
-
-  <!-- B 常驻参数轨：主区面板先排，轨钉在最后一列、跨满所有行 -->
-  <template v-else>
-    <slot />
-    <ParamRail :name="name" :model="model" :opt-label="optLabel">
+    <ParamRail v-if="rail" :name="name" :model="model" :opt-label="optLabel">
       <template #actions><slot name="actions" /></template>
       <template #notes><slot name="notes" /></template>
     </ParamRail>
+  </template>
+
+  <!-- 跑动中：同一格换成「本批配置」定格卡。位置、列宽都不变，
+       点「开始作业」不会让整屏跳版式。 -->
+  <template v-else>
+    <ParamLocked v-if="!rail" class="plock-wide" :title="mod.title"
+                 :items="lockedItems" :note="lockedNote">
+      <template #actions><slot name="actions" /></template>
+    </ParamLocked>
+    <slot />
+    <ParamLocked v-if="rail" class="pcol" :title="mod.title"
+                 :items="lockedItems" :note="lockedNote">
+      <template #actions><slot name="actions" /></template>
+    </ParamLocked>
   </template>
 </template>
