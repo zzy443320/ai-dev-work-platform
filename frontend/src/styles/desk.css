@@ -702,3 +702,32 @@ body { font-size: 13px; letter-spacing: -0.003em; }
     var(--surf);
   border-color: rgba(76, 195, 255, 0.2);
 }
+
+/* ===== 11. 配置驾驶舱 =====
+   配置页是「仪表舱」：分区卡沉底、区头变成机读小标、保存条吸底常驻。
+   cfg-* 字段 id 一个没动（settings/page_login/browser_ai 三个用例按 id 定位）。 */
+#pane-config #config-panel {
+  background:
+    radial-gradient(640px 260px at 30% 0%, rgba(76, 195, 255, 0.06), transparent 70%),
+    var(--surf);
+}
+.cfg-region { border-radius: var(--r-l); }
+.cfg-region .region-head {
+  font-family: var(--mono); font-size: 11px; font-weight: 700;
+  letter-spacing: 0.18em; text-transform: uppercase; color: var(--ac);
+}
+.cfg-region .region-head::before {
+  content: ""; display: inline-block; width: 3px; height: 11px;
+  border-radius: 2px; background: var(--ac); margin-right: 8px; vertical-align: -1px;
+}
+/* 分区内的组卡：code-bg 沉底，和面板底拉开一档 */
+#config-panel .settings-group {
+  background: var(--code-bg); border: 1px solid var(--line);
+  border-radius: var(--r-m); padding: 14px 16px;
+}
+/* 保存条吸底：驾驶舱的「点火钥匙」永远在手边，不用滚到底找 */
+.config-foot {
+  position: sticky; bottom: 0; z-index: 6;
+  margin-top: 6px; padding: 10px 0 2px;
+  background: linear-gradient(180deg, transparent, var(--surf) 38%);
+}
