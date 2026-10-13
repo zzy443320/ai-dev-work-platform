@@ -92,10 +92,7 @@ input.pf-ctl { width: 210px; }
 .pstrip-empty { font-size: 12px; color: var(--warn); margin-bottom: 12px; }
 
 /* ------------------------------------------------------------------ B 常驻参数轨 */
-.pane-cols { display: block; min-width: 0; }
-.pane-cols.cols-rail { display: grid; grid-template-columns: minmax(0, 1fr) 322px;
-  gap: 14px; align-items: start; }
-.pane-col-main { min-width: 0; }
+:root { --prail-w: 322px; }
 .prail { position: sticky; top: 12px; display: flex; flex-direction: column; min-height: 0;
   max-height: calc(100vh - 120px); border: 1px solid var(--border); border-radius: 12px;
   background: var(--panel-solid); }
@@ -138,6 +135,42 @@ input.pf-ctl { width: 210px; }
 
 /* 窄屏：轨不再挤成一列 —— 降到主区下方，仍然是布局的一部分（不是浮层） */
 @media (max-width: 1180px) {
-  .pane-cols.cols-rail { grid-template-columns: minmax(0, 1fr); }
-  .prail { position: static; max-height: none; }
+  #pane-team.active:has(> .prail),
+  #pane-reqdev.active:has(> .prail),
+  #pane-apidebug.active:has(> .prail) { grid-template-columns: minmax(0, 1fr); }
+  .prail { position: static; max-height: none; grid-column: 1 / -1; grid-row: auto; }
+}
+
+/* ===========================================================================
+ * 3. 在页签 grid 里的位置（ParamLayout 是**多根 fragment**，不包 div）
+ *
+ * 各页签的多列布局靠 `#pane-x > section:nth-of-type(n) { grid-area: … }` 排，
+ * 中间插一层元素面板就会掉回一列（实测六面板被挤成 459px、右边空 559px）。
+ * 所以参数条 / 面板 / 参数轨都是页签 grid 的**同级直接子节点**：
+ *   · 参数条横跨整行；
+ *   · 轨钉在最后一列并跨满所有行，主区各面板自动排进左边的内容列。
+ * 选择器一律带 `.active`：与 desk.css 里既有的页签布局同权重，靠后加载赢，
+ * 也不会去改 style.css 那条通用页签规则。
+ * ======================================================================== */
+.pstrip { grid-column: 1 / -1; min-width: 0; }
+.prail { grid-column: -2 / -1; grid-row: 1 / -1; min-width: 0; align-self: start; }
+
+#pane-team.active:has(> .prail),
+#pane-reqdev.active:has(> .prail),
+#pane-apidebug.active:has(> .prail) {
+  /* align-items:start 是必需的：轨自身有 max-height，行高被它撑到 ~780px，
+     默认 stretch 会把主区面板一起拉长，中间出现一大块空洞（1440 实拍见过）。 */
+  grid-template-columns: minmax(0, 1fr) var(--prail-w);
+  align-items: start;
+}
+
+/* 长任务在宽容器下本来就是「战场 | 控制塔」两列（desk.css 第 13 节的 areas）。
+   有轨时只**再加第三轨**：轨靠 grid-column: -2/-1 自动落在最后一轨，
+   六面板的 grid-area 一个字不动 —— 改 areas 等于把方向稿的排布重写一遍。
+   本条与上面同权重但更靠后，且比 desk.css 的 `#pane-team.active` 多一个 :has，
+   所以赢；不靠 !important。 */
+@container main (min-width: 1240px) {
+  #pane-team.active:has(> .prail) {
+    grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr) var(--prail-w);
+  }
 }

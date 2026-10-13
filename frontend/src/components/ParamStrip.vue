@@ -52,9 +52,10 @@ const missing = computed(() => mod.value.fields.filter((f) => {
         {{ moreOpen ? '收起更多设定' : `更多设定 ${advanced.length} 项` }}
       </button>
       <span class="pstrip-flex"></span>
+      <!-- 只在「有事可说」时出现：全默认本来就是常态，那句「全部默认值」既没人看，
+           又会和参数格尾部的「默认」角标挤在一起（1440 实拍撞字）。 -->
       <span v-if="missing" class="pstrip-changed miss">必填未填 {{ missing }} 项</span>
       <span v-else-if="changed" class="pstrip-changed">已改 {{ changed }} 项</span>
-      <span v-else class="pstrip-changed none">全部默认值</span>
       <span class="pstrip-actions"><slot name="actions" /></span>
     </div>
 

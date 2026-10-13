@@ -119,6 +119,18 @@ def run():
               split["padR"] < 400 and split["drawerGone"], str(split))
         check("主区与轨并排后仍各有宽度（没被挤成 0）",
               split["panelW"] >= 480, str(split))
+        # 空洞回归锁：轨自带 max-height，行高被它撑起来时，默认 stretch 会把
+        # 主区面板一起拉长，中间出现一大块空白（1440 实拍翻车过一次）。
+        hole = pg.evaluate("""() => {
+          const panel = document.getElementById('req-panel');
+          const rail = document.getElementById('param-rail-reqdev');
+          return {align: getComputedStyle(document.getElementById('pane-reqdev')).alignItems,
+                  panelH: Math.round(panel.getBoundingClientRect().height),
+                  railH: Math.round(rail.getBoundingClientRect().height)};
+        }""")
+        check("主区面板不被参数轨拉伸（无空洞）",
+              hole["align"].startswith("start") or hole["panelH"] <= hole["railH"] + 40,
+              str(hole))
         pg.screenshot(path=str(OUT / "reqdev-layout.png"))
 
         # ---- 4. 统计说明条：分段之间有间隔 ----
@@ -159,6 +171,20 @@ def run():
         check("长任务：运行中干预留在主区、空闲时整行隐藏",
               ts["interveneInMain"] and ts["interveneHidden"], str(ts))
         check("长任务：「开始作业」在参数轨的常驻动作条里", ts["startInRail"], str(ts))
+        # 布局塌陷回归锁：ParamLayout 曾把六面板包进一层 div，`#pane-team > section`
+        # 的子代选择器失效 → 面板掉回一列（459px 窄条）、右边空出 559px。
+        # 现在它是多根 fragment，面板仍是页签 grid 的直接子节点，轨占最后一列。
+        tcols = pg.evaluate("""() => {
+          const pane = document.getElementById('pane-team');
+          const board = document.getElementById('team-board-panel');
+          const rail = document.getElementById('param-rail-team');
+          return {cols: getComputedStyle(pane).gridTemplateColumns.split(' ').length,
+                  boardW: Math.round(board.getBoundingClientRect().width),
+                  gapRight: Math.round(innerWidth - rail.getBoundingClientRect().right)};
+        }""")
+        check("长任务六面板仍按页签 grid 多列排布（轨不打破子代选择器）",
+              tcols["cols"] >= 2 and tcols["boardW"] >= 400, str(tcols))
+        check("参数轨钉在最右列，右侧不留空洞", tcols["gapRight"] <= 60, str(tcols))
         pg.screenshot(path=str(OUT / "team-layout.png"))
 
         pg.evaluate("() => switchTab('chat')")
