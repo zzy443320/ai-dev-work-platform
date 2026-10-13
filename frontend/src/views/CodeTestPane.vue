@@ -69,8 +69,8 @@ function onRun() {
     <div class="info-note">后端会读取仓库里的目标文件（只读）交给 AI 分析；<br>生成的测试文件先落成下方「产出物」，人工采纳才写入工作区（不 commit、不 push）。</div>
   </section>
 
-  <ParamDrawer name="codetest" title="测试参数"
-               hint="路径相对仓库根；「预览文件」只读，不改任何东西。">
+  <ParamDrawer name="codetest" title="测试参数" :default-open="false"
+               hint="路径相对仓库根；「预览文件」只读，不改任何东西。点摘要条「修改参数」展开填写。">
     <label class="field">
       <span>目标文件路径（相对仓库根）</span>
       <el-input id="test-file" v-model="testFile" placeholder="src/components/OrderList/index.tsx" />

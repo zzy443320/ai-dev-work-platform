@@ -192,8 +192,8 @@ onMounted(async () => {
   </section>
 
   <!-- ── 右侧参数抽屉：作业表单 + 开始作业 ── -->
-  <ParamDrawer name="team" title="作业参数"
-               hint="任务越大越要把「改成什么样」和「哪些不许动」写清楚。点「开始作业」后抽屉自动收起，主区就是看板与实时时间线。">
+  <ParamDrawer name="team" title="作业参数" :default-open="false"
+               hint="任务越大越要把「改成什么样」和「哪些不许动」写清楚（点摘要条「修改作业参数」展开）。点「开始作业」后主区就是看板与实时时间线。">
     <label class="field">
       <span>任务标题</span>
       <el-input type="text" id="team-title" v-model="title" placeholder="例如：订单列表页从旧架构迁移到新架构" />

@@ -822,3 +822,8 @@ body { font-size: 13px; letter-spacing: -0.003em; }
 /* 统计页构成面板与趋势同行：构成也封顶内滚，趋势 420 图不再被吊高 */
 #pane-stats > section:nth-of-type(3) { max-height: 560px; overflow: hidden; display: flex; flex-direction: column; }
 #pane-stats > section:nth-of-type(3) .usage-split { overflow-y: auto; flex: 1; min-height: 0; }
+
+/* 折叠时摘掉主角面板的 min-height —— 折叠语义就是「变矮」，
+   看板 340 的地板会把折叠后的高度顶死（team 用例断言折叠变矮）。 */
+#pane-team .panel.collapsed { min-height: 0; }
+#pane-team .panel.collapsed #team-agents { display: none; }

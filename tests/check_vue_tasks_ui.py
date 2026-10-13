@@ -146,6 +146,10 @@ def run(base: str, *, errors: list, consoles: list) -> None:
         # ── 3. 需求开发：Figma 取稿通道切换落 localStorage ──
         page.evaluate("() => switchTab('reqdev')")
         page.wait_for_timeout(300)
+        # 驾驶舱改版：参数抽屉默认收起（首屏给多列布局让出宽度），
+        # 填字段前先点开 —— 打开抽屉本身就是这个模块的交互契约。
+        page.click("#btn-reqdev-params")
+        page.wait_for_timeout(300)
         page.click("#req-figma-mode .seg-btn[data-mode='browser']")
         page.wait_for_timeout(200)
         saved = page.evaluate("() => localStorage.getItem('figma-fetch-mode')")
@@ -161,6 +165,10 @@ def run(base: str, *, errors: list, consoles: list) -> None:
         # ── 4. 代码测试：预览文件（只读接口，路径存在→有内容）──
         page.evaluate("() => switchTab('codetest')")
         page.wait_for_timeout(300)
+        # 驾驶舱改版：参数抽屉默认收起（首屏给多列布局让出宽度），
+        # 填字段前先点开 —— 打开抽屉本身就是这个模块的交互契约。
+        page.click("#btn-codetest-params")
+        page.wait_for_timeout(300)
         page.fill("#test-file", "packages/src/Hello.tsx")
         page.click("#btn-test-load")
         page.wait_for_timeout(1500)
@@ -169,6 +177,10 @@ def run(base: str, *, errors: list, consoles: list) -> None:
 
         # ── 5. 跑一次 Mock 任务：接口联调（表单最简，只要求粘贴文档）──
         page.evaluate("() => switchTab('apidebug')")
+        page.wait_for_timeout(300)
+        # 驾驶舱改版：参数抽屉默认收起（首屏给多列布局让出宽度），
+        # 填字段前先点开 —— 打开抽屉本身就是这个模块的交互契约。
+        page.click("#btn-apidebug-params")
         page.wait_for_timeout(300)
         page.fill("#api-doc", '{"paths": {"/api/v1/list": {"get": {}}}}')
         page.click("#btn-apidebug")

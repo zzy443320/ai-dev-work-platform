@@ -82,8 +82,11 @@ function onRun() {
   </section>
 
   <!-- ── 右侧参数抽屉：全部输入 + 两个动作 ── -->
-  <ParamDrawer name="reqdev" title="生成参数"
-               hint="Figma 取稿方式、需求描述与代码风格约定。填完直接跑，跑起来抽屉会自动收起。">
+  <!-- 驾驶舱改版：默认收起（同 defect）——抽屉开着会把主列挤到多列布局
+         的容器断点以下，首屏永远是单列 + 大片空。参数摘要条常驻，
+         要改再点开；跑起来自动收起的行为不变。 -->
+  <ParamDrawer name="reqdev" title="生成参数" :default-open="false"
+               hint="点摘要条「修改生成参数」填 Figma 取稿方式、需求描述与代码风格约定。填完直接跑，跑起来抽屉会自动收起。">
     <!-- 取稿通道（Token / 浏览器）跟着它改的是取稿方式，所以和 Token 放同一组 -->
     <label class="field">
       <span>Figma 设计稿链接</span>

@@ -54,8 +54,8 @@ function onRun() {
     <div class="info-note">产出：对接步骤、需要新建/修改的文件（请求封装 + 类型定义 + 调用代码）、mock 数据、联调 checklist。<br>全部先落成下方「产出物」，人工采纳才写工作区（不 commit、不 push）。</div>
   </section>
 
-  <ParamDrawer name="apidebug" title="联调参数"
-               hint="接口文档是这份表单里唯一真正需要宽度的输入，其余都是可选项。">
+  <ParamDrawer name="apidebug" title="联调参数" :default-open="false"
+               hint="接口文档是这份表单里唯一真正需要宽度的输入，其余都是可选项。点摘要条「修改参数」展开填写。">
     <label class="field">
       <span>接口文档（Swagger/OpenAPI JSON、Markdown、curl 示例均可）</span>
       <el-input id="api-doc" type="textarea" :rows="10" v-model="apiDoc" placeholder='{"paths": {"/api/v1/list": {...}}} 或直接粘贴后端给的文档' />

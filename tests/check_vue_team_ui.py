@@ -129,9 +129,19 @@ def run(base: str, *, errors: list) -> None:
           return el ? el.getBoundingClientRect().top : null;
         })""", PANELS)
         check("六个面板齐全", all(t is not None for t in tops), str([round(t) if t else t for t in tops]))
-        check("面板顺序：表单 → 看板 → 工作项 → 时间线 → 介入 → 历史",
-              all(t is not None for t in tops) and tops == sorted(tops),
-              str([round(t) if t else t for t in tops]))
+        # 驾驶舱双列重排（战场左 / 控制塔右）后 top 不再全局递增 ——
+        # 意图不变：DOM 源顺序仍是 表单→看板→工作项→时间线→介入→历史
+        # （折叠记忆、无障碍树与窄屏单列降级都依赖它），改断 compareDocumentPosition。
+        dom_ordered = page.evaluate("""ids => {
+          const els = ids.map(id => document.getElementById(id));
+          for (let i = 1; i < els.length; i++) {
+            if (!(els[i - 1].compareDocumentPosition(els[i]) & Node.DOCUMENT_POSITION_FOLLOWING))
+              return false;
+          }
+          return true;
+        }""", PANELS)
+        check("面板 DOM 顺序：表单 → 看板 → 工作项 → 时间线 → 介入 → 历史",
+              dom_ordered, str(PANELS))
         check("#pane-team 是 grid 布局",
               page.eval_on_selector("#pane-team", "el => getComputedStyle(el).display") == "grid")
 
@@ -180,6 +190,9 @@ def run(base: str, *, errors: list) -> None:
               opts and opts[0][0] == "all" and len(opts) >= 5, str(opts))
 
         # ── 5. 跑一次作业（Mock，秒级完成）：点真实「开始作业」按钮 ──
+        # 驾驶舱改版：作业参数抽屉默认收起（首屏给双列布局让宽度），填表前先点开
+        page.click("#btn-team-params")
+        page.wait_for_timeout(300)
         page.fill("#team-title", "UI 自检 · 旧表格组件迁移")
         page.fill("#team-task",
                   "把 src/views 下的列表页统一迁移到新表格组件，接口调用改到 src/api/v2，"

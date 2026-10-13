@@ -91,6 +91,10 @@ def run():
         # ---- 3. 需求开发：输入全在参数抽屉里，主区只剩摘要条与过程区 ----
         pg.evaluate("() => switchTab('reqdev')")
         pg.wait_for_timeout(300)
+        # 驾驶舱改版：抽屉默认收起（首屏给多列布局让宽度），点摘要条才开。
+        # 「装得下全部输入 + 开着让位」两条意图不变，改成开抽屉后量。
+        pg.click("#btn-reqdev-params")
+        pg.wait_for_timeout(300)
         split = pg.evaluate("""() => {
           const panel = document.getElementById('req-panel');
           const drawer = document.getElementById('mod-drawer-reqdev');
@@ -103,7 +107,7 @@ def run():
         }""")
         check("需求开发：主区没有输入字段，只剩摘要条 + 设计稿结构",
               split["mainFields"] == 0 and split["bar"] and split["tree"], str(split))
-        check("需求开发：参数抽屉默认打开、装下全部输入",
+        check("需求开发：点摘要条打开抽屉、装下全部输入",
               split["open"] and split["drawerFields"] >= 5, str(split))
         check("抽屉开着时主列让出右侧空间（非模态，不遮挡过程区）",
               split["padR"] >= 400, str(split["padR"]))
