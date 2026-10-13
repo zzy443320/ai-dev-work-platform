@@ -17,9 +17,44 @@ import './styles/desk.css'
 // 全局基元（卡片 / 表格 / 弹窗 / 徽标 / 表单 / 日志 / 气泡）：与 desk.css 同一轮改版，
 // 单独一个文件是因为它覆盖的是 style.css 里那几十个页签共用的类，和外壳互不相干。
 import './styles/primitives.css'
+// 参数展示层（2026-10-13 改版）：就地控件条 + 常驻参数轨的观感都在这一个文件里。
+// 必须在 skin-*.css 之前：皮肤层只调外观（圆角/软阴影），尺寸与版式以这里为准。
+import './styles/params.css'
+
+import { loadParamSchema } from './composables/useParamSchema.js'
 
 const app = createApp(App)
-app.mount('#app')
+
+// ---------------------------------------------------------------------------
+// 参数 schema 必须**在挂载之前**到位。
+//
+// 原因：五个任务模块的表单初值现在直接读 schema（`schemaDefault(...)`），
+// composable 是在 setup 里同步取值的 —— 挂载晚于这次 await，取到的一定是真值。
+// 反过来（先挂载后拉 schema）就得给每个表单加骨架屏，还会出现「空表单闪一下
+// 再回填默认值」的错觉，用户以为默认值是自己填进去的。
+//
+// 拉不到就明确报错并停在原地，**不**退化成一张手写的兜底表单：
+// 表单骗人比表单不出来更难查（填了却跑不对，且没人知道范围是哪来的）。
+// ---------------------------------------------------------------------------
+function mountAfterSchema() {
+  return loadParamSchema().catch((e) => {
+    const host = document.getElementById('app')
+    if (host) {
+      host.innerHTML = '<div style="padding:48px 32px;font:14px/1.8 system-ui;color:#dbe4f5">'
+        + '<h2 style="font-size:18px;margin-bottom:10px">参数定义没拿到，界面没有启动</h2>'
+        + '<p style="color:#9fb0cc">接口 <code>/api/params/schema</code> 请求失败：'
+        + String((e && e.message) || e).replace(/[<>&]/g, '') + '</p>'
+        + '<p style="color:#6b7a99;margin-top:10px">确认本机服务在跑（http://127.0.0.1:8765），'
+        + '或后端 web/params_schema.py 是否有语法错误，然后刷新。</p></div>'
+    }
+    throw e
+  }).then(() => {
+    app.mount('#app')
+    return app
+  })
+}
+
+const mounted = mountAfterSchema()
 
 // ---------------------------------------------------------------------------
 // 迁移期兼容层：把几个旧版里的全局函数挂到 window 上。
@@ -33,3 +68,5 @@ app.config.globalProperties.$tabs = TABS
 window.__VUE_APP__ = app
 window.__TAB_NAMES__ = TABS.map((t) => t.name)
 window.__DEFAULT_TAB__ = DEFAULT_TAB
+/** 用例与排查脚本可以 await 这个 Promise 确认「界面真的挂载完了」 */
+window.__APP_READY__ = mounted

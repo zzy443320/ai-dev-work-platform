@@ -71,6 +71,8 @@ export const api = {
   health: () => http.get('/api/health'),
   stats: () => http.get('/api/stats'),
   changelog: () => http.get('/api/changelog'),
+  // 任务模块的参数元数据（标签/范围/默认值/分档的唯一来源，见 web/params_schema.py）
+  paramsSchema: () => http.get('/api/params/schema'),
 
   // 设置与 AI 接入配置
   getSettings: () => http.get('/api/settings'),

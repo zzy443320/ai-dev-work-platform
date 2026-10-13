@@ -18,6 +18,7 @@ import { useToast } from './useToast.js'
 import { setRunStatus } from './useRunStatus.js'
 import { useArtifacts } from './useArtifacts.js'
 import { useHealth } from './useHealth.js'
+import { schemaDefault } from './useParamSchema.js'
 
 /** Figma 取稿通道的 localStorage 键（与旧版同源：figma-fetch-mode） */
 const FIGMA_MODE_KEY = 'figma-fetch-mode'
@@ -90,9 +91,12 @@ export function useTasks() {
   const apiNotes = ref('')
 
   // ---- codetest 表单 ----
-  const testFile = ref('')
-  const testFramework = ref('vitest')
-  const testFocus = ref('')
+  // 默认值来自 schema（web/params_schema.py），不在这里再写一份 'vitest'：
+  // 参数一共三处描述（模板标签、composable 初值、后端 clamp），改版前各写各的，
+  // 现在只剩「后端一处 + 这里的读取」。main.js 保证挂载前 schema 已到位。
+  const testFile = ref(String(schemaDefault('codetest', 'testFile', '')))
+  const testFramework = ref(schemaDefault('codetest', 'testFramework', 'vitest'))
+  const testFocus = ref(String(schemaDefault('codetest', 'testFocus', '')))
   const testLoading = ref(false)
   const testPreview = ref('')
   const testError = ref('')

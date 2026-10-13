@@ -165,10 +165,16 @@ def run(base: str, *, errors: list, consoles: list) -> None:
         # ── 4. 代码测试：预览文件（只读接口，路径存在→有内容）──
         page.evaluate("() => switchTab('codetest')")
         page.wait_for_timeout(300)
-        # 驾驶舱改版：参数抽屉默认收起（首屏给多列布局让出宽度），
-        # 填字段前先点开 —— 打开抽屉本身就是这个模块的交互契约。
-        page.click("#btn-codetest-params")
-        page.wait_for_timeout(300)
+        # 参数形态改版（2026-10-13）：codetest 三条参数走**就地控件条**，
+        # 不再有抽屉，也就不存在「先点修改参数再填」这一步 —— 控件常驻即可填。
+        # 这里反过来锁住新契约：参数条与三个控件在首屏就必须是可见的。
+        check("参数条常驻（无抽屉）",
+              page.eval_on_selector("#param-strip-codetest",
+                                    "el => !!el && !!el.offsetParent")
+              and not page.query_selector("#btn-codetest-params"))
+        check("参数条里的控件可见",
+              page.is_visible("#test-file") and page.is_visible("#test-framework")
+              and page.is_visible("#test-focus"))
         page.fill("#test-file", "packages/src/Hello.tsx")
         page.click("#btn-test-load")
         page.wait_for_timeout(1500)

@@ -1,0 +1,137 @@
+/* ===========================================================================
+ * 参数展示层（2026-10-13 改版）
+ *
+ * 覆盖两种形态的观感：
+ *   .pstrip  就地控件条 —— 参数 ≤6 且无长文本的模块（缺陷修复 / 代码测试）
+ *   .prail   常驻参数轨 —— 参数 >6 或含长文本的模块（长任务 / 需求开发 / 接口联调）
+ * 两者都取代原来的「摘要 chip + 右侧浮层抽屉」，所以这里**不出现任何 fixed 浮层、
+ * 遮罩、主列让位**：参数是布局的一部分，不是盖在内容上的一张窗。
+ *
+ * 只读用 style.css 令牌层的变量（--panel-solid / --border / --text-dim / --primary …），
+ * 换 data-style 皮肤时跟着一起变；skin-*.css 那层只调外观，不碰这里的尺寸。
+ * 加载顺序：在 primitives.css 之后、skin-clay.css 之前（见 main.js）。
+ * ======================================================================== */
+
+/* ---------------------------------------------------------------- 共用：一格参数 */
+.pf { min-width: 0; }
+.pf-label { font-size: 11px; color: var(--muted); flex: none; white-space: nowrap; }
+.pf-flex { flex: 1 1 auto; min-width: 6px; }
+.pf-hint { font-size: 10.5px; line-height: 1.55; color: var(--txt4, #4a5878); flex-basis: 100%; }
+.pf-req { font-size: 9.5px; color: var(--primary); border: 1px solid var(--primary-soft);
+  background: var(--primary-soft); border-radius: 4px; padding: 0 4px; flex: none; }
+.pf-opt, .pf-def { font-size: 9.5px; color: var(--muted); border: 1px solid var(--border);
+  border-radius: 4px; padding: 0 4px; flex: none; }
+.pf-def { color: var(--txt4, #4a5878); }
+.pf-expand { font-size: 10.5px; color: var(--muted); background: none; border: 0;
+  cursor: pointer; padding: 0; flex: none; }
+.pf-expand:hover { color: var(--primary); }
+
+/* 短控件：标签与值同处一格，边框只在 hover/focus 出现（表单感压到最低） */
+.pf-inline { display: inline-flex; align-items: center; gap: 6px; max-width: 100%;
+  border: 1px solid transparent; border-radius: 9px; padding: 3px 8px 3px 9px;
+  background: var(--input-bg); transition: border-color .15s, box-shadow .15s; }
+.pf-inline:hover { border-color: var(--border-strong); }
+.pf-inline:focus-within { border-color: var(--primary); box-shadow: 0 0 0 2px var(--primary-soft); }
+.pf-ctl { font: inherit; font-size: 12.5px; color: var(--text); min-width: 0;
+  border: 0; background: transparent; outline: none; padding: 2px 0;
+  color-scheme: dark; }  /* 原生 select 的下拉面板跟着走深色，否则弹出白底一块 */
+.pf-ctl::placeholder { color: var(--txt4, #4a5878); opacity: 1; }
+.pf-textarea textarea::placeholder { color: var(--txt4, #4a5878); opacity: 1; }
+/* 必填没填时占位语就是「该写什么」，用提示色而不是灰：灰底灰字会被当成已填 */
+.pf.is-missing .pf-ctl::placeholder { color: var(--warn); }
+input.pf-ctl { width: 210px; }
+.pf-password input.pf-ctl { width: 150px; }
+.pf-number input.pf-ctl { width: 46px; text-align: right; -moz-appearance: textfield; }
+.pf-select select.pf-ctl { cursor: pointer; padding-right: 2px; }
+.pf-unit { font-size: 11px; color: var(--muted); flex: none; }
+/* 必填没填：提示色而不是错误红（这是「还差点什么」，不是「你错了」） */
+.pf.is-missing > .pf-inline, .pf.is-missing > .pf-textarea { border-color: var(--warn); background: var(--warn-soft); }
+.pf.is-missing .pf-label { color: var(--warn); }
+
+/* 开关：沿用项目「轨道 + 圆点」的形态，不引新组件 */
+.pf-switch { display: inline-flex; align-items: center; gap: 7px; cursor: pointer; position: relative; }
+.pf-switch input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.pf-track { width: 26px; height: 15px; border-radius: 99px; flex: none; position: relative;
+  background: var(--input-bg); border: 1px solid var(--border-strong); transition: .15s; }
+.pf-track::after { content: ""; position: absolute; top: 1px; left: 1px; width: 11px; height: 11px;
+  border-radius: 99px; background: var(--muted); transition: .15s; }
+.pf-switch input:checked + .pf-track { background: var(--primary-soft); border-color: var(--primary); }
+.pf-switch input:checked + .pf-track::after { left: 12px; background: var(--primary); }
+.pf-switch input:focus-visible + .pf-track { box-shadow: 0 0 0 2px var(--primary-soft); }
+.pf-switch.locked { cursor: not-allowed; opacity: .72; }
+.pf-group { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
+.pf-group-title { margin-right: 2px; }
+
+/* 长文本：strip 里两行截断，点一下给全高（不弹层，不抢整屏） */
+.pf-textarea { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.pf-textarea .pf-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.pf-textarea textarea { font: inherit; font-size: 12.5px; line-height: 1.7; color: var(--text);
+  border: 1px solid var(--border); border-radius: 9px; background: var(--input-bg);
+  padding: 7px 10px; resize: vertical; outline: none; width: 100%; }
+.pf-textarea textarea:focus { border-color: var(--primary); box-shadow: 0 0 0 2px var(--primary-soft); }
+.pf-textarea textarea.clamped { resize: none; overflow: hidden; }
+
+/* ------------------------------------------------------------------ A 就地控件条 */
+.pstrip { display: flex; flex-direction: column; gap: 9px; margin-bottom: 14px;
+  border: 1px solid var(--border); border-radius: 12px; background: var(--panel-solid);
+  padding: 10px 12px 9px; }
+.pstrip-row { display: flex; align-items: center; gap: 8px 10px; flex-wrap: wrap; min-width: 0; }
+.pstrip-title { font-size: 12px; font-weight: 600; color: var(--text-dim); letter-spacing: .01em; }
+.pstrip-actions { display: inline-flex; align-items: center; gap: 8px; }
+.pstrip-changed { font-size: 11px; color: var(--primary); white-space: nowrap; }
+.pstrip-changed.none { color: var(--muted); }
+.pstrip-changed.miss { color: var(--warn); }
+.pstrip-more { font-size: 11.5px; color: var(--text-dim); background: var(--input-bg);
+  border: 1px solid var(--border); border-radius: 99px; padding: 3px 11px; cursor: pointer; }
+.pstrip-more:hover { color: var(--primary); border-color: var(--primary); }
+.pstrip-body { display: flex; flex-direction: column; gap: 9px;
+  border-top: 1px dashed var(--border-strong); padding-top: 9px; }
+.pstrip-adv { display: flex; flex-wrap: wrap; gap: 8px 10px;
+  border-top: 1px dashed var(--border); padding-top: 9px; }
+.pstrip-hint { font-size: 11px; line-height: 1.6; color: var(--muted); }
+.pstrip-empty { font-size: 12px; color: var(--warn); margin-bottom: 12px; }
+
+/* ------------------------------------------------------------------ B 常驻参数轨 */
+.pane-cols { display: block; min-width: 0; }
+.pane-cols.cols-rail { display: grid; grid-template-columns: minmax(0, 1fr) 322px;
+  gap: 14px; align-items: start; }
+.pane-col-main { min-width: 0; }
+.prail { position: sticky; top: 12px; display: flex; flex-direction: column; min-height: 0;
+  max-height: calc(100vh - 120px); border: 1px solid var(--border); border-radius: 12px;
+  background: var(--panel-solid); }
+.prail-head { flex: none; display: flex; align-items: center; gap: 8px; padding: 12px 14px 0; }
+.prail-head b { font-size: 13px; font-weight: 600; color: var(--text); }
+.prail-head svg { color: var(--primary); flex: none; }
+.prail-count { font-size: 10.5px; color: var(--muted); margin-left: auto; white-space: nowrap; }
+.prail-count.miss { color: var(--warn); }
+.prail-hint { flex: none; margin: 6px 14px 0; font-size: 11px; line-height: 1.6; color: var(--text-dim); }
+.prail-body { flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: thin;
+  display: flex; flex-direction: column; gap: 11px; padding: 12px 14px; }
+.prail-grp { display: flex; align-items: center; gap: 8px; font-size: 10.5px;
+  letter-spacing: .08em; text-transform: uppercase; color: var(--txt4, #4a5878); }
+.prail-grp::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+.prail-adv-btn { font: inherit; font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--txt4, #4a5878); background: none; border: 0; cursor: pointer; padding: 0; }
+.prail-adv-btn:hover { color: var(--primary); }
+.prail-foot { flex: none; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 11px 14px; border-top: 1px solid var(--border); background: var(--input-bg); }
+
+/* 轨里的字段：标签在上、控件占满宽（长表单要的是可读，不是一行塞满） */
+.pf-rail { display: flex; flex-direction: column; gap: 4px; }
+.pf-rail.pf-switch-field { flex-direction: row; }
+.pf-rail .pf-inline { display: flex; flex-direction: column; align-items: stretch; gap: 4px;
+  border: 0; background: transparent; padding: 0; box-shadow: none !important; }
+.pf-rail .pf-label { font-size: 11.5px; color: var(--text-dim); }
+.pf-rail .pf-ctl, .pf-rail .pf-textarea textarea { width: 100%;
+  border: 1px solid var(--border); border-radius: 8px; background: var(--input-bg);
+  padding: 6px 9px; }
+.pf-rail .pf-ctl:focus { border-color: var(--primary); box-shadow: 0 0 0 2px var(--primary-soft); }
+.pf-rail .pf-number .pf-ctl { text-align: left; width: 92px; }
+.pf-rail .pf-group-list { display: flex; flex-wrap: wrap; gap: 6px 12px; }
+.pf-rail .pf-textarea .pf-row { order: -1; }
+
+/* 窄屏：轨不再挤成一列 —— 降到主区下方，仍然是布局的一部分（不是浮层） */
+@media (max-width: 1180px) {
+  .pane-cols.cols-rail { grid-template-columns: minmax(0, 1fr); }
+  .prail { position: static; max-height: none; }
+}
