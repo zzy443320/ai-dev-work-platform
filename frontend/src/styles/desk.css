@@ -663,3 +663,42 @@ body { font-size: 13px; letter-spacing: -0.003em; }
 .dh-stagelist .el-step__description { font-size: 11px; }
 .dh-title { font-size: 19px; }
 .dh-timer .big { font-size: 26px; }
+
+/* ===== 10. 统计驾驶舱（容器 ≥1240 重排）=====
+   KPI 行通栏 → 趋势主图占 C 位、构成右挂 → 任务排行 / 最近调用并排。
+   DOM 一行没动：用例锁的是 #usage-gran .seg-btn[data-g] 这类 id/data-*
+   与 .usage-card-* 类结构，grid 重排不碰它们。 */
+@container main (min-width: 1240px) {
+  #pane-stats.active {
+    grid-template-columns: minmax(0, 1fr) 380px;
+    grid-template-areas:
+      "cards cards"
+      "trend kinds"
+      "tasks recent";
+    align-items: start;
+  }
+  #pane-stats > section:nth-of-type(1) { grid-area: cards; }
+  #pane-stats > section:nth-of-type(2) { grid-area: trend; min-height: 430px; }
+  #pane-stats > section:nth-of-type(3) { grid-area: kinds; }
+  #pane-stats > section:nth-of-type(4) { grid-area: tasks; min-width: 0; }
+  #pane-stats > section:nth-of-type(5) { grid-area: recent; min-width: 0; }
+  /* 右挂 380px：两图改上下叠，横向条与环图各得全宽 */
+  #pane-stats .usage-split { grid-template-columns: 1fr; gap: 18px; }
+}
+
+/* KPI 卡驾驶舱化：mono 大数字是仪表，不是正文 */
+#usage-cards .usage-card { background: var(--code-bg); }
+#usage-cards .usage-card-value {
+  font-family: var(--mono); font-size: 25px; font-weight: 700;
+  color: var(--text); letter-spacing: -0.01em;
+}
+#usage-cards .usage-card.is-active .usage-card-value,
+#usage-cards .usage-card.active .usage-card-value { color: var(--ac2); }
+
+/* 趋势主图 = 本页主角：氛围光 + 亮描边（与缺陷页 hero 同一语言） */
+#pane-stats > section:nth-of-type(2) {
+  background:
+    radial-gradient(520px 240px at 50% 0%, rgba(76, 195, 255, 0.08), transparent 70%),
+    var(--surf);
+  border-color: rgba(76, 195, 255, 0.2);
+}
