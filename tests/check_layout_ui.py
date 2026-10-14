@@ -183,8 +183,24 @@ def run():
           }
           return {hole, worst};
         }""")
-        check("长任务：同行两面板体量配对（空洞 ≤ 100px，基线 452px）",
-              thole["hole"] <= 100, str(thole))
+        check("长任务：同行两面板底边对齐（空洞 ≤ 60px，基线 452px）",
+              thole["hole"] <= 60, str(thole))
+
+        # ---- 3c+. 面板 stretch 的配套护栏：列表行不许被压扁 ----
+        #   面板改成 stretch 后，列表容器拿到确定高度；Grid 的 auto 行会被
+        #   压到容器高 ÷ 行数（el-card 自带 overflow:hidden，可以被压扁），
+        #   历史卡实测被压成 26px 空壳、文字全无。这里锁卡片高度与内容可见。
+        cards = pg.evaluate("""() => {
+          const pick = (box, sel) => {
+            const el = box.querySelector(sel);
+            return el ? {h: Math.round(el.getBoundingClientRect().height),
+                         txt: (el.textContent||'').replace(/\\s+/g,' ').trim().length} : null;
+          };
+          return {history: pick(document.getElementById('team-history'), '.pcard'),
+                  agents: pick(document.getElementById('team-agents'), '.team-agent')};
+        }""")
+        check("长任务：历史卡/角色卡保持内容高（≥ 56px 且有文字）",
+              all(v and v["h"] >= 56 and v["txt"] > 8 for v in cards.values() if v), str(cards))
 
         # ---- 3d. 参数轨 sticky 偏移必须让开顶栏（top:12 < 顶栏 34 会永久切掉轨头）----
         pg.evaluate("() => switchTab('team')")

@@ -207,6 +207,24 @@ class TeamOrchestrator:
                 return a
         return {}
 
+    def _settle_agents(self, run_status: str) -> None:
+        """收尾：把还挂在「执行中」的角色卡落到终态。
+
+        coder / tester 是**逐个工作项**切 working 的，跑完之后没有任何一处替它们
+        改回来 —— 于是作业早就「已结束」，看板上还写着「编码工程师 实现 · 执行中」
+        （全量走查实测复现，不是前端渲染问题：store 里存的就是 working）。
+        planner 与 reviewer 各自有 done 分支，这里只扫漏网的，不动没参与的角色。
+        """
+        for ag in list(self.agents):
+            if ag.get("status") != "working":
+                continue
+            if run_status == "done":
+                self._set_agent(ag["id"], "done", current=ag.get("current") or "本轮工作已完成")
+            elif run_status == "aborted":
+                self._set_agent(ag["id"], "idle", current="已按人工指令停止")
+            else:
+                self._set_agent(ag["id"], "error", current="作业未正常结束，状态已收口")
+
     def _set_agent(self, agent_id: str, status: Optional[str] = None,
                    current: Optional[str] = None, progress: Optional[Dict] = None,
                    note: str = "", files: Optional[List[str]] = None,
@@ -335,6 +353,9 @@ class TeamOrchestrator:
                 "artifact": (artifact or {}).get("id", ""),
                 "error": "" if artifact else "没有任何文件产出，未生成产出物",
             }
+            # 角色卡收口必须在 run_finish / done 之前：SSE 是按事件顺序渲染的，
+            # 先收尾，前端就不会出现「已结束 + 某人还在执行中」的自相矛盾画面。
+            self._settle_agents(status)
             self.store.finish(self.rid, status, **finish_extra)
             self.record.update(finish_extra)
             self.record["status"] = status
@@ -354,6 +375,7 @@ class TeamOrchestrator:
             out.update(payload)
             return out
         except TeamTaskError as e:
+            self._settle_agents("failed")
             self.store.finish(self.rid, "failed", error=str(e))
             self.record["status"] = "failed"
             self.record["error"] = str(e)
@@ -361,6 +383,7 @@ class TeamOrchestrator:
             return {"ok": False, "run": self.record, "error": str(e)}
         except Exception as e:  # 兜底：任何异常都要在界面上有交代
             msg = f"{type(e).__name__}: {e}"
+            self._settle_agents("failed")
             self.store.finish(self.rid, "failed", error=msg)
             self.record["status"] = "failed"
             self.record["error"] = msg

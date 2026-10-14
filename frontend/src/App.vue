@@ -89,7 +89,7 @@ const { running: teamRunning } = useTeam()
 // 配置（侧栏 + 大模型弹窗）、三个详情弹窗与更新日志各自是模块级单例
 const { loadSettings } = useSettings()
 const { openProposal } = useProposalModal()
-const { openCard, openPattern } = useKbModal()
+const { openCard, openPattern, openDoc } = useKbModal()
 const { openRunModal } = useRunModal()
 const { hasUnread, init: initChangelog, open: openChangelog } = useChangelog()
 
@@ -273,6 +273,13 @@ const statusType = computed(() => {
   if (statusClass.value === 'ok') return 'success'
   return 'info'
 })
+/** 快捷键修饰键的显示字形。功能上 ⌘ 与 Ctrl 都认（useHotkeys 里 `metaKey || ctrlKey`），
+ *  但提示以前写死「⌘K」—— Windows/Linux 上照着按 ⌘ 是找不到那个键的。
+ *  写法也跟着平台：macOS 是「⌘K」（苹果 HIG 不加连接号），其余是「Ctrl+K」。 */
+const kbdHint = /Mac|iPhone|iPad|iPod/.test(
+  (typeof navigator !== 'undefined' && (navigator.userAgentData?.platform || navigator.platform || navigator.userAgent)) || '')
+  ? '⌘K' : 'Ctrl+K'
+
 const healthText = computed(() => {
   if (healthError.value) return `无法连接后端：${healthError.value}`
   if (!health.value) return '连接中…'
@@ -363,14 +370,15 @@ const healthText = computed(() => {
         </button>
       </nav>
 
-      <!-- ⌘K 入口：做成一颗「假的搜索框」而不是又一个图标按钮 ——
-           它的视觉形态直接说明「这里能打字」，比放大镜图标少一次猜。 -->
+      <!-- 命令面板入口：做成一颗「假的搜索框」而不是又一个图标按钮 ——
+           它的视觉形态直接说明「这里能打字」，比放大镜图标少一次猜。
+           键位提示跟着平台走（macOS ⌘K / 其余 Ctrl+K），别在 Windows 上写 ⌘。 -->
       <button type="button" class="omni" id="btn-palette" @click="showPalette()"
-              title="搜索模块、动作、工单（⌘K）">
+              :title="`搜索模块、动作、工单（${kbdHint}）`">
         <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor"
              stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.2-3.2"/></svg>
         <span class="omni-ph">搜索模块、动作、工单…</span>
-        <span class="kbd">⌘K</span>
+        <span class="kbd" id="kbd-palette">{{ kbdHint }}</span>
       </button>
 
       <!-- 驾驶舱时钟：状态条右端的时间锚点（mono，30s 一拍） -->
@@ -484,9 +492,13 @@ const healthText = computed(() => {
             </template>
 
             <StatsPane v-if="t.name === 'stats'" />
-            <!-- ⚠️ @open-artifact 必须绑：问答消息卡里的「查看 / 采纳」靠它开弹窗。
-                 漏绑的表现是点了没反应、控制台也没有任何报错（emit 进了虚空）。 -->
-            <ChatPane v-else-if="t.name === 'chat'" @open-artifact="onOpenArtifact" />
+            <!-- ⚠️ 两个 emit 都必须绑：@open-artifact 是问答消息卡里的「查看 / 采纳」，
+                 @open-kb-doc 是答案正文里的知识库相对链接（分类/缺陷.md）。
+                 漏绑的表现是点了没反应、控制台也没有任何报错（emit 进了虚空）——
+                 open-kb-doc 就这么静默了整整一版，直到全量走查注入一条带链接的
+                 回答才发现。 -->
+            <ChatPane v-else-if="t.name === 'chat'"
+                      @open-artifact="onOpenArtifact" @open-kb-doc="openDoc" />
             <DefectPane
               v-else-if="t.name === 'defect'"
               @open-proposal="openProposal"

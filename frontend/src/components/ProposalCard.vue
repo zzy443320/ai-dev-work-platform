@@ -64,13 +64,20 @@ const agentTitle = computed(() => {
 
 <template>
   <!-- 卡片外层迁移到 el-card（shadow="never" 贴近原 .pcard 观感），保留 .pcard 钩子与
-       状态类；body 内边距归零，避免与 .pcard 自带 padding 叠加成双重内缩。 -->
+       状态类；body 内边距归零，避免与 .pcard 自带 padding 叠加成双重内缩。
+       tabindex + role + Enter/Space：el-card 的根是 div，只挂 @click 的话键盘
+       完全走不到提案卡（Tab 一圈都进不去审批队列）。 -->
   <el-card
     shadow="never"
     class="pcard"
     :class="[`pc-${p.status || 'pending'}`, { 'is-sel': active }]"
     :body-style="{ padding: '0' }"
+    tabindex="0"
+    role="button"
+    :aria-label="`打开提案 ${p.defect_id || p.id || ''} ${title}`"
     @click="emit('open', p.id)"
+    @keydown.enter.prevent="emit('open', p.id)"
+    @keydown.space.prevent="emit('open', p.id)"
   >
     <div class="pcard-top">
       <el-tag :type="statusType" effect="light" round>{{ st.text }}</el-tag>

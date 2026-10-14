@@ -383,7 +383,12 @@ onMounted(async () => {
     <div id="team-history" class="proposal-grid">
       <div v-if="runsError" class="empty">历史作业加载失败: {{ runsError }}</div>
       <div v-else-if="!runs.length" class="empty">还没有作业记录。跑一次之后，计划、每个角色的动作轨迹与人工介入都会留在这里。</div>
-      <el-card shadow="never" v-for="x in runs" :key="x.id" class="pcard" :class="`pc-${runCls(x)}`" @click="onRunClick(x.id)">
+      <!-- 历史作业卡同样要能键盘打开（理由见 ProposalCard 文件头那段注释） -->
+      <el-card shadow="never" v-for="x in runs" :key="x.id" class="pcard" :class="`pc-${runCls(x)}`"
+               tabindex="0" role="button" :aria-label="`回放作业 ${x.title || x.id || ''}`"
+               @click="onRunClick(x.id)"
+               @keydown.enter.prevent="onRunClick(x.id)"
+               @keydown.space.prevent="onRunClick(x.id)">
         <div class="pcard-top">
           <span class="st" :class="`st-${runCls(x)}`">{{ RUN_STATUS[x.status] || x.status || '—' }}</span>
           <span v-if="x.running" class="team-running-chip">运行中</span>

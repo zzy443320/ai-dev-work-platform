@@ -43,6 +43,17 @@ html:not(.dark),
                      0 0 0 3px var(--primary-soft);
   --clay-soft: 0 4px 12px -6px rgba(31, 24, 16, 0.22);
 }
+
+/* 浅色（奶油底）下的灰阶必须跟着换底一起换。
+   style.css 的 --txt4 #a8afbc 在 #fdf6ee 上对比只有约 2.0:1、--muted #7d8595
+   约 3.3:1，而这两个令牌专门用在 10~10.5px 的小标上（参数轨的「核心/常用」分组、
+   计数、定格卡的「本批已定格」、KPI 卡的单位）—— 投影仪上基本读不出。
+   皮肤换了底色就得负责把字色补回来，这仍然只是外观，不动结构与字号。 */
+[data-theme="light"] {
+  --txt4: #636b78;   /* ≈5.0:1 on #fdf6ee */
+  --muted: #5f6875;  /* ≈5.2:1 */
+  --txt3: #555d6b;
+}
 [data-theme="dark"],
 html.dark {
   --clay-lift: 0 1px 0 rgba(255, 255, 255, 0.055) inset,
@@ -101,14 +112,21 @@ html.dark {
 .nav-item.active::before { border-radius: 3px; width: 3px; }
 
 /* ---- 3. 面板与卡片家族：软起鼓 ---- */
+/* 2026-10-13 参数改版后活着的表面是 .pstrip / .prail / .plock；
+   原来这里写的 .param-bar / .log-box / .run-log-box 三个类全仓 0 命中
+   （ParamBar 已退役、日志块从来叫 .log），等于新参数控件一件都没吃到黏土圆角。 */
 .panel,
 .usage-card, .kb-card, .pcard, .ext-card, .team-agent, .team-item, .stat-card,
-.param-bar, .log-box, .run-log-box {
+.pstrip, .prail, .plock {
   border-radius: var(--clay-r-panel);
   border: 1px solid transparent;
   background: var(--surf);
   box-shadow: var(--clay-lift);
 }
+/* .log 只借圆角，不借底色：它是终端视窗（--term），
+   #figma-tree / #test-preview / #api-stage 靠 id 保住了深底，
+   但裸 .log（运行日志）会被这条同权重的类选择器顶掉，所以单独列。 */
+.log { border-radius: var(--clay-r-card); }
 .panel { padding: 14px 16px 15px; } /* 几何与 desk.css 一致：check_vue_chat_ui 以 #app 留白 18 + 面板底内边距 15 断言网格底边（±2px），改内边距会挂 */
 
 .usage-card:hover, .kb-card:hover, .pcard:hover, .ext-card:hover,
@@ -134,7 +152,7 @@ html.dark {
   color: #fff;
   box-shadow: 0 4px 10px -4px rgba(0, 0, 0, 0.35), inset 0 -2px 0 rgba(0, 0, 0, 0.14);
 }
-.param-bar { border: none; border-radius: var(--clay-r-card); }
+.pstrip { border: none; border-radius: var(--clay-r-card); }
 
 /* ---- 4. 按钮：软糖 ---- */
 .btn-primary {

@@ -48,8 +48,14 @@ const pid = (base) => (props.idSuffix ? `${base}-${props.idSuffix}` : base)
     <div :id="pid('artifacts')" class="proposal-grid">
       <div v-if="error" class="empty">产出物加载失败: {{ error }}</div>
       <div v-else-if="!sorted.length" class="empty">{{ emptyHint }}</div>
+      <!-- 卡片是「点开详情」的按钮，就得能用键盘按：el-card 渲染的是 div，
+           只挂 @click 时 Tab 走不到、回车也没反应（全量走查用键盘 Tab 25 次
+           一次都没经过任何一张卡）。role/tabindex/Enter·Space 三件一起给。 -->
       <el-card shadow="never" v-for="a in sorted" :key="a.id" class="pcard" :class="`pc-${a.status || 'pending'}`"
-               @click="emit('open', a.id)">
+               tabindex="0" role="button" :aria-label="`打开产出物 ${a.title || a.id || ''}`"
+               @click="emit('open', a.id)"
+               @keydown.enter.prevent="emit('open', a.id)"
+               @keydown.space.prevent="emit('open', a.id)">
         <div class="pcard-top">
           <span class="st" :class="`st-${a.status || 'pending'}`">{{ artifactStatusText(a.status) }}</span>
           <span class="pcard-id">{{ a.id || '' }}</span>

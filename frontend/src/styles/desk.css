@@ -252,9 +252,19 @@ body { font-size: 13px; letter-spacing: -0.003em; }
 .tabpane.active > .panel:nth-child(4) { animation-delay: .12s; }
 .tabpane.active > .panel:nth-child(5) { animation-delay: .16s; }
 @keyframes desk-rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
-/* 键盘可达性：统一一圈软光环，替代浏览器默认描边 */
+/* 键盘可达性：焦点环改用 outline，不再用 box-shadow。
+   原来那圈「软光环」是 box-shadow，而组件层（skin-clay 的 .pcard / .panel、
+   params.css 的 .prail…）只要给自己写过 box-shadow，同权重又更靠后就把它顶掉 ——
+   实测键盘 Tab 到提案卡上，环完全看不见（卡上只剩黏土起鼓阴影）。
+   outline 不参与这套竞争：它不会被 box-shadow 覆盖，也不占布局。 */
 :where(button, a, input, select, textarea, [tabindex]):focus-visible {
-  outline: none; box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--ac-ln); border-radius: var(--r-s);
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+/* 深色底上 --primary 那支蓝够亮；奶油底（浅色皮肤）下再补一圈深色描边，
+   保证两种主题里焦点环都看得见。 */
+[data-theme="light"] :where(button, a, input, select, textarea, [tabindex]):focus-visible {
+  outline-color: var(--primary-2, #1f6feb);
 }
 @media (prefers-reduced-motion: reduce) {
   .tabpane.active > .panel { animation: none; }
@@ -802,7 +812,6 @@ body { font-size: 13px; letter-spacing: -0.003em; }
       "run     plan"
       "board   history"
       "intervene timeline";
-    align-items: start;
   }
   #pane-team > section:nth-of-type(1) { grid-area: run; }
   #pane-team > section:nth-of-type(2) { grid-area: board; min-height: 340px; }
@@ -877,3 +886,23 @@ body { font-size: 13px; letter-spacing: -0.003em; }
    看板 340 的地板会把折叠后的高度顶死（team 用例断言折叠变矮）。 */
 #pane-team .panel.collapsed { min-height: 0; }
 #pane-team .panel.collapsed #team-agents { display: none; }
+
+/* 同行两块底边对齐靠的是 pane 级 stretch（params.css 第 3 节把 align-items:start
+   摘掉了 —— 那个 start 只把空洞从面板里挪到了面板外面）。stretch 之后面板**内部**
+   也不能留空：列表区 flex:1 吃掉多出来的高度，空态居中，读起来是「这块在等内容」
+   而不是「这块版式坏了」。折叠起来的面板必须摘掉 stretch，否则「折叠后变矮」
+   会被同行那个高个子顶死（check_vue_team_ui 正是这么断的）。 */
+#pane-team > section.panel { display: flex; flex-direction: column; min-height: 0; }
+#pane-team > section.panel > .panel-head { flex: none; }
+#pane-team > section.panel.collapsed { align-self: start; }
+#team-agents, #team-plan { flex: 1 1 auto; min-height: 0; }
+#pane-team .empty { margin: auto; }
+/* ⚠️ 配套的一条：列表容器一旦有了确定高度（面板 stretch 后 flex:1），
+   Grid 的 auto 行会被压扁——el-card 自带 overflow:hidden，min-height:auto 因此
+   解析成 0，行可以被压到 26px 的空壳，11 张历史卡文字全看不见（实测）。
+   align-content:start 压不住它，必须显式声明「行就是内容高」，
+   装不下照旧交给容器自己滚。 */
+#team-history, #team-agents, #team-plan, .proposal-grid {
+  align-content: start;
+  grid-auto-rows: max-content;
+}

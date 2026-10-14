@@ -193,17 +193,18 @@ input.pf-ctl { width: 210px; }
 #pane-team.active:has(> .pcol),
 #pane-reqdev.active:has(> .pcol),
 #pane-apidebug.active:has(> .pcol) {
-  /* align-items:start 是必需的：轨自身有 max-height，行高被它撑到 ~780px，
-     默认 stretch 会把主区面板一起拉长，中间出现一大块空洞（1440 实拍见过）。 */
+  /* 这里原来还带一句 align-items:start —— 那是为了躲「轨撑高行 + 默认 stretch
+     把主区面板拉出大空洞」。但轨与定格卡都带 .pcol{align-self:start}，本来就不会
+     被行拉高；start 反而让**同一行里两个面板**底边对不齐，reqdev 空 425px、
+     apidebug 空 673px、team 空 452px 全是它留下的。现在只留列宽，
+     对齐交给默认 stretch，空洞由下面两条消化：面板填满行 + 内部舞台/列表 flex。 */
   grid-template-columns: minmax(0, 1fr) var(--prail-w);
-  align-items: start;
 }
 
-/* 但「面板不跟着长」只是把空洞从面板里挪到了面板外面 —— 1440 实拍
-   reqdev 轨底与主面板之间空 425px、apidebug 空 673px，看着就是版式坏了。
-   正确做法是让面板填满这一行，同时**面板内部的舞台区**吃掉多出来的高度：
-   设计稿结构 / 联调方案本来就是越大越好读的终端块，多给的高度有去处。
-   长任务页不适用（六面板分布在多行，轨靠 grid-row:1/-1 跨满，见 desk.css 第 13 节）。 */
+/* 面板填满行之后，**内部**也不能留空：舞台区（终端块）flex:1 吃掉多出来的高度 ——
+   设计稿结构 / 联调方案本来就是越大越好读的东西。
+   （1440 实拍：reqdev 空洞 425px、apidebug 673px → 现在都是 0px。）
+   上面那条 align-self:stretch 在 pane 级 stretch 回来之后是冗余的，留着当显式声明。 */
 #pane-reqdev.active:has(> .pcol) > section,
 #pane-apidebug.active:has(> .pcol) > section { align-self: stretch; }
 #req-panel, #api-panel { display: flex; flex-direction: column; min-height: 0; }
