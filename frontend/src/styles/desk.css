@@ -747,8 +747,12 @@ body { font-size: 13px; letter-spacing: -0.003em; }
 /* 保存条吸底：驾驶舱的「点火钥匙」永远在手边，不用滚到底找 */
 .config-foot {
   position: sticky; bottom: 0; z-index: 6;
-  margin-top: 6px; padding: 10px 0 2px;
-  background: linear-gradient(180deg, transparent, var(--surf) 38%);
+  margin-top: 6px; padding: 12px 0;
+  /* 原来是 transparent → var(--surf) 38% 的渐变。滚动时下面那行字会落在
+     半透明区里，被切成「上半截正常、下半截糊掉」—— 1440 实拍盖住
+     「页面验证」「可选」两枚小标 19px。吸底工具条必须是不透明的一条 +
+     一根发丝线，靠边界交代层次，不靠渐隐。 */
+  background: var(--panel-solid); border-top: 1px solid var(--line);
 }
 
 /* ===== 12. 问答驾驶舱 =====
@@ -777,6 +781,11 @@ body { font-size: 13px; letter-spacing: -0.003em; }
 /* 会话栏与产出物浮层卡沉底 */
 #pane-chat .rail-card { background: var(--code-bg); }
 
+/* 产出物浮层卡：原来是 top:88 + bottom:28 两头钉死 —— 不管里面有一条还是
+   十条，卡片永远撑满整屏，一条产出物下面跟着 500 多像素的空白（1440 实拍）。
+   改成按内容长、到视口底为止再自己滚。 */
+#chat-art-drawer { bottom: auto; max-height: calc(100vh - 116px); }
+
 /* ===== 13. 长任务驾驶舱（容器 ≥1240 重排）=====
    方向稿 A4 的骨架：左列「发起 + 子 Agent 看板 + 工作项」是战场本体，
    右列「历史作业 / 人工介入 / 时间线」是控制塔。六面板 DOM 顺序与
@@ -784,10 +793,15 @@ body { font-size: 13px; letter-spacing: -0.003em; }
 @container main (min-width: 1240px) {
   #pane-team.active {
     grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr);
+    /* 配对原则：一行的高度 = 行内最高那块，所以**按体量配对**，别把 188px
+       的发起面板和 640px 的历史吊在一行（1440 实拍左列因此空出 452px）。
+       左列＝干活的（发起 → 子 Agent 看板 → 随时插手），右列＝看的
+       （工作项清单 → 历史作业 → 实时时间线），语义也顺。
+       DOM 顺序一行没动（check_vue_team_ui 用 compareDocumentPosition 锁源顺序）。 */
     grid-template-areas:
-      "run     history"
-      "board   intervene"
-      "plan    timeline";
+      "run     plan"
+      "board   history"
+      "intervene timeline";
     align-items: start;
   }
   #pane-team > section:nth-of-type(1) { grid-area: run; }
@@ -817,9 +831,18 @@ body { font-size: 13px; letter-spacing: -0.003em; }
     var(--surf);
   border-color: rgba(76, 195, 255, 0.2);
 }
-#figma-tree, #test-preview {
+#figma-tree, #test-preview, #api-stage {
   background: var(--term); border: 1px solid var(--line2);
   border-radius: var(--r-m); padding: 12px 14px;
+}
+/* 接口联调的回显区与 .req-src 同构（标题行 + 终端块）。空态居中，
+   否则几百像素的深色框里顶着左上角一行小字，看着像渲染坏了。 */
+.api-stage { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+#api-stage { min-height: 200px; max-height: none; }
+#api-stage:empty { display: flex; align-items: center; justify-content: center; }
+#api-stage:empty::before {
+  color: var(--muted); font-size: 12.5px; line-height: 1.8;
+  text-align: center; white-space: normal; max-width: 30em;
 }
 /* 扩展能力：技能 + MCP 两 panel 并排（容器 ≥1240） */
 @container main (min-width: 1240px) {
@@ -831,12 +854,21 @@ body { font-size: 13px; letter-spacing: -0.003em; }
    grid 一行的高度 = 行内最高面板。历史作业 10 张卡、时间线几十行，
    不封顶就会把左列的看板/表单撑出大片空白。给长面板 max-height +
    内部滚动（驾驶舱惯例：队列类面板自己滚，页面不失控）。 */
-#team-history-panel { max-height: 640px; overflow: hidden; display: flex; flex-direction: column; }
+/* 封顶值按**同行配对**来定，不是随手写的：历史作业与看板（约 484px）同行，
+   时间线与人工介入（约 341px）同行 —— 超过这个数就是把兄弟吊出一截空。
+   列表面板自己滚（驾驶舱惯例），页面不失控。 */
+#team-history-panel { max-height: 500px; overflow: hidden; display: flex; flex-direction: column; }
 #team-history-panel > .panel-head { flex: none; }
 #team-history-panel #team-history { overflow-y: auto; flex: 1; min-height: 0; }
-#team-timeline-panel { max-height: 520px; overflow: hidden; display: flex; flex-direction: column; }
+#team-timeline-panel { max-height: 400px; overflow: hidden; display: flex; flex-direction: column; }
 #team-timeline-panel > .panel-head { flex: none; }
 #team-timeline-panel .log-wrap { overflow-y: auto; flex: 1; min-height: 0; }
+/* 宽容器（容器 ≥1700）下子 Agent 看板摊成一行四张、自己变矮（约 340px），
+   历史作业再按 500 封顶就会把同行吊出 160px 空 —— 同步收一档。
+   （1440 实拍：2560 视口配对后仍空 160px 就是这个原因。） */
+@container main (min-width: 1700px) {
+  #team-history-panel { max-height: 400px; }
+}
 /* 统计页构成面板与趋势同行：构成也封顶内滚，趋势 420 图不再被吊高 */
 #pane-stats > section:nth-of-type(3) { max-height: 560px; overflow: hidden; display: flex; flex-direction: column; }
 #pane-stats > section:nth-of-type(3) .usage-split { overflow-y: auto; flex: 1; min-height: 0; }

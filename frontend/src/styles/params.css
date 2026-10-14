@@ -93,8 +93,12 @@ input.pf-ctl { width: 210px; }
 
 /* ------------------------------------------------------------------ B 常驻参数轨 */
 :root { --prail-w: 322px; }
-.prail { position: sticky; top: 12px; display: flex; flex-direction: column; min-height: 0;
-  max-height: calc(100vh - 120px); border: 1px solid var(--border); border-radius: 12px;
+/* 轨与定格卡都是 sticky。吸顶偏移必须**让开顶栏**：顶栏 34px 且自己也是 sticky
+   （z-index 58），以前写死 top:12px，页面一滚，轨头「作业参数 / 必填未填 2 项」
+   就被顶栏切掉 22px（1440 实拍：滚 600px 后标题只剩半截）。 */
+:root { --prail-stick-top: calc(var(--topbar-h) + 12px); }
+.prail { position: sticky; top: var(--prail-stick-top); display: flex; flex-direction: column; min-height: 0;
+  max-height: calc(100vh - var(--prail-stick-top) - 74px); border: 1px solid var(--border); border-radius: 12px;
   background: var(--panel-solid); }
 .prail-head { flex: none; display: flex; align-items: center; gap: 8px; padding: 12px 14px 0; }
 .prail-head b { font-size: 13px; font-weight: 600; color: var(--text); }
@@ -114,7 +118,7 @@ input.pf-ctl { width: 210px; }
   padding: 11px 14px; border-top: 1px solid var(--border); background: var(--input-bg); }
 
 /* ---- 本批定格卡（跑动中顶替参数轨占同一列）---- */
-.plock { position: sticky; top: 12px; display: flex; flex-direction: column; gap: 10px;
+.plock { position: sticky; top: var(--prail-stick-top); display: flex; flex-direction: column; gap: 10px;
   border: 1px solid var(--border); border-radius: 12px; background: var(--panel-solid);
   padding: 13px 14px; }
 .plock-head { display: flex; align-items: center; gap: 8px; }
@@ -194,6 +198,17 @@ input.pf-ctl { width: 210px; }
   grid-template-columns: minmax(0, 1fr) var(--prail-w);
   align-items: start;
 }
+
+/* 但「面板不跟着长」只是把空洞从面板里挪到了面板外面 —— 1440 实拍
+   reqdev 轨底与主面板之间空 425px、apidebug 空 673px，看着就是版式坏了。
+   正确做法是让面板填满这一行，同时**面板内部的舞台区**吃掉多出来的高度：
+   设计稿结构 / 联调方案本来就是越大越好读的终端块，多给的高度有去处。
+   长任务页不适用（六面板分布在多行，轨靠 grid-row:1/-1 跨满，见 desk.css 第 13 节）。 */
+#pane-reqdev.active:has(> .pcol) > section,
+#pane-apidebug.active:has(> .pcol) > section { align-self: stretch; }
+#req-panel, #api-panel { display: flex; flex-direction: column; min-height: 0; }
+#req-panel .req-src, #api-panel .api-stage { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+#figma-tree, #api-stage { flex: 1; min-height: 0; overflow: auto; scrollbar-width: thin; }
 
 /* 长任务在宽容器下本来就是「战场 | 控制塔」两列（desk.css 第 13 节的 areas）。
    有轨时只**再加第三轨**：轨靠 grid-column: -2/-1 自动落在最后一轨，

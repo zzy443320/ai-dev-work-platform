@@ -119,19 +119,99 @@ def run():
               split["padR"] < 400 and split["drawerGone"], str(split))
         check("主区与轨并排后仍各有宽度（没被挤成 0）",
               split["panelW"] >= 480, str(split))
-        # 空洞回归锁：轨自带 max-height，行高被它撑起来时，默认 stretch 会把
-        # 主区面板一起拉长，中间出现一大块空白（1440 实拍翻车过一次）。
+        # 空洞回归锁。判据必须是「面板底边与轨底边的差」，不能只看 align-items：
+        # 上一版这里写的是 `align 为 start 就算过`，而 start 恰恰是把空洞从面板
+        # 里面挪到了面板**外面** —— 1440 实拍 reqdev 空 425px、apidebug 空 673px，
+        # 用例却一路绿灯。现在量真实差值，并把 apidebug / team 一起锁上。
         hole = pg.evaluate("""() => {
           const panel = document.getElementById('req-panel');
           const rail = document.getElementById('param-rail-reqdev');
-          return {align: getComputedStyle(document.getElementById('pane-reqdev')).alignItems,
+          return {gap: Math.round(Math.abs(rail.getBoundingClientRect().bottom
+                                          - panel.getBoundingClientRect().bottom)),
                   panelH: Math.round(panel.getBoundingClientRect().height),
                   railH: Math.round(rail.getBoundingClientRect().height)};
         }""")
-        check("主区面板不被参数轨拉伸（无空洞）",
-              hole["align"].startswith("start") or hole["panelH"] <= hole["railH"] + 40,
-              str(hole))
+        check("需求开发：主区面板填满轨撑起的行（空洞 ≤ 40px）",
+              hole["gap"] <= 40, str(hole))
+        # 面板填进行之后，内部不能留空：舞台区（终端块）必须跟着长。
+        stage = pg.evaluate("""() => {
+          const p = document.getElementById('req-panel');
+          const t = document.getElementById('figma-tree');
+          return {panelH: Math.round(p.getBoundingClientRect().height),
+                  treeH: Math.round(t.getBoundingClientRect().height)};
+        }""")
+        check("需求开发：舞台区吃掉多出来的高度（终端块 ≥ 面板高 60%）",
+              stage["treeH"] >= stage["panelH"] * 0.6, str(stage))
         pg.screenshot(path=str(OUT / "reqdev-layout.png"))
+
+        # ---- 3b. 接口联调同一套空洞锁 + 回显区真的有内容 ----
+        pg.evaluate("() => switchTab('apidebug')")
+        pg.wait_for_timeout(400)
+        ahole = pg.evaluate("""() => {
+          const panel = document.getElementById('api-panel');
+          const rail = document.getElementById('param-rail-apidebug');
+          const stage = document.getElementById('api-stage');
+          return {gap: Math.round(Math.abs(rail.getBoundingClientRect().bottom
+                                          - panel.getBoundingClientRect().bottom)),
+                  stageH: Math.round(stage.getBoundingClientRect().height),
+                  placeholder: getComputedStyle(stage, '::before').content !== 'none'};
+        }""")
+        check("接口联调：主区面板填满轨撑起的行（空洞 ≤ 40px）",
+              ahole["gap"] <= 40, str(ahole))
+        check("接口联调：接口文档回显区存在且有高度、空态有占位文案",
+              ahole["stageH"] >= 200 and ahole["placeholder"], str(ahole))
+        pg.fill("#api-doc", '{"paths":{"/api/v1/demo":{"get":{}}}}')
+        pg.wait_for_timeout(300)
+        check("接口联调：贴进文档后原样回显（Vue 插值，不是 v-html）",
+              pg.eval_on_selector("#api-stage", "el => el.textContent.includes('/api/v1/demo')"))
+
+        # ---- 3c. 长任务：六面板按体量配对，行内空洞受控 ----
+        pg.evaluate("() => switchTab('team')")
+        pg.wait_for_timeout(500)
+        thole = pg.evaluate("""() => {
+          const secs = [...document.querySelectorAll('#pane-team > section')];
+          let hole = 0, worst = null;
+          for (const s of secs) {
+            const b = s.getBoundingClientRect();
+            let rowBottom = b.bottom;
+            for (const o of secs) {
+              const ob = o.getBoundingClientRect();
+              if (Math.abs(ob.top - b.top) < 40) rowBottom = Math.max(rowBottom, ob.bottom);
+            }
+            const h = Math.round(rowBottom - b.bottom);
+            if (h > hole) { hole = h; worst = s.id; }
+          }
+          return {hole, worst};
+        }""")
+        check("长任务：同行两面板体量配对（空洞 ≤ 100px，基线 452px）",
+              thole["hole"] <= 100, str(thole))
+
+        # ---- 3d. 参数轨 sticky 偏移必须让开顶栏（top:12 < 顶栏 34 会永久切掉轨头）----
+        pg.evaluate("() => switchTab('team')")
+        pg.wait_for_timeout(300)
+        stick = pg.evaluate("""() => {
+          const rail = document.querySelector('.prail');
+          const cs = getComputedStyle(rail);
+          const tb = getComputedStyle(document.querySelector('.topbar'));
+          return {top: cs.top, topbarH: tb.height,
+                  token: getComputedStyle(document.documentElement).getPropertyValue('--topbar-h').trim()};
+        }""")
+        check("参数轨吸顶偏移让开顶栏（top ≥ 顶栏高）",
+              float(stick["top"].replace("px", "")) >= float(stick["topbarH"].replace("px", "")),
+              str(stick))
+
+        # ---- 3e. 配置页吸底条不透明（半透明渐变会把下面那行字切成半截）----
+        pg.evaluate("() => switchTab('config')")
+        pg.wait_for_timeout(400)
+        foot = pg.evaluate("""() => {
+          const el = document.querySelector('.config-foot');
+          const cs = getComputedStyle(el);
+          const m = (cs.backgroundColor || '').match(/rgba\\([^)]*,\\s*([0-9.]+)\\)/);
+          return {bg: cs.backgroundColor, alpha: m ? parseFloat(m[1]) : 1,
+                  border: cs.borderTopWidth};
+        }""")
+        check("配置页吸底条背景不透明且有顶边线",
+              foot["alpha"] > 0.95 and float(foot["border"].replace("px", "")) >= 1, str(foot))
 
         # ---- 4. 统计说明条：分段之间有间隔 ----
         pg.evaluate("() => switchTab('stats')")
