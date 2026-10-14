@@ -146,7 +146,18 @@ function openAiModal() {
                       :placeholder="ph.figma" autocomplete="off" />
             <small class="hint" id="cfg-figma-token-hint">Figma 个人设置 → Security → Personal access tokens 生成；只读权限即可</small>
           </label>
-          <div class="info-note">Figma 官方接口只有 Token 一种凭据（企业 SSO 也是通过 OAuth 换 token），<strong>不支持账号密码登录</strong>；账号密码在这个工具里走的是另一条链路——「页面验证登录」。</div>
+          <label class="field">
+            <span>登录账号（内嵌看稿用，可选）</span>
+            <el-input id="cfg-figma-account" v-model="form.figma.account"
+                      placeholder="Figma 登录邮箱；SSO 企业账号留空" autocomplete="off" />
+            <small class="hint" id="cfg-figma-account-hint">需求开发页「内嵌看稿」打开登录页时代填；官方 REST 不认账号密码，结构化取稿仍走上面的 Token</small>
+          </label>
+          <label class="field">
+            <span>登录密码（内嵌看稿用，可选）</span>
+            <el-input id="cfg-figma-password" type="password" v-model="form.figma.password"
+                      :placeholder="ph.figmaPassword" autocomplete="new-password" />
+          </label>
+          <div class="info-note">Figma 官方接口只有 Token 一种凭据（企业 SSO 也是通过 OAuth 换 token），<strong>不支持账号密码登录</strong>；账号密码在这个工具里走的是另一条链路——「页面验证登录」。上面的登录账号 / 密码只给「内嵌看稿」的网页登录用，遇 SSO / 验证码时在面板里人工登一次，登录态会保存下来下次直接用。</div>
         </div>
       </section>
 

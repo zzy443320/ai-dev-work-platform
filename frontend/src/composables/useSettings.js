@@ -26,7 +26,7 @@ let presetsLoaded = false         // 旧版只填一次（options.length <= 1 �
 const form = reactive({
   repo: { path: '', branch: '' },
   ones: { base_url: '', project_uuid: '', team_uuid: '', email: '', password: '', token: '' },
-  figma: { token: '' },
+  figma: { token: '', account: '', password: '' },
   pagelogin: { enabled: false, email: '', password: '' },
   gate: { commands_text: '', degraded: true },
   agent: {
@@ -123,6 +123,9 @@ async function loadSettings() {
     ph.figma = s.has_figma_token
       ? `已保存 ${fig.token_masked || ''}，留空保持不变`
       : '没有 Token 时可在需求开发页用「浏览器打开」兜底'
+    form.figma.account = fig.account || ''
+    form.figma.password = ''
+    ph.figmaPassword = s.has_figma_account ? '已保存，留空保持不变' : 'Figma 登录密码'
     const plg = s.pagelogin || {}
     form.pagelogin.enabled = plg.enabled === true
     form.pagelogin.email = plg.email || ''
@@ -396,6 +399,9 @@ async function saveSettings() {
   if (onesPassword) body.ones.password = onesPassword
   const figmaToken = form.figma.token.trim()
   if (figmaToken) body.figma.token = figmaToken
+  body.figma.account = form.figma.account.trim()
+  const figmaPassword = form.figma.password
+  if (figmaPassword) body.figma.password = figmaPassword
   const pagePassword = form.pagelogin.password
   if (pagePassword) body.pagelogin.password = pagePassword
 
@@ -407,6 +413,7 @@ async function saveSettings() {
     form.ones.token = ''
     form.ones.password = ''
     form.figma.token = ''
+    form.figma.password = ''
     form.pagelogin.password = ''
     await loadSettings()
     await useHealth().loadHealth()

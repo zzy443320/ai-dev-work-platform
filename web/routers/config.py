@@ -59,6 +59,13 @@ async def update_settings(req: Request):
         s["figma"]["token"] = str(figma["token"]).strip()
     if _as_bool(figma.get("clear_token")):
         s["figma"]["token"] = ""
+    # 内嵌浏览器会话的登录凭据（figma.com 网页端用；与官方 API 的 token 互不相干）
+    if "account" in figma:
+        s["figma"]["account"] = str(figma["account"]).strip()
+    if figma.get("password"):
+        s["figma"]["password"] = str(figma["password"])
+    if _as_bool(figma.get("clear_password")):
+        s["figma"]["password"] = ""
 
     pl = body.get("pagelogin") or {}
     s.setdefault("pagelogin", {})

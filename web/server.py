@@ -27,7 +27,7 @@ and run flags live in `web/state.py`.
 from fastapi import FastAPI
 
 from web import urls
-from web.routers import chat, config, observe, params, pipeline, review, tasks, team
+from web.routers import chat, config, live, observe, params, pipeline, review, tasks, team
 
 app = FastAPI(title="ONES 前端研发助手 UI (Frontend Dev Copilot)")
 
@@ -41,6 +41,9 @@ app.include_router(tasks.router)
 app.include_router(chat.router)
 app.include_router(team.router)
 app.include_router(review.router)
+# 内嵌浏览器会话（Figma / 任意目标站点的直播预览 + 点选读面板）：依赖受控会话，
+# 同一时刻只允许一个，端点都在同源闸门后面
+app.include_router(live.router)
 # 参数元数据（前端表单渲染器的唯一来源）：只读，放最后，与业务端点无耦合
 app.include_router(params.router)
 

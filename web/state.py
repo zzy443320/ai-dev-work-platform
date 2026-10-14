@@ -109,6 +109,11 @@ DEFAULT_SETTINGS = {
     },
     "figma": {
         "token": os.environ.get("FIGMA_TOKEN", ""),
+        # 内嵌浏览器会话的登录凭据（figma.com 网页端有账号密码表单，官方 API 没有）。
+        # 与 ONES / 页面验证登录的凭据彼此独立。SSO/SAML 企业账号用不上它 ——
+        # 那种场景靠持久 profile 里人工登录一次的会话续命。
+        "account": os.environ.get("FIGMA_ACCOUNT", ""),
+        "password": os.environ.get("FIGMA_PASSWORD", ""),
     },
     "pagelogin": {
         # 页面验证用的登录凭据（截图前自动登录，见 verifier._login_creds）。
@@ -215,12 +220,16 @@ def _settings_public(s: dict) -> dict:
     out["ones"]["token_masked"] = _mask(out["ones"].pop("token", ""))
     out["ones"]["password_masked"] = _mask(out["ones"].pop("password", ""))
     out.setdefault("figma", {})["token_masked"] = _mask(out.get("figma", {}).pop("token", ""))
+    out.setdefault("figma", {})["password_masked"] = _mask(
+        out.get("figma", {}).pop("password", ""))
+    out.setdefault("figma", {}).setdefault("account", "")
     out.setdefault("pagelogin", {})
     out["pagelogin"]["password_masked"] = _mask(out["pagelogin"].pop("password", ""))
     out["has_api_key"] = bool(s["ai"].get("api_key"))
     out["has_token"] = bool(s["ones"].get("token"))
     out["has_password"] = bool(s["ones"].get("password"))
     out["has_figma_token"] = bool((s.get("figma") or {}).get("token"))
+    out["has_figma_account"] = bool((s.get("figma") or {}).get("password"))
     out["has_page_password"] = bool((s.get("pagelogin") or {}).get("password"))
     # textareas want text, not nested JSON
     out["ai"]["extra_headers_text"] = json.dumps(

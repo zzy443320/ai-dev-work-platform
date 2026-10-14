@@ -17,18 +17,45 @@
 // 控件 id 一律沿用改版前契约（#req-figma-url / #req-figma-mode /
 // #req-figma-token-field / #req-desc / #req-context / #req-notes / #req-framework），
 // 分段按钮保持原生 .seg-btn[data-mode]：界面用例直接点它。
+import { nextTick, ref } from 'vue'
 import { useTasks } from '../composables/useTasks.js'
 import { useParamModel } from '../composables/useParamModel.js'
+import { useToast } from '../composables/useToast.js'
 import ParamLayout from '../components/ParamLayout.vue'
+import LiveBrowserPanel from '../components/LiveBrowserPanel.vue'
 
 const {
-  figmaMode, fetching, figmaTree, figmaError, fetchFigma,
+  figmaMode, fetching, figmaTree, figmaError, fetchFigma, appendFigmaInspection,
   figmaUrl, figmaToken, reqFramework, reqDesc, reqContext, reqNotes,
   running, runTask,
 } = useTasks()
+const { toast } = useToast()
 
 const params = useParamModel(
   { figmaUrl, figmaMode, figmaToken, reqDesc, reqContext, reqFramework, reqNotes })
+
+// ---- 内嵌看稿（2026-10-14）：受控浏览器的"直播 + 遥控" ----
+// 会话归 LiveBrowserPanel 自己管（切页签后端会话保留，回来 refreshStatus 续画面）；
+// 这里只负责「用参数轨里的 Figma 链接开会话」与「点选读到的属性落回设计稿结构」。
+const liveOn = ref(false)
+const livePanel = ref(null)
+async function openLive() {
+  const url = figmaUrl.value.trim()
+  if (!url) {
+    toast('先在右侧参数轨填 Figma 设计稿链接', 'warn')
+    return
+  }
+  liveOn.value = true
+  await nextTick()
+  livePanel.value && livePanel.value.open(url)
+}
+function closeLive() {
+  liveOn.value = false
+}
+function onInspected(r) {
+  const text = (r && r.panel || []).join('\n')
+  if (text) appendFigmaInspection(`页面「${r.title || ''}」\n${text}`)
+}
 </script>
 
 <template>
@@ -39,6 +66,8 @@ const params = useParamModel(
         <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 8 12 3 17 8" /><line x1="12" y1="3" x2="12" y2="15" /></svg>
         {{ fetching ? '拉取中…' : '拉取设计稿' }}
       </el-button>
+      <el-button class="btn-ghost" id="btn-figma-live" title="受控浏览器里打开设计稿：可登录、可点选节点读属性（配置页可存 Figma 账号密码）"
+                 @click="openLive">内嵌看稿</el-button>
       <el-button type="primary" class="btn-primary" id="btn-reqdev" :disabled="running"
                  @click="runTask('reqdev')">生成代码</el-button>
     </template>
@@ -56,7 +85,13 @@ const params = useParamModel(
         </h2>
       </div>
 
-      <div class="req-src">
+      <!-- 内嵌看稿：受控浏览器的直播画面 + 点选读属性；切回「设计稿结构」看累积结果 -->
+      <div class="src-caption" v-if="liveOn">
+        <span class="src-title">内嵌看稿（点选节点 → 属性面板文本自动落到「设计稿结构」）</span>
+        <span class="src-state ok">会话独立于下方结构区，可随时切回</span>
+      </div>
+      <LiveBrowserPanel v-if="liveOn" ref="livePanel" @inspected="onInspected" @stopped="closeLive" />
+      <div v-else class="req-src">
         <div class="src-caption">
           <span class="src-title">设计稿结构（拉取后即为 AI 的输入依据）</span>
           <span class="src-state" :class="{ hidden: !fetching }">拉取中…</span>
@@ -65,7 +100,7 @@ const params = useParamModel(
         </div>
         <!-- 空态走 :empty 占位；失败时退回纯文本 -->
         <pre v-if="figmaError" id="figma-tree" class="log">{{ figmaError }}</pre>
-        <pre v-else id="figma-tree" class="log" :data-placeholder="'还没有设计稿结构。在右侧参数轨填 Figma 链接后点「拉取设计稿」，或直接生成（AI 只用需求描述）。'" v-html="figmaTree" />
+        <pre v-else id="figma-tree" class="log" :data-placeholder="'还没有设计稿结构。在右侧参数轨填 Figma 链接后点「拉取设计稿」，或点「内嵌看稿」直接在受控浏览器里看稿、点选节点读属性。'" v-html="figmaTree" />
       </div>
 
       <div class="info-note">「拉取设计稿」只读调用 Figma 官方接口，不写任何东西；<br>「生成代码」产出「产出物」（文件 + 方案），确认后在产出物详情里点「采纳」才写入工作区（不 commit、不 push）。</div>

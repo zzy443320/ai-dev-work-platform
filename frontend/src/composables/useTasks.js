@@ -48,6 +48,16 @@ export function useTasks() {
     try { localStorage.setItem(FIGMA_MODE_KEY, m) } catch (e) { /* 隐私模式 */ }
   })
 
+  /** 内嵌看稿「点选读属性」的结果落到设计稿结构区（AI 的输入依据之一）。
+   *  只追加不覆盖：一次会话点多个节点，逐条累积；escapeHtml 走全文转义，
+   *  面板文本是外部站点的内容，不能当 HTML 插进来。 */
+  function appendFigmaInspection(text) {
+    if (!text) return
+    const block = `<div class="log-title">点选读属性 · ${escapeHtml(new Date().toLocaleTimeString())}</div>`
+      + `<div class="log-html">${escapeHtml(text)}</div>`
+    figmaTree.value = figmaTree.value ? figmaTree.value + block : block
+  }
+
   async function fetchFigma() {
     if (fetching.value) return
     fetching.value = true
@@ -180,6 +190,7 @@ export function useTasks() {
   return {
     // Figma（reqdev）
     figmaMode, setFigmaMode, figmaDesign, fetching, figmaTree, figmaError, fetchFigma,
+    appendFigmaInspection,
     // reqdev
     figmaUrl, figmaToken, reqFramework, reqDesc, reqContext, reqNotes,
     // apidebug
