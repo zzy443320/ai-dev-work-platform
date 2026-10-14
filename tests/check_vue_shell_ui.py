@@ -112,6 +112,19 @@ def main() -> int:
             bg = page.eval_on_selector(".topbar", "el => getComputedStyle(el).display")
             check("style.css 对 Vue 版生效（.topbar 有布局）", bg in ("flex", "grid", "block"), bg)
 
+            # 顶栏仓库口径：读的是 /api/health 的 **repo_exists**（web/urls.py:177）。
+            # 这里曾经写成 h.repo_ok —— 那只是后端里的局部变量名，不是响应字段，
+            # 于是仓库明明配好了，顶栏还是一直冷冰冰地显示「仓库: 未配置」。
+            # 字段改名只改一边这种事，只有拿「真实渲染出来的文案」去对才看得见。
+            h = page.evaluate("() => fetch('/api/health').then(r => r.json())")
+            top = page.eval_on_selector("#health", "el => el.textContent.trim()")
+            check("顶栏仓库口径与 /api/health.repo_exists 一致",
+                  (("已配置" in top) == bool(h.get("repo_exists"))),
+                  f"repo_exists={h.get('repo_exists')} 顶栏={top!r}")
+            check("临时实例的仓库目录存在 → 顶栏显示已配置",
+                  "已配置" in top and "未配置" not in top, top)
+            check("顶栏带出 AI 模式", h.get("ai_mode") in top, top)
+
             check("无 pageerror", not [e for e in errors if e.startswith("pageerror")],
                   "; ".join(errors)[:200])
             check("无控制台报错", not [e for e in errors if e.startswith("console")],

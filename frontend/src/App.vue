@@ -221,7 +221,10 @@ function tickClock() {
 /** 运行脉搏：顶条上一眼看清「现在有没有活儿在跑」。租约句最权威（别人占用也算在跑） */
 const pulseText = computed(() => {
   if (leaseBusy.value) return leaseShortLine.value
-  if (defectRunning.value || teamRunning.value) return '运行中 · 槽位已占用'
+  if (defectRunning.value) return '运行中 · 槽位已占用'
+  // 长任务作业走自己的线程池，**不占流水线槽位** —— 这里要是也写「槽位已占用」，
+  // 人就看不懂「明明显示槽位占用，为什么缺陷页还能点运行」。分开说。
+  if (teamRunning.value) return '长任务作业运行中'
   return '空闲 · 槽位可接单'
 })
 const pulseOn = computed(() => leaseBusy.value || defectRunning.value || teamRunning.value)
@@ -274,7 +277,10 @@ const healthText = computed(() => {
   if (healthError.value) return `无法连接后端：${healthError.value}`
   if (!health.value) return '连接中…'
   const h = health.value
-  return `AI: ${h.ai_mode || 'unknown'} · 仓库: ${h.repo_ok ? '已配置' : '未配置'}`
+  // 字段名是 repo_exists（web/urls.py 的 /api/health），不是 repo_ok ——
+  // 后者只是后端里的局部变量名。这里曾经写成 repo_ok，于是仓库明明配好了，
+  // 顶栏还是一直冷冰冰地显示「未配置」。改字段请连 tests/check_vue_shell_ui.py 一起改。
+  return `AI: ${h.ai_mode || 'unknown'} · 仓库: ${h.repo_exists ? '已配置' : '未配置'}`
 })
 </script>
 

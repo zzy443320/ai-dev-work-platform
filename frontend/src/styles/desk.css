@@ -598,9 +598,15 @@ body { font-size: 13px; letter-spacing: -0.003em; }
 .dh-chip.is-ok { color: var(--success); border-color: var(--success-soft); box-shadow: inset 0 0 0 1px rgba(74, 222, 128, 0.25); }
 .dh-chip.is-warn { color: var(--warn); border-color: var(--warn-soft); box-shadow: inset 0 0 0 1px rgba(240, 168, 72, 0.25); }
 
-@container main (min-width: 1360px) {
+/* 三列驾驶舱的阈值：与全文件其余重排统一取 **1240**。
+   原来写 1360，而查询容器是 `.col-main`（style.css 的 container-name: main），
+   实测 1440 视口下它只有 1326px —— 差 34px 让主角页在最常见的笔记本宽度上
+   整屏退化成两列，且 1366 视口（容器 1270）也够不着。降到 1240 后
+   1366 / 1440 / 1536 都能出三列；两侧列改成 minmax，窄容器下自己收，
+   不会把中间的 hero 挤瘪。 */
+@container main (min-width: 1240px) {
   #pane-defect.active {
-    grid-template-columns: 300px minmax(0, 1fr) 372px;
+    grid-template-columns: minmax(252px, 300px) minmax(0, 1fr) minmax(318px, 372px);
     grid-template-areas:
       "tower hero  bench"
       "tower run   bench"
@@ -627,8 +633,23 @@ body { font-size: 13px; letter-spacing: -0.003em; }
   #inspector-panel { min-width: 0; }
 }
 
-/* 指标带：三列模式下 stats-panel 通栏落底，卡片横向铺开成 KPI 带 */
-@container main (min-width: 1360px) {
+/* 三列但容器还不够宽（1240 ~ 1445）：hero 那一列只有 560~737px，
+   而 .dh-stage 是三块**不许缩**的横排（150 + 26 + 环 260 + 26 + 248 = 710），
+   塞进去会把「阶段完成 / 待审提案」两张数字卡顶出面板左缘、让五张阶段卡
+   骑到右列审判台身上（1440 实拍踩过）。所以在这个区间里让阶段列表
+   自己降到第二行、标题允许折行 —— 环和数字卡在 560px 里本来就放得下。 */
+@container main (min-width: 1240px) and (max-width: 1445px) {
+  .dh-stage { flex-wrap: wrap; gap: 14px; }
+  .dh-stagelist { flex: 0 0 100%; display: flex; justify-content: center; }
+  .dh-mission { flex-wrap: wrap; }
+  /* 标题折行后别让最后一个字孤零零吊在第二行（1440 实拍过「…显示在 / 里」）。
+     balance 让两行长度对齐，字号收半档给右侧三颗按钮腾地方。 */
+  .dh-title { white-space: normal; text-wrap: balance; font-size: 15.5px; }
+}
+
+/* 指标带：三列模式下 stats-panel 通栏落底，卡片横向铺开成 KPI 带。
+   阈值必须和上面那条三列重排一致，否则 stats 会在缺陷页还没三列时先铺成横带。 */
+@container main (min-width: 1240px) {
   #stats-panel .stats-grid {
     display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px;
   }

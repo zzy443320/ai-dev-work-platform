@@ -55,7 +55,25 @@ export function teamNewState() {
   }
 }
 
+/**
+ * 长任务作业状态。**模块级惰性单例**（同 useDefect）。
+ *
+ * 为什么不能是工厂式：App.vue 的顶栏脉搏与左轨状态灯要读 `running`，而 TeamPane
+ * 才是真正把它置真的那一侧。工厂式会让两边各拿一套 ref —— 实测作业确实在跑
+ * （定格卡出来了、按钮禁了），顶栏却还写着「空闲 · 槽位可接单」，导航灯也不亮。
+ * useDefect 文件头就记着这条教训，这里别再犯第二次。
+ *
+ * 但也不能在模块顶层就 new：表单默认值读 /api/params/schema，而模块求值发生在
+ * main.js 那次 await 之前（import 提升），拿到的只会是兜底值。所以首次调用时才建。
+ */
+let sharedTeam = null
+
 export function useTeam() {
+  if (!sharedTeam) sharedTeam = _createTeamState()
+  return sharedTeam
+}
+
+function _createTeamState() {
   const { toast } = useToast()
 
   // ---- 角色定义（首次进入页签时拉一次，失败用兜底）----
