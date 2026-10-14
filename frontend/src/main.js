@@ -20,6 +20,10 @@ import './styles/primitives.css'
 // 参数展示层（2026-10-13 改版）：就地控件条 + 常驻参数轨的观感都在这一个文件里。
 // 必须在 skin-*.css 之前：皮肤层只调外观（圆角/软阴影），尺寸与版式以这里为准。
 import './styles/params.css'
+// 黏土糖果皮肤层（2026-10-12）。必须排在最后：它只改外观（圆角/软阴影/配色），
+// 不动结构、id、class 与布局尺寸，靠「最后加载」赢过前面所有同权重规则。
+// 契约见文件头（--topbar-h、#figma-tree:empty::before、display:grid 等一律不碰）。
+import './styles/skin-clay.css'
 
 import { loadParamSchema } from './composables/useParamSchema.js'
 

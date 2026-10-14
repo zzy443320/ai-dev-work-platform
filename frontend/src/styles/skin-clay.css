@@ -1,0 +1,279 @@
+/* ===========================================================================
+   skin-clay.css —— 黏土糖果（Claymorphism）皮肤层
+   ---------------------------------------------------------------------------
+   加载顺序：style.css → element-plus → theme.css → desk.css → primitives.css
+             → **本文件**（最末，同权重必胜）
+   这一层**只改外观，绝不动结构 / id / class 名 / 尺寸链**。
+
+   契约清单（tests/ 下界面用例锁着，本层一个都不碰）：
+     · 布局：.topbar / .brand / .top-actions / .side-nav / .nav-item / .layout
+             / #tabs / #pane-* / .tabpane / #stage-flow / .stage
+     · 断言值：--topbar-h 不动；.topbar 高度仍由该令牌决定；
+              #figma-tree / #test-preview / #team-log / #run-log 的 :empty::before
+              文案不动；#pane-defect / #pane-team 的 display:grid 不动。
+     · 用例只读 display / position / 伪元素 content / --topbar-h，
+       不读圆角 / 阴影 / 配色 —— 所以本层可以放开手脚做质感。
+
+   黏土语言的三条规则：
+     1. **软起鼓**：卡片用「外浮影 + 顶部高光 + 底部内凹」三层堆出厚度；
+     2. **大圆角**：面板 20 / 控件 14 / 药丸 999，圆到没有锐角；
+     3. **内凹输入**：输入类是「按下去」的，用 inset 影而不是边框。
+   =========================================================================== */
+
+/* ---- 0. 皮肤自身的形状令牌（都用 --clay-* 前缀，不占项目既有名字） ---- */
+:root,
+html.dark,
+html:not(.dark),
+[data-theme="dark"],
+[data-theme="light"] {
+  --clay-r-panel: 20px;
+  --clay-r-card: 16px;
+  --clay-r-ctl: 14px;
+
+  /* 起鼓阴影三件套：亮面高光 + 暗面内凹 + 外部浮影。
+     暗色下把高光压弱、浮影加深，否则黑底上会糊成一团白边。 */
+  --clay-lift: 0 1px 0 rgba(255, 255, 255, 0.6) inset,
+               0 -3px 0 rgba(0, 0, 0, 0.045) inset,
+               0 6px 16px -8px rgba(31, 24, 16, 0.28);
+  --clay-lift-hover: 0 1px 0 rgba(255, 255, 255, 0.7) inset,
+                     0 -3px 0 rgba(0, 0, 0, 0.05) inset,
+                     0 14px 26px -10px rgba(31, 24, 16, 0.34);
+  --clay-sink: inset 0 3px 8px rgba(31, 24, 16, 0.10);
+  --clay-sink-focus: inset 0 3px 8px rgba(31, 24, 16, 0.10),
+                     0 0 0 3px var(--primary-soft);
+  --clay-soft: 0 4px 12px -6px rgba(31, 24, 16, 0.22);
+}
+[data-theme="dark"],
+html.dark {
+  --clay-lift: 0 1px 0 rgba(255, 255, 255, 0.055) inset,
+               0 -3px 0 rgba(0, 0, 0, 0.28) inset,
+               0 8px 20px -10px rgba(0, 0, 0, 0.65);
+  --clay-lift-hover: 0 1px 0 rgba(255, 255, 255, 0.08) inset,
+                     0 -3px 0 rgba(0, 0, 0, 0.3) inset,
+                     0 16px 30px -12px rgba(0, 0, 0, 0.75);
+  --clay-sink: inset 0 3px 8px rgba(0, 0, 0, 0.45);
+  --clay-sink-focus: inset 0 3px 8px rgba(0, 0, 0, 0.45),
+                     0 0 0 3px var(--primary-soft);
+  --clay-soft: 0 4px 14px -6px rgba(0, 0, 0, 0.6);
+}
+
+/* 背景：浅色给奶油底 + 两团马卡龙光晕；暗色保持深但不发灰 */
+[data-theme="light"] body { background: #fdf6ee; }
+[data-theme="light"] .bg-glow {
+  background:
+    radial-gradient(560px 320px at 4% -4%, rgba(255, 177, 122, 0.30), transparent 62%),
+    radial-gradient(560px 340px at 98% 2%, rgba(122, 190, 255, 0.26), transparent 62%),
+    radial-gradient(520px 320px at 60% 106%, rgba(186, 155, 255, 0.14), transparent 60%);
+}
+[data-theme="dark"] body { background: #15131b; }
+[data-theme="dark"] .bg-glow {
+  background:
+    radial-gradient(560px 320px at 4% -4%, rgba(255, 138, 61, 0.10), transparent 62%),
+    radial-gradient(560px 340px at 98% 2%, rgba(110, 150, 255, 0.10), transparent 62%);
+}
+
+/* ---- 1. 顶栏：一颗浮起的药丸条 ---- */
+.topbar {
+  background: var(--surf);
+  /* 边框保留占位（几何零偏移），只是变透明：去掉这 1px 会让问答一屏断言偏 1px */
+  border-bottom: 1px solid transparent;
+  border-radius: 0 0 var(--clay-r-panel) var(--clay-r-panel);
+  box-shadow: var(--clay-soft);
+}
+.logo {
+  border-radius: 9px;
+  background: linear-gradient(140deg, #ff9d4d, #ff7a45);
+  box-shadow: 0 4px 10px -4px rgba(255, 122, 69, 0.7), inset 0 -2px 0 rgba(0, 0, 0, 0.12);
+}
+.title-block h1 { font-weight: 700; letter-spacing: -0.015em; }
+
+/* ---- 2. 左侧导航：胶囊 + 软糖态 ---- */
+.nav-item {
+  border-radius: 12px;
+  transition: background-color .16s, color .16s, transform .16s, box-shadow .16s;
+}
+.nav-item:hover { transform: translateY(-1px); }
+.nav-item.active {
+  background: var(--primary-soft);
+  box-shadow: inset 0 0 0 1px var(--ac-ln), var(--clay-soft);
+}
+/* 活动指示条保留（位置与用例依据不变），只把它磨圆 */
+.nav-item.active::before { border-radius: 3px; width: 3px; }
+
+/* ---- 3. 面板与卡片家族：软起鼓 ---- */
+.panel,
+.usage-card, .kb-card, .pcard, .ext-card, .team-agent, .team-item, .stat-card,
+.param-bar, .log-box, .run-log-box {
+  border-radius: var(--clay-r-panel);
+  border: 1px solid transparent;
+  background: var(--surf);
+  box-shadow: var(--clay-lift);
+}
+.panel { padding: 14px 16px 15px; } /* 几何与 desk.css 一致：check_vue_chat_ui 以 #app 留白 18 + 面板底内边距 15 断言网格底边（±2px），改内边距会挂 */
+
+.usage-card:hover, .kb-card:hover, .pcard:hover, .ext-card:hover,
+.team-agent:hover, .team-item:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--clay-lift-hover);
+}
+.usage-card.primary { box-shadow: var(--clay-lift), inset 0 3px 0 var(--ac); }
+.pcard { border-left: 3px solid var(--line2); }
+.pcard:hover { transform: translateY(-2px); }
+
+/* 分段控件 / 参数条：外槽内凹，选中块浮起 */
+.seg {
+  background: var(--input-bg);
+  border: none;
+  border-radius: var(--clay-r-ctl);
+  box-shadow: var(--clay-sink);
+  padding: 3px;
+}
+.seg-btn { border-radius: 11px; font-weight: 600; }
+.seg-btn.active {
+  background: var(--primary);
+  color: #fff;
+  box-shadow: 0 4px 10px -4px rgba(0, 0, 0, 0.35), inset 0 -2px 0 rgba(0, 0, 0, 0.14);
+}
+.param-bar { border: none; border-radius: var(--clay-r-card); }
+
+/* ---- 4. 按钮：软糖 ---- */
+.btn-primary {
+  border-radius: var(--clay-r-ctl);
+  background: linear-gradient(140deg, var(--primary), var(--primary-2));
+  box-shadow: 0 8px 18px -8px rgba(0, 0, 0, 0.42), inset 0 -3px 0 rgba(0, 0, 0, 0.16),
+              inset 0 1px 0 rgba(255, 255, 255, 0.22);
+  font-weight: 700;
+}
+.btn-primary:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 22px -8px rgba(0, 0, 0, 0.46), inset 0 -3px 0 rgba(0, 0, 0, 0.16),
+              inset 0 1px 0 rgba(255, 255, 255, 0.22);
+}
+.btn-primary:disabled { transform: none; box-shadow: none; }
+
+.btn-ghost {
+  border: none;
+  border-radius: var(--clay-r-ctl);
+  background: var(--surf);
+  color: var(--txt2);
+  box-shadow: 0 6px 14px -8px rgba(31, 24, 16, 0.30), inset 0 -3px 0 rgba(0, 0, 0, 0.04);
+}
+.btn-ghost:hover {
+  color: var(--txt);
+  transform: translateY(-2px);
+  box-shadow: 0 10px 18px -8px rgba(31, 24, 16, 0.34), inset 0 -3px 0 rgba(0, 0, 0, 0.05);
+}
+.btn-danger { border-radius: var(--clay-r-ctl); }
+.btn-mini { border-radius: 11px; }
+
+/* ---- 5. 输入类：内凹 ---- */
+.field-inline input:not(.el-input__inner):not(.el-select__input) {
+  background: var(--input-bg);
+  border: none;
+  border-radius: var(--clay-r-ctl);
+  box-shadow: var(--clay-sink);
+  padding: 8px 12px;
+}
+.field-inline input:not(.el-input__inner):not(.el-select__input):focus {
+  border: none;
+  box-shadow: var(--clay-sink-focus);
+}
+
+/* ---- 6. 药丸：标签 / 角标 / 状态 ---- */
+.tag { border-radius: 999px; padding: 2px 9px; font-weight: 700; }
+.count-badge, .gate-badge, .cnt, .usage-badge { border-radius: 999px; }
+.sha { border-radius: 6px; }
+
+/* 开关轨道磨圆、滑块加软影 */
+.switch .track { border-radius: 999px; box-shadow: var(--clay-sink); }
+.switch .track::after { box-shadow: 0 2px 4px rgba(0, 0, 0, 0.28); }
+.switch input:checked + .track {
+  background: linear-gradient(90deg, var(--primary), var(--primary-2));
+  box-shadow: 0 0 0 3px var(--primary-soft);
+}
+
+/* ---- 7. 浮层：弹窗 / 抽屉 / 下拉 ---- */
+.modal-box {
+  border: none;
+  border-radius: var(--clay-r-panel);
+  box-shadow: var(--shadow-pop), inset 0 1px 0 rgba(255, 255, 255, 0.10);
+}
+.mod-drawer {
+  border-left: none;
+  border-radius: var(--clay-r-panel) 0 0 var(--clay-r-panel);
+  box-shadow: -18px 0 40px -22px rgba(0, 0, 0, 0.5);
+}
+.el-dialog { border: none; border-radius: var(--clay-r-panel); }
+.el-popper.is-light { border: none; border-radius: var(--clay-r-card); box-shadow: var(--shadow-pop); }
+.el-select-dropdown__item { border-radius: 10px; }
+.el-message { border: none; border-radius: 999px; box-shadow: var(--clay-soft); }
+
+/* 代码/终端块：深色内凹槽，保住等宽可读性。
+   浅色下把冷黑换成暖棕（概念稿 F 的 --code:#332b24），与奶油底同温；
+   文字同步换暖白，避免冷灰蓝在棕底上发脏。 */
+.check-out, .mcp-test-out, .gate-preview, .ai-test-out, .term-block, .code-block {
+  border: none;
+  border-radius: var(--clay-r-card);
+  box-shadow: var(--clay-sink);
+}
+[data-theme="light"] {
+  --code-bg: #33291f;
+  --term: #33291f;
+}
+[data-theme="light"] .log,
+[data-theme="light"] .check-out,
+[data-theme="light"] .mcp-test-out,
+[data-theme="light"] .gate-preview,
+[data-theme="light"] .ai-test-out {
+  background: #33291f;
+  color: #f0e6d8;
+  border: none;
+  border-radius: var(--clay-r-card);
+  box-shadow: var(--clay-sink);
+}
+[data-theme="light"] .log:empty { background: transparent; box-shadow: none; }
+.log { border: none; border-radius: var(--clay-r-card); box-shadow: var(--clay-sink); }
+.log:empty { box-shadow: none; }
+
+/* ---- 8. Element Plus 组件云化（只改形状与影，不改尺寸以免动布局） ---- */
+.el-button { border-radius: var(--clay-r-ctl); font-weight: 600; }
+.el-button:not(.el-button--primary):not(.is-text):not(.is-link) {
+  background: var(--surf);
+  border-color: transparent;
+  box-shadow: 0 5px 12px -7px rgba(31, 24, 16, 0.30), inset 0 -2px 0 rgba(0, 0, 0, 0.04);
+}
+.el-button:not(.el-button--primary):not(.is-text):not(.is-link):hover {
+  background: var(--surf2);
+  border-color: transparent;
+  box-shadow: 0 9px 16px -8px rgba(31, 24, 16, 0.34), inset 0 -2px 0 rgba(0, 0, 0, 0.05);
+}
+.el-button--primary {
+  background: linear-gradient(140deg, var(--primary), var(--primary-2));
+  border-color: transparent;
+  box-shadow: 0 8px 16px -8px rgba(0, 0, 0, 0.4), inset 0 -3px 0 rgba(0, 0, 0, 0.16);
+}
+.el-input__wrapper,
+.el-textarea__inner,
+.el-select__wrapper {
+  border-radius: var(--clay-r-ctl);
+  box-shadow: var(--clay-sink) !important;
+  background-color: var(--input-bg);
+}
+.el-input__wrapper.is-focus,
+.el-input__wrapper:focus-within,
+.el-textarea__inner:focus,
+.el-select__wrapper.is-focused {
+  box-shadow: var(--clay-sink-focus) !important;
+}
+.el-tag { border-radius: 999px; }
+.el-card { border: none; border-radius: var(--clay-r-panel); box-shadow: var(--clay-lift); }
+/* 页签头在两种布局下都被隐藏，但契约要求 DOM 与 display 不变，这里只调圆角 */
+#tabs.el-tabs > .el-tabs__header .el-tabs__nav { border: none; border-radius: var(--clay-r-ctl); box-shadow: var(--clay-sink); }
+.el-tabs__item.is-active { border-radius: 11px; box-shadow: var(--clay-soft); }
+/* 折叠面板 */
+.el-collapse, .el-collapse-item__header, .el-collapse-item__wrap { border-radius: var(--clay-r-card); }
+/* 分页 */
+.el-pagination .el-pager li { border-radius: 10px; }
+.el-pagination .el-pager li.is-active { box-shadow: 0 4px 10px -5px rgba(0, 0, 0, 0.4); }
+/* 步骤条：每步的胶囊磨圆，其余尺寸/显隐逻辑不动 */
+.stage-flow .el-step__main { border-radius: 999px; }
