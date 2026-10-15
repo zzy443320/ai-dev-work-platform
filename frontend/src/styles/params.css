@@ -221,3 +221,20 @@ input.pf-ctl { width: 210px; }
     grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr) var(--prail-w);
   }
 }
+
+/* 长任务（2026-10-14 第五轮）：参数轨**并入发起面板** —— 说明文字下方那块空白
+   就是它撑出来的（轨跨满三行把整行拉高），现在参数搬进面板，右侧第三列消失。
+   面板是普通文档流（整页滚动、高度由内容决定），轨的 sticky / 视口 max-height /
+   内滚全部摘掉，否则表单会在面板里自己出一条滚动条。
+   ⚠️ ParamRail / ParamLocked 的根节点自带 .pcol（轨道形态靠它钉在页签 grid
+   最后一列）。嵌进面板后它落在 flex 列里，.pcol 的 grid 定位失效但
+   align-self:start 还在 —— 轨会缩成 shrink-to-fit 半截宽（实测 570px），
+   必须在这里摘干净并恢复 stretch。背景改透明：面板里再套一张同色卡是
+   「三层同色嵌套」，只留边框当分区线。 */
+#team-run-panel .pcol { grid-column: auto; grid-row: auto; align-self: stretch; }
+#team-run-panel .prail {
+  position: static; max-height: none; flex: none;
+  margin-top: 12px; background: transparent;
+}
+#team-run-panel .prail .prail-body { overflow: visible; }
+#team-run-panel .plock { position: static; }

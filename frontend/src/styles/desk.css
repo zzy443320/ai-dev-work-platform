@@ -732,28 +732,18 @@ body { font-size: 13px; letter-spacing: -0.003em; }
   border-color: rgba(76, 195, 255, 0.2);
 }
 
-/* ===== 11. 配置驾驶舱 =====
-   配置页是「仪表舱」：分区卡沉底、区头变成机读小标、保存条吸底常驻。
-   cfg-* 字段 id 一个没动（settings/page_login/browser_ai 三个用例按 id 定位）。 */
+/* ===== 11. 配置驾驶舱（2026-10-14 第四版：就绪度驾驶舱） =====
+   配置页从「三分区 × 12 栏的长表单」换成「一屏就绪度 + 8 张能力卡」，
+   9 张卡的编辑控件收进右侧抽屉（#cfg-drawer，Teleport 到 body，
+   所以抽屉的观感在 style.css 的「配置模块」一节，不在这里）。
+   cfg-* 字段 id 一个没动（settings / page_login / browser_ai 三个用例按 id 定位）。 */
 #pane-config #config-panel {
   background:
     radial-gradient(640px 260px at 30% 0%, rgba(76, 195, 255, 0.06), transparent 70%),
     var(--surf);
 }
-.cfg-region { border-radius: var(--r-l); }
-.cfg-region .region-head {
-  font-family: var(--mono); font-size: 11px; font-weight: 700;
-  letter-spacing: 0.18em; text-transform: uppercase; color: var(--ac);
-}
-.cfg-region .region-head::before {
-  content: ""; display: inline-block; width: 3px; height: 11px;
-  border-radius: 2px; background: var(--ac); margin-right: 8px; vertical-align: -1px;
-}
-/* 分区内的组卡：code-bg 沉底，和面板底拉开一档 */
-#config-panel .settings-group {
-  background: var(--code-bg); border: 1px solid var(--line);
-  border-radius: var(--r-m); padding: 14px 16px;
-}
+/* 就绪度那一条是本页主角：亮描边（与缺陷页 hero、统计趋势同一语言） */
+#pane-config .ck-hero { border-color: rgba(76, 195, 255, 0.22); }
 /* 保存条吸底：驾驶舱的「点火钥匙」永远在手边，不用滚到底找 */
 .config-foot {
   position: sticky; bottom: 0; z-index: 6;
@@ -797,38 +787,37 @@ body { font-size: 13px; letter-spacing: -0.003em; }
 #chat-art-drawer { bottom: auto; max-height: calc(100vh - 116px); }
 
 /* ===== 13. 长任务驾驶舱（容器 ≥1240 重排）=====
-   方向稿 A4 的骨架：左列「发起 + 子 Agent 看板 + 工作项」是战场本体，
-   右列「历史作业 / 人工介入 / 时间线」是控制塔。六面板 DOM 顺序与
-   id 不动（check_team_ui 按 #team-history / #team-intervene-hint 找）。 */
+   2026-10-15 第七轮（用户定稿）：上半「配置 | 运行监视」**等高两块、不可收起**，
+   下半 历史作业 **通栏**（产出物面板由 App.vue 挂在页签下方，本来就通栏）。
+   运行监视是一整块卡（看板 / 中间段 / 介入条，见 TeamCockpit），
+   配置与运行监视同处一个 grid 行 → 默认 stretch → **自动等高**。 */
 @container main (min-width: 1240px) {
   #pane-team.active {
-    grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr);
-    /* 配对原则：一行的高度 = 行内最高那块，所以**按体量配对**，别把 188px
-       的发起面板和 640px 的历史吊在一行（1440 实拍左列因此空出 452px）。
-       左列＝干活的（发起 → 子 Agent 看板 → 随时插手），右列＝看的
-       （工作项清单 → 历史作业 → 实时时间线），语义也顺。
-       DOM 顺序一行没动（check_vue_team_ui 用 compareDocumentPosition 锁源顺序）。 */
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    /* 用 id 而不是 nth-of-type 排位：面板被搬进 TeamCockpit 之后，
+       页签的直接子节点只剩三个，编号一变就得重算一遍（id 稳）。 */
     grid-template-areas:
-      "run     plan"
-      "board   history"
-      "intervene timeline";
+      "run      cockpit"
+      "history  history";
   }
-  #pane-team > section:nth-of-type(1) { grid-area: run; }
-  #pane-team > section:nth-of-type(2) { grid-area: board; min-height: 340px; }
-  #pane-team > section:nth-of-type(3) { grid-area: plan; }
-  #pane-team > section:nth-of-type(4) { grid-area: timeline; }
-  #pane-team > section:nth-of-type(5) { grid-area: intervene; }
-  #pane-team > section:nth-of-type(6) { grid-area: history; }
+  #team-run-panel { grid-area: run; }
+  #team-cockpit-panel { grid-area: cockpit; min-height: 560px; }
+  #team-history-panel { grid-area: history; }
 }
-/* 子 Agent 看板 = 本页主角：氛围光 + 亮描边（与缺陷 hero、统计趋势同一语言） */
-#team-board-panel {
+/* 运行监视是本页主角：氛围光 + 亮描边（与缺陷 hero、统计趋势同一语言）。
+   （原来看板面板的观感，现在挂到整块运行台上。） */
+#team-cockpit-panel {
   background:
     radial-gradient(480px 220px at 50% 0%, rgba(180, 140, 255, 0.07), transparent 70%),
     var(--surf);
   border-color: rgba(180, 140, 255, 0.22);
 }
-/* 人工介入台：按钮组是「随时能按」的红色件，卡底沉一档 */
-#team-intervene-panel { background: var(--code-bg); }
+/* 人工介入条：常驻卡底、按钮组是「随时能按」的红色件，沉一档底色 */
+.ck-intervene { background: var(--code-bg); }
+/* 运行台内部的块间距由它自己控制（段与段之间是 1px 分隔线，不是 12px 空白）；
+   style.css 里那条 `#pane-team > .panel > * + * { margin-top: 12px }` 带 1 id 1 class，
+   这里必须写**两级 id** 才压得过它（单 id 输一半）。 */
+#pane-team > #team-cockpit-panel > * + * { margin-top: 0; }
 
 /* ===== 14. 工具四屏驾驶舱（需求开发 / 接口联调 / 代码测试 / 扩展能力）=====
    三块「过程 + 产物」主面板（#req-panel / #api-panel / #test-panel）是各自
@@ -860,32 +849,24 @@ body { font-size: 13px; letter-spacing: -0.003em; }
 #ext-skill-panel, #ext-mcp-panel { background: var(--code-bg); }
 
 /* ===== 15. 行高耦合的空白：长面板自己滚，别把同行兄弟吊出一截空 =====
-   grid 一行的高度 = 行内最高面板。历史作业 10 张卡、时间线几十行，
-   不封顶就会把左列的看板/表单撑出大片空白。给长面板 max-height +
-   内部滚动（驾驶舱惯例：队列类面板自己滚，页面不失控）。 */
-/* 封顶值按**同行配对**来定，不是随手写的：历史作业与看板（约 484px）同行，
-   时间线与人工介入（约 341px）同行 —— 超过这个数就是把兄弟吊出一截空。
-   列表面板自己滚（驾驶舱惯例），页面不失控。 */
+   历史作业通栏、可能攒下十几张卡，封顶内滚（驾驶舱惯例：队列类面板自己滚，
+   页面不失控）。运行监视的中间段由 .ck-mid 自己 flex 内滚，不再单独封顶。 */
 #team-history-panel { max-height: 500px; overflow: hidden; display: flex; flex-direction: column; }
 #team-history-panel > .panel-head { flex: none; }
 #team-history-panel #team-history { overflow-y: auto; flex: 1; min-height: 0; }
-#team-timeline-panel { max-height: 400px; overflow: hidden; display: flex; flex-direction: column; }
-#team-timeline-panel > .panel-head { flex: none; }
-#team-timeline-panel .log-wrap { overflow-y: auto; flex: 1; min-height: 0; }
-/* 宽容器（容器 ≥1700）下子 Agent 看板摊成一行四张、自己变矮（约 340px），
-   历史作业再按 500 封顶就会把同行吊出 160px 空 —— 同步收一档。
-   （1440 实拍：2560 视口配对后仍空 160px 就是这个原因。） */
+/* 宽容器下历史卡多列铺开、自己变矮（约 340px），再按 500 封顶就会吊出空白。 */
 @container main (min-width: 1700px) {
-  #team-history-panel { max-height: 400px; }
+  #team-history-panel { max-height: 420px; }
 }
 /* 统计页构成面板与趋势同行：构成也封顶内滚，趋势 420 图不再被吊高 */
 #pane-stats > section:nth-of-type(3) { max-height: 560px; overflow: hidden; display: flex; flex-direction: column; }
 #pane-stats > section:nth-of-type(3) .usage-split { overflow-y: auto; flex: 1; min-height: 0; }
 
-/* 折叠时摘掉主角面板的 min-height —— 折叠语义就是「变矮」，
-   看板 340 的地板会把折叠后的高度顶死（team 用例断言折叠变矮）。 */
+/* 折叠时摘掉面板的 min-height —— 折叠语义就是「变矮」。
+   （配置与运行监视刻意**不做折叠**：它们是这一页的输入口与现场，收起只会让人
+   以为没地方填参数 / 看不到进度。用户 2026-10-15 定的口径。） */
 #pane-team .panel.collapsed { min-height: 0; }
-#pane-team .panel.collapsed #team-agents { display: none; }
+#pane-team .panel.collapsed #team-history { display: none; }
 
 /* 同行两块底边对齐靠的是 pane 级 stretch（params.css 第 3 节把 align-items:start
    摘掉了 —— 那个 start 只把空洞从面板里挪到了面板外面）。stretch 之后面板**内部**
@@ -895,7 +876,7 @@ body { font-size: 13px; letter-spacing: -0.003em; }
 #pane-team > section.panel { display: flex; flex-direction: column; min-height: 0; }
 #pane-team > section.panel > .panel-head { flex: none; }
 #pane-team > section.panel.collapsed { align-self: start; }
-#team-agents, #team-plan { flex: 1 1 auto; min-height: 0; }
+#team-plan { min-height: 0; }
 #pane-team .empty { margin: auto; }
 /* ⚠️ 配套的一条：列表容器一旦有了确定高度（面板 stretch 后 flex:1），
    Grid 的 auto 行会被压扁——el-card 自带 overflow:hidden，min-height:auto 因此

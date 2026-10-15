@@ -35,6 +35,13 @@ const props = defineProps({
   lockedItems: { type: Array, default: () => [] },
   /** 定格卡上那句「为什么现在改不了、什么时候能改」 */
   lockedNote: { type: String, default: '' },
+  /**
+   * inline（2026-10-14）：参数区**不由外壳渲染**，模块把 ParamRail / ParamLocked
+   * 自己嵌进主区某块面板里。长任务作业用 —— 用户点名「说明文字下面那块空白，
+   * 把参数放进去，就不用独立一块参数区域了」：参数轨从页签 grid 的最后一列
+   * 搬进发起面板，六面板回到双栏战场，右侧不再有第三轨。
+   */
+  inline: { type: Boolean, default: false },
 })
 
 // 三个插槽：
@@ -47,8 +54,9 @@ const rail = computed(() => !!mod.value && paramLayout(props.name) === 'rail')
 </script>
 
 <template>
-  <!-- schema 没到位（正常不会发生：main.js 先拉后挂载）：只交主区，不渲染参数区 -->
-  <slot v-if="!mod" />
+  <!-- schema 没到位（正常不会发生：main.js 先拉后挂载）：只交主区，不渲染参数区。
+       inline 同理：参数区模块自己渲染（嵌在它的面板里），外壳不插手。 -->
+  <slot v-if="!mod || inline" />
 
   <!-- 空闲：可编辑参数区。strip 模式排在主区之前（占整行），rail 模式排在主区之后
        （钉在最后一列）—— 顺序就是 DOM 顺序，两种形态共用一个分支。 -->

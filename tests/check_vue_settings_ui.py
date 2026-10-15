@@ -174,6 +174,25 @@ def hidden(page, sel: str) -> bool:
     return page.eval_on_selector(sel, "el => el.classList.contains('hidden')")
 
 
+def open_group(page, key: str) -> None:
+    """点能力卡上的「配置」，把右侧抽屉打开。
+
+    2026-10-14 第四版：配置页是就绪度驾驶舱，9 张卡的编辑控件都收进抽屉，
+    所以要读/操作某一段字段，得先把它那一段打开 —— 顺带也就验了抽屉的接线。
+    """
+    page.click(f'#config-panel .ck-card[data-key="{key}"] .ck-mini.cfg')
+    page.wait_for_function(
+        "() => { const d = document.querySelector('.cfg-drawer');"
+        " return d && !d.classList.contains('hidden') }", timeout=8000)
+
+
+def close_drawer(page) -> None:
+    page.click(".cfg-drawer .cfg-drawer-head .x")
+    page.wait_for_function(
+        "() => { const d = document.querySelector('.cfg-drawer');"
+        " return d && d.classList.contains('hidden') }", timeout=8000)
+
+
 def run(base: str, *, errors: list, consoles: list) -> None:
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
@@ -229,26 +248,50 @@ def run(base: str, *, errors: list, consoles: list) -> None:
             "ids => ids.filter(id => !document.getElementById(id))", CFG_IDS)
         check(f"配置模块控件齐全（{len(CFG_IDS)} 个）", not missing, str(missing))
 
-        # ── 1c. 配置模块的高度：跟其它模块一样整页自然流，不再自己套限高内滚 ──
-        # 旧版给它 `max-height: clamp(360px, 100vh - 常量, 2200px)` + .config-grid 内滚，
-        # 是为了配合已删除的三栏经典。现在只允许**页面这一条滚动条**。
+        # ── 1c. 配置模块 = 就绪度驾驶舱（2026-10-14 第四版） ──
+        # 前三版（三分区 × 12 栏 / 主从双栏 / 三列一屏）都在「卡片怎么摆」上打转，
+        # 实测 1600 视口仍然 2509px 高、右下角约 120 万 px² 死白。第四版换的是存在形式：
+        # 页面 = 一屏环境状态（环形就绪度 + 8 张能力卡），编辑控件收进右侧抽屉。
+        # 所以这一段契约从「页面整体滚动 / 面板 > 900」改成「一屏装下 + 抽屉按需打开」。
         fit = page.evaluate("""() => {
           const g = document.querySelector('#config-panel .config-grid');
           const p = document.getElementById('config-panel');
-          const de = document.documentElement;
           return {inner: g.scrollHeight - g.clientHeight,
                   panelH: Math.round(p.getBoundingClientRect().height),
-                  pageOver: de.scrollHeight - innerHeight,
-                  panelBottom: Math.round(p.getBoundingClientRect().bottom)};
+                  cards: document.querySelectorAll('#config-panel .ck-card').length,
+                  ring: !!document.getElementById('cfg-ready-ring')};
         }""")
         check("配置面板内没有第二条滚动条", abs(fit["inner"]) <= 2, str(fit))
-        check("配置模块按内容自然流、由页面整体滚动",
-              fit["pageOver"] > 0 and fit["panelH"] > 900, str(fit))
+        check("配置模块是一屏驾驶舱（面板 < 1000px）", fit["panelH"] < 1000, str(fit))
+        check("8 张能力卡 + 环形就绪度都在",
+              fit["cards"] == 8 and fit["ring"], str(fit))
 
-        # 值已由 /api/settings 回填（仓库路径用真实 mock 仓路径）
-        check(f"仓库路径已回填",
+        # 抽屉**常驻 DOM**（只切 .hidden，不是 v-if）：关着的时候字段也还在，
+        # 这就是「hidden 契约」—— 上面的 getElementById 才能一直拿得到全部 cfg-*。
+        dr = page.evaluate("""() => {
+          const d = document.querySelector('.cfg-drawer');
+          const m = document.querySelector('.cfg-mask');
+          return {dom: !!d, hidden: d ? d.classList.contains('hidden') : false,
+                  fieldInDom: !!document.getElementById('cfg-repo-path'),
+                  maskHidden: m ? m.classList.contains('hidden') : false};
+        }""")
+        check("抽屉与遮罩常驻 DOM 且默认关闭",
+              dr["dom"] and dr["hidden"] and dr["maskHidden"] and dr["fieldInDom"], str(dr))
+
+        # 点卡的「配置」→ 抽屉打开 → 那一段字段可见、可编辑
+        open_group(page, "repo")
+        check("点「配置」打开抽屉、仓库路径可编辑",
+              page.is_visible("#cfg-repo-path"), "")
+        check("仓库路径已回填（mock 仓）",
               page.input_value("#cfg-repo-path").strip().endswith("repo"),
               repr(page.input_value("#cfg-repo-path")))
+        close_drawer(page)
+        check("抽屉可关闭（✕）", hidden(page, ".cfg-drawer"))
+
+        # 换一张卡打开：抽屉里装的必须是**被点开的那一段**（不是把九段堆在一起）
+        open_group(page, "ones")
+        check("抽屉一次只装被点开的那一段",
+              page.is_visible("#cfg-ones-url") and not page.is_visible("#cfg-repo-path"), "")
         check(f"ONES Base URL 已回填",
               page.input_value("#cfg-ones-url") == "https://ones.example.com",
               repr(page.input_value("#cfg-ones-url")))
@@ -262,9 +305,13 @@ def run(base: str, *, errors: list, consoles: list) -> None:
         check(f"Token 占位=可粘贴浏览器里的 token",
               page.get_attribute("#cfg-ones-token", "placeholder") == "可粘贴浏览器里的 token",
               repr(page.get_attribute("#cfg-ones-token", "placeholder")))
+        close_drawer(page)
+
+        open_group(page, "pagelogin")
         check(f"页面登录密码占位=被测应用的登录密码",
               page.get_attribute("#cfg-pagelogin-password", "placeholder") == "被测应用的登录密码",
               repr(page.get_attribute("#cfg-pagelogin-password", "placeholder")))
+        close_drawer(page)
 
         # ── 2. 闸门预览（显式命令态） ──
         gp = page.inner_text("#gate-preview")

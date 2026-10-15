@@ -349,7 +349,7 @@ body {
   container-type: inline-size;
   container-name: main;
 }
-.col-main.pane-fill { grid-template-rows: 1fr; }
+.col-main.pane-fill { grid-template-rows: minmax(0, 1fr); }
 /* el-tabs 是 col-main 的 grid item，min-width:auto 会把页签条 min-content 传播出去 */
 .col-main > #tabs { min-width: 0; }
 
@@ -989,55 +989,129 @@ button { font-family: inherit; }
 .settings-note { font-size: 11px; color: var(--muted); margin-top: 10px; line-height: 1.6; }
 .settings-note code { background: var(--code-bg); color: #d7e0f0; padding: 1px 5px; border-radius: 4px; font-size: 10.5px; }
 
-/* ===== 配置模块（#pane-config，2026-09-30 独立成页签）=====
-   2026-09-30 第二次改版：从「auto-fit 自动多列」改成「三个语义分区 × 12 栏谱系」。
+/* ===== 配置模块（#pane-config）=====
+   2026-10-14 第四次改版：**就绪度驾驶舱**。
 
-   旧版的问题（实测 viewport 1600：面板 1196，网格视口 681 / 内容 1025）：
-   `repeat(auto-fit, minmax(330px,1fr))` 按最小宽硬切出三列，同排卡片
-   183 / 205 / 443 —— 高度差 2.4 倍，最短的卡片下方 260px 全是空白，
-   读者看不出「哪几项是一组」。
+   前三版都在「卡片怎么摆」上打转（三分区 × 12 栏 → 主从双栏 → 三列一屏），
+   9 张卡一张没少，实测 1600 视口仍然 2509px 高、右下角约 120 万 px² 死白
+   （`.cfg-region` 里 5 栏宽的竖条卡旁边一整个 855×1397 的空洞）。
 
-   新版的取舍：
-     · 分区用 .cfg-region 包一层，每区内部是 12 栏网格，卡片用 --span 显式占栏；
-       占位数按内容量定（ONES 六个字段 → 7 栏、Figma 一个字段 → 5 栏），不靠猜。
-     · 同排卡片 align-items: stretch 等高；卡片内的「脚注类元素」margin-top: auto
-       压到底边 —— 高度残差变成有意的脚注位，而不是半张卡片的死白。
-     · 分区标题通栏 + 右侧一条细线（.region-head::after）；用短词，不用 01/02/03。 */
-.config-grid {
-  display: grid; gap: 18px;
-  grid-template-columns: minmax(0, 1fr);
-  align-items: start;
-}
-.cfg-region {
-  display: grid; gap: 14px;
-  grid-template-columns: repeat(12, minmax(0, 1fr));
-}
-.region-head {
-  grid-column: 1 / -1;
-  display: flex; align-items: center; gap: 10px;
-  font-size: 12px; font-weight: 600; color: var(--text-dim);
-  margin-bottom: -3px;
-}
-/* 通栏细线：分区标题向右跑满，把「这一段开始了」交代清楚，不靠编号 */
-.region-head::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+   这一版换的是「配置这件事本身的存在形式」：
+     · 页面 = 一屏**环境状态**：环形就绪度（必填项几项就绪）+ 8 张能力卡
+       （状态灯 / 关键值 / 「检测」「配置」）。回答「现在能不能开工」，
+       不是「参数填什么」—— 面板实测 700px 上下，一屏装完。
+     · 编辑控件收进**右侧抽屉**（.cfg-drawer）：点卡的「配置」才展开那一段
+       表单，流里不再有长表单。抽屉常驻 DOM、只切 .hidden，所以
+       `getElementById` 在被收起来时也拿得到全部 cfg-* 字段。
+     · 卡内不再套第二层同色卡壳（.ck-card .settings-group 去壳）。
 
-.cfg-region > .settings-group {
-  grid-column: span var(--span, 6);
-  display: flex; flex-direction: column; gap: 10px;
-  padding: 13px 15px; border-radius: 12px;
-  background: var(--input-bg); border: 1px solid var(--border);
-}
-/* 分区间距已由网格 gap 给出；旧的「相邻分组 margin-top」在网格里会和 gap 叠加 */
-.cfg-region > .settings-group + .settings-group { margin-top: 0; }
+   契约：cfg-* 字段 id 一个没动；.config-foot 仍是吸底的不透明操作条
+   （check_layout_ui 按背景 alpha ≥ .95 + 顶边线断言）。 */
+.config-grid.ck { display: grid; gap: 16px; align-items: start; }
 
-/* 卡片标题行：标题 + 右侧「必要性 / 生效条件」胶囊 */
-.cfg-region .group-head { display: flex; align-items: center; gap: 8px; }
-.cfg-region .group-title {
+/* ── 顶部就绪度 ── */
+.ck-hero {
+  display: grid; grid-template-columns: 116px minmax(0, 1fr) auto;
+  align-items: center; gap: 22px;
+  padding: 18px 22px; border-radius: var(--r-l); border: 1px solid var(--border);
+  background:
+    radial-gradient(520px 200px at 6% 0%, var(--primary-soft), transparent 70%),
+    var(--surf2);
+}
+.ck-ring { position: relative; width: 108px; height: 108px; }
+.ck-ring svg { display: block; transform: rotate(-90deg); }
+.ck-ring .ck-num {
+  position: absolute; inset: 0; display: grid; place-content: center;
+  text-align: center; gap: 1px;
+}
+.ck-ring .ck-num b {
+  font-size: 25px; font-weight: 700; color: var(--text); letter-spacing: -0.02em; line-height: 1.1;
+}
+.ck-ring .ck-num b i { font-size: 12px; font-style: normal; color: var(--muted); }
+.ck-ring .ck-num span { font-size: 10.5px; color: var(--muted); }
+.ck-hero-txt { min-width: 0; }
+.ck-hero h3 { margin: 0 0 5px; font-size: 15px; font-weight: 700; color: var(--text); }
+.ck-hero p { margin: 0; font-size: 12.5px; color: var(--text-dim); line-height: 1.7; }
+.ck-todo { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 11px; }
+.ck-todo span {
+  font-size: 11.5px; padding: 3px 10px; border-radius: 999px;
+  background: var(--warn-soft); color: var(--warn); border: 1px solid var(--warn);
+}
+.ck-todo span.ok {
+  background: var(--success-soft); color: var(--success); border-color: var(--success);
+}
+.ck-hero-act { display: grid; gap: 8px; }
+.ck-btn {
+  font: inherit; font-size: 12.5px; cursor: pointer; padding: 9px 16px;
+  border-radius: var(--r-s); border: 1px solid var(--border);
+  background: transparent; color: var(--text-dim); white-space: nowrap;
+}
+.ck-btn:hover:not([disabled]) { border-color: var(--border-strong); color: var(--text); }
+.ck-btn.pri { background: var(--primary); border-color: var(--primary); color: #fff; font-weight: 600; }
+.ck-btn[disabled] { opacity: 0.6; cursor: default; }
+
+/* ── 能力卡墙 ── */
+.ck-grid { display: grid; gap: 13px; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.ck-card {
+  display: grid; gap: 10px; align-content: start; min-width: 0;
+  padding: 14px 15px 12px; border-radius: var(--r-m);
+  background: var(--surf2); border: 1px solid var(--border);
+}
+.ck-card:hover { border-color: var(--border-strong); }
+.ck-head { display: flex; align-items: center; gap: 8px; }
+.ck-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--border-strong); }
+.ck-dot.ok { background: var(--success); box-shadow: 0 0 0 3px var(--success-soft); }
+.ck-dot.warn { background: var(--warn); box-shadow: 0 0 0 3px var(--warn-soft); }
+.ck-name { font-size: 12.5px; font-weight: 600; color: var(--text); }
+.ck-tag {
+  margin-left: auto; flex: none; font-size: 10.5px; color: var(--muted);
+  border: 1px solid var(--border); border-radius: 999px; padding: 1px 8px;
+}
+.ck-kv { display: grid; gap: 5px; }
+.ck-kv > div { display: grid; grid-template-columns: 56px minmax(0, 1fr); gap: 8px; font-size: 11.5px; }
+.ck-kv b { font-weight: 500; color: var(--muted); }
+.ck-kv span { color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ck-kv span.void { color: var(--muted); font-style: italic; }
+.ck-note { font-size: 11px; color: var(--muted); line-height: 1.6; }
+/* 卡上的「检测」结论：一行小字，颜色只由结论定（绿=通、黄=将就、红=卡住） */
+.ck-check {
+  font-size: 11.5px; line-height: 1.6; padding: 6px 9px; border-radius: var(--r-s);
+  background: var(--input-bg); border: 1px solid var(--border); color: var(--text-dim);
+}
+.ck-check.ok { color: var(--success); border-color: var(--success); background: var(--success-soft); }
+.ck-check.warn { color: var(--warn); border-color: var(--warn); background: var(--warn-soft); }
+.ck-check.bad { color: var(--danger); border-color: var(--danger); background: var(--danger-soft); }
+.ck-foot { display: flex; gap: 6px; margin-top: 2px; }
+.ck-mini {
+  font: inherit; font-size: 11.5px; cursor: pointer; padding: 5px 11px;
+  border-radius: var(--r-s); border: 1px solid var(--border);
+  background: transparent; color: var(--text-dim);
+}
+.ck-mini:hover:not([disabled]) { border-color: var(--border-strong); color: var(--text); }
+.ck-mini.pri { border-color: var(--border-strong); color: var(--text); background: var(--input-bg); }
+.ck-mini[disabled] { opacity: 0.55; cursor: default; }
+/* 卡内的组/摘要不再套壳：卡片和 group 本来就是同色，套上去只剩两条同色描边。
+   选择器要带 #config-panel 才压得住 desk.css 那条 `#config-panel .settings-group`。 */
+#config-panel .ck-card .settings-group {
+  background: transparent; border: 0; padding: 0; gap: 8px;
+}
+#config-panel .ck-card .settings-actions { margin-top: 0; }
+#config-panel .ck-card .ai-summary { font-size: 11.5px; gap: 5px; }
+#config-panel .ck-card .ai-summary .ais-row { margin-bottom: 0; }
+#config-panel .ck-card .ai-summary .ais-line { font-size: 11.5px; }
+#config-panel .ck-card .ai-summary .ais-badge { font-size: 10.5px; padding: 1px 8px; }
+#config-panel .ck-card #gate-preview { font-size: 11.5px; }
+#config-panel .ck-card #gate-preview .gp-list { max-height: 92px; overflow-y: auto; }
+
+/* 卡片标题行：标题 + 右侧「必要性 / 生效条件」胶囊（抽屉里的分组头也在用） */
+.cfg-drawer .group-head { display: flex; align-items: center; gap: 8px; }
+.cfg-drawer .group-title {
   font-size: 12.5px; font-weight: 600; color: var(--text);
   text-transform: none;
 }
-.cfg-region .group-title::before {
-  /* 6px 方点 → 3×12 竖条：读起来是「这一段」的标记，不是列表圆点 */
+.cfg-drawer .group-title::before {
+  /* 6px 方点 → 3×12 竖条：读起来是「这一段」的标记，不是列表圆点。
+     只改尺寸，底色沿用全局那条渐变（同一批色的两个写法会分叉）。 */
   width: 3px; height: 12px; border-radius: 2px;
 }
 .group-tag {
@@ -1049,39 +1123,67 @@ button { font-family: inherit; }
 /* 只给真正「不填就跑不起来」的那一项上强调色 —— 满屏彩色标签等于没有强调 */
 .group-tag.req { color: var(--primary); background: var(--primary-soft); }
 
-/* 卡片内字段：标签单行不折（成对字段的输入框才能左右对齐）、字阶收到 11.5px */
-.cfg-region .field { gap: 6px; font-size: 11.5px; }
-.cfg-region .field > span {
+/* ── 抽屉里的字段：字阶收到 11.5px、标签单行不折（成对字段的输入框才能左右对齐） ── */
+.cfg-drawer .field { gap: 6px; font-size: 11.5px; }
+.cfg-drawer .field > span {
   font-weight: 500; color: var(--text-dim);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 /* 成对字段：ONES 六个字段竖排要 443px，两两成对只要约 240px */
-.cfg-region .field-row { gap: 10px 14px; }
-/* 横条卡片：页面验证只有两个控件，铺成一行比单独占一格省掉一整排高度 */
+.cfg-drawer .field-row { gap: 10px 14px; }
+/* 横排字段（页面验证）：标签挪到控件左侧 */
 .cfg-inline { display: flex; align-items: center; gap: 22px; flex-wrap: wrap; }
-.cfg-inline > .field { flex: 1 1 340px; }
-/* 标签挪到控件左侧的横排字段（.field 默认是「标签在上、控件在下」） */
+.cfg-inline > .field { flex: 1 1 260px; }
 .field.field-inline-label {
   grid-template-columns: auto minmax(0, 1fr);
   align-items: center; column-gap: 12px;
 }
 
-/* 脚注锚底：卡片被拉高时，说明／预览／按钮贴到底边，而不是在中间留一段空白。
-   卡片没有被拉高（内容本身就比同伴高）时 margin-top: auto 不产生任何效果。 */
-.cfg-region > .settings-group > .info-note,
-.cfg-region > .settings-group > .gate-preview,
-.cfg-region > .settings-group > .repo-hint,
-.cfg-region > .settings-group > .card-note,
-.cfg-region > .settings-group > .settings-actions { margin-top: auto; }
 /* 卡片底部的弱说明：比 .info-note 轻一档，不必每张卡都挂一个灰盒子 */
 .card-note { font-size: 11px; color: var(--muted); line-height: 1.7; }
-/* .info-note 在卡片里已由 flex gap 分隔，别再叠一层下外边距；
-   同时把「描边小盒子」降成「左侧引线脚注」—— 卡片底色和 --input-bg 是同一个值，
-   保留描边就成了同色的框里套框；左侧一条线更轻，也不会跟上方表单控件抢注意力。 */
-.cfg-region .info-note {
+/* .info-note 已由 grid gap 分隔，别再叠一层下外边距；
+   同时把「描边小盒子」降成「左侧引线脚注」—— 抽屉底色和 --input-bg 接近，
+   保留描边就成了同色的框里套框；左侧一条线更轻，也不跟上方控件抢注意力。 */
+.cfg-drawer .info-note {
   margin-bottom: 0;
   background: transparent; border: 0; border-left: 2px solid var(--border-strong);
   border-radius: 0; padding: 1px 0 1px 11px;
+}
+
+/* ── 编辑抽屉（Teleport 到 body，所以选择器不带 #config-panel 前缀）──
+   z-index 压在弹窗（.modal 100）之下：抽屉里点「大模型设置」要先关抽屉再弹窗，
+   但就算叠着开，弹窗也在上面。 */
+.cfg-mask { position: fixed; inset: 0; background: rgba(4, 7, 14, 0.46); z-index: 60; }
+.cfg-drawer {
+  position: fixed; top: 0; right: 0; bottom: 0; width: min(520px, 94vw); z-index: 61;
+  display: flex; flex-direction: column;
+  background: var(--panel-solid); border-left: 1px solid var(--border-strong);
+  box-shadow: var(--shadow-pop);
+}
+.cfg-drawer-head {
+  flex: none; display: flex; align-items: center; gap: 9px;
+  padding: 14px 18px; border-bottom: 1px solid var(--border);
+}
+.cfg-drawer-head h3 { font-size: 13.5px; font-weight: 700; color: var(--text); }
+.cfg-drawer-tag {
+  font-size: 10.5px; color: var(--muted);
+  border: 1px solid var(--border); border-radius: 999px; padding: 1px 8px;
+}
+.cfg-drawer-head .x {
+  margin-left: auto; flex: none; width: 26px; height: 26px; cursor: pointer;
+  border: 1px solid var(--border); border-radius: var(--r-s);
+  background: transparent; color: var(--muted); line-height: 1;
+}
+.cfg-drawer-head .x:hover { border-color: var(--border-strong); color: var(--text); }
+.cfg-drawer-body { flex: 1; min-height: 0; overflow-y: auto; padding: 16px 18px 24px; }
+/* 抽屉里的分组是「一段表单」，不是一张卡：没有底色与描边，靠间距分段 */
+.cfg-drawer .settings-group {
+  display: grid; gap: 10px;
+  background: transparent; border: 0; padding: 0;
+}
+.cfg-drawer-foot {
+  flex: none; display: flex; align-items: center; gap: 10px;
+  padding: 12px 18px; border-top: 1px solid var(--border); background: var(--panel-solid);
 }
 
 /* 面板底部动作条：顶边细线交代「以上是内容、这里是提交」 */
@@ -1105,30 +1207,34 @@ button { font-family: inherit; }
       只改前景会让它在浅色主题下变成「白底浅字」，反而更不可读。
    2) 说明类文字：--muted 在浅色主题下对白底约 2.5:1，够不上可读性基线。这几处承载的
       是「要不要填、填了会怎样」的真实信息，不是装饰，改用 --text-dim。 */
-.cfg-region code,
-.config-foot code {
+.cfg-drawer code,
+.config-foot code,
+.ck-card code {
   background: var(--code-bg); color: #d7e0f0;
   padding: 1px 5px; border-radius: 4px;
 }
-.cfg-region .info-note,
-.cfg-region .card-note,
+.cfg-drawer .info-note,
+.cfg-drawer .card-note,
 .config-foot .settings-note { color: var(--text-dim); }
 
-/* 配置模块不再单独限高内滚，跟其它模块一样按内容自然流、整页滚动：
-   以前给它套 `max-height: clamp(360px, 100vh - 常量, 2200px)` + `.config-grid` 内滚，
-   是为了配合三栏经典里「右栏与问答网格同一条底边、页面一屏装下」。三栏布局去掉之后
-   这条特例只剩坏处 —— 一个只有配置页会出现的内层滚动条，滚轮进到面板里就滚不动页面。
-   面板自身仍是 flex 列（头部固定 + 底部动作条），只是不再被压成一屏。 */
+/* 配置模块不再单独限高内滚：驾驶舱本身就是一屏，不需要第二条滚动条。
+   面板仍是 flex 列（头部固定 + 底部吸底操作条）。 */
 #config-panel { display: flex; flex-direction: column; }
 #config-panel > .config-grid { flex: 1; }
 
-/* 窄窗口：整区退成单列（12 栏的 span 全部归满行），两列字段也收成一列 */
-@media (max-width: 1240px) {
-  .cfg-region > .settings-group { grid-column: 1 / -1; }
+/* 窄窗口：卡墙退成自适应列，抽屉铺满 */
+@media (max-width: 1320px) {
+  .ck-grid { grid-template-columns: repeat(auto-fit, minmax(272px, 1fr)); }
 }
 @media (max-width: 1080px) {
-  .cfg-region .field-row { grid-template-columns: minmax(0, 1fr); }
-  .cfg-region .field > span { white-space: normal; }
+  .ck-hero { grid-template-columns: 116px minmax(0, 1fr); }
+  .ck-hero-act { grid-column: 1 / -1; grid-auto-flow: column; justify-content: start; }
+  .cfg-drawer .field-row { grid-template-columns: minmax(0, 1fr); }
+  .cfg-drawer .field > span { white-space: normal; }
+}
+@media (max-width: 720px) {
+  .ck-hero { grid-template-columns: minmax(0, 1fr); justify-items: start; }
+  .ck-ring { justify-self: center; }
 }
 /* 侧栏摘要的只读行（.pm-line 在弹窗里也是这个语义：b=标签 + span=值） */
 #settings-panel .pm-line span { display: inline-flex; align-items: center; gap: 6px; }
@@ -1881,24 +1987,41 @@ details.adv .adv-body .field:first-child { padding-top: 10px; }
 .ch-hint code { font-family: ui-monospace, Consolas, monospace; }
 
 /* ================= 长任务作业（多子 Agent 协作） =================
-   看板每张卡代表一个角色，卡内「实时思考/输出」直接复用运行视图的
-   .ai-stream / .ai-block（深色底、两套主题一致，像是嵌在卡片里的小终端）。 */
+   2026-10-15 第七轮改版：页面 = 上半「配置 | 运行监视」等高两块 + 下半通栏历史。
+   运行监视是**一整块**卡（看板 / 中间段 / 介入条），逐字输出点名片**就地**看，
+   不再有浮层抽屉。看板名片各状态的颜色、进度条、产出文件 chip 均沿用本节。 */
 
 .team-roles-bar { align-items: center; flex-wrap: wrap; }
 
-/* ---- 子 Agent 看板 ---- */
+/* ---- 子 Agent 名片墙 ----
+/* 宽容器下本面板只有 ~700px（1.55fr 列再减参数轨）、单列谱系下 ~1000px ——
+   固定 **2×2**：一行两张（340~500px/张）正好放得下职责整句，四张一眼读完；
+   auto-fit 在 1000px 会切出 3+1（第四张孤零零挂一行），比 2×2 难读得多。
+   只有容器真宽到 ≥1900（看板 ~1250px）才摊成一行四张。 */
 .team-agents {
-  display: grid; gap: 12px;
-  grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
+  display: grid; gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+@container main (min-width: 1900px) {
+  .team-agents { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }
 .team-agent {
   --agent-color: var(--primary);
-  position: relative; min-width: 0;
+  position: relative; min-width: 0; cursor: pointer;
   padding: 12px 14px 12px 17px;
   background: var(--input-bg); border: 1px solid var(--border);
   border-radius: 10px;
-  transition: border-color 0.15s, opacity 0.15s;
+  transition: border-color 0.15s, opacity 0.15s, transform 0.15s, box-shadow 0.15s;
 }
+/* 名片可点（打开大抽屉看这个角色的输出）：悬停给一点位移与亮描边 */
+.team-agent:hover { border-color: var(--agent-color); transform: translateY(-1px); }
+.team-agent:focus-visible { outline: 2px solid var(--agent-color); outline-offset: 2px; }
+/* 正在抽屉里展示的那张：亮环 + 一点氛围光，和右侧抽屉明确配对 */
+.team-agent.picked {
+  border-color: var(--agent-color);
+  box-shadow: 0 0 0 1px var(--agent-color), 0 12px 28px -18px var(--agent-color);
+}
+.team-agent.picked .team-agent-cta { color: var(--agent-color); }
 .team-agent::before {
   content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
   border-radius: 10px 0 0 10px;
@@ -1936,6 +2059,19 @@ details.adv .adv-body .field:first-child { padding-top: 10px; }
   font-size: 10.5px; color: var(--muted);
   background: var(--panel); border: 1px solid var(--border);
 }
+/* 状态文案紧贴角色名（阶段徽标在它右边靠 auto 推到行尾）：
+   读名片的第一眼就该知道「这个角色现在在干嘛」。 */
+.team-agent-state { flex: none; font-size: 11px; font-weight: 600; color: var(--muted); }
+.team-agent.working .team-agent-state { color: var(--agent-color); }
+.team-agent.done .team-agent-state { color: var(--success); }
+.team-agent.error .team-agent-state { color: var(--danger); }
+.team-agent.waiting .team-agent-state { color: var(--warn); }
+/* 名片底部的「看它的逐字输出」入口：名片可点的可视线索，别让人靠猜 */
+.team-agent-cta {
+  display: flex; align-items: center; gap: 2px; margin-top: 9px;
+  font-size: 10.5px; color: var(--muted); transition: color 0.15s;
+}
+.team-agent:hover .team-agent-cta { color: var(--agent-color); }
 .team-agent-duty {
   margin-top: 6px; font-size: 11px; color: var(--muted); line-height: 1.55;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
@@ -1975,18 +2111,137 @@ details.adv .adv-body .field:first-child { padding-top: 10px; }
   overflow: hidden; text-overflow: ellipsis;
 }
 
-/* 卡片内的逐字输出（形态与运行结果回放一致，深色底） */
-.team-live {
-  margin-top: 10px; border: 1px solid var(--border); border-radius: 8px;
-  background: var(--code-bg);
+/* ---- 运行监视：**一整块卡，三段竖排**（2026-10-15 第七轮，用户定稿）----
+   上=看板（谁在做什么）、中=中间段（时间线 / 工作项，互斥切换）、
+   下=人工介入条（常驻卡底）。
+   为什么合成一块：跑作业时最需要「一眼看到现场 + 随手插话」，三块独立面板各占一段
+   高度，视线要来回跳；合成一块后同屏，输入框永远贴这块卡的底边。
+   高度由左列（配置面板）经 grid 行 stretch 决定 —— 两块**等高**，见 desk.css §13。
+   第八轮（用户点名）：点角色名片看逐字输出**恢复浮层抽屉**（#team-drawer，
+   见下方「角色输出浮层抽屉」节）—— 就地切视图会让时间线消失，看输出时看不到现场。 */
+.team-cockpit { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+.team-cockpit .ck-head { flex: none; flex-wrap: wrap; gap: 8px; }
+.team-cockpit .sp-flex { flex: 1; }
+
+/* 中间段的两视图切换（互斥） */
+.ck-views {
+  display: inline-flex; gap: 4px; padding: 3px;
+  background: var(--input-bg); border: 1px solid var(--border); border-radius: 10px;
 }
-.team-live > summary {
-  cursor: pointer; padding: 7px 10px; font-size: 11px; color: var(--muted);
-  user-select: none; list-style-position: inside;
+.ck-vbtn {
+  appearance: none; cursor: pointer; font: 600 11.5px/1 inherit; font-family: inherit;
+  color: var(--text-dim); background: transparent; border: 0; border-radius: 7px; padding: 6px 11px;
 }
-.team-live[open] > summary { border-bottom: 1px solid var(--border); }
-.team-live .ai-stream { margin: 8px 9px 9px; }
-.team-live .ai-block pre { max-height: 150px; }
+.ck-vbtn:hover { color: var(--text); }
+.ck-vbtn.on { color: var(--primary); background: var(--panel-solid); }
+.ck-vnum { font-size: 10.5px; color: var(--muted); }
+.ck-vbtn.on .ck-vnum { color: var(--primary); }
+.ck-filter { flex: none; }
+
+/* ① 看板段：不参与内滚，四张名片一眼读完 */
+.ck-board { flex: none; padding: 12px 14px; border-bottom: 1px solid var(--border); }
+.ck-board .team-agents { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+@container main (min-width: 1700px) {
+  .ck-board .team-agents { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+
+/* ② 中间段：两个视图共用同一个位置，同时只有一个可见（.hidden 由模板控制）。
+   时间线必须**占满剩余高度**（第八轮用户点名）：全局 .log 封顶 420px，
+   在等高布局里 pre 不跟着 stretch，下方留出一大截空白 —— 这里按作用域解除封顶，
+   log-wrap 撑满、pre 撑满 log-wrap，与上下各留一拍内边距即可。 */
+.ck-mid { flex: 1; min-height: 280px; display: flex; flex-direction: column; min-width: 0; }
+.ck-view { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.ck-view.hidden { display: none; }
+.ck-log { padding: 12px 14px; }
+.ck-log .log-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.ck-log .log { flex: 1; min-height: 0; max-height: none; overflow: auto; }
+.ck-items { overflow-y: auto; scrollbar-width: thin; padding: 12px 14px; gap: 12px; }
+
+/* ③ 介入条：常驻卡底，滚时间线时它不跑掉 */
+.ck-intervene {
+  flex: none; border-top: 1px solid var(--border);
+  background: var(--code-bg); padding: 11px 14px 12px;
+}
+.ck-intervene-form { align-items: center; }
+.ck-hint-row { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 8px; font-size: 11px; }
+.ck-intervene .team-intervene-list { max-height: 148px; overflow-y: auto; scrollbar-width: thin; }
+/* 终端区占满抽屉剩余高度（.team-terms 是抽屉盒的 flex 子项） */
+.team-terms { flex: 1; display: flex; min-width: 0; min-height: 0; }
+.team-term {
+  flex: 1; min-width: 0; min-height: 0;
+  display: flex; flex-direction: column; padding: 12px 14px;
+}
+.team-term-bar {
+  flex: none; display: flex; align-items: center; gap: 7px;
+  margin-bottom: 9px; font-size: 11.5px; color: var(--text-dim);
+}
+.team-term-dot {
+  flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--agent-color);
+}
+.team-term-title { flex: none; font-weight: 700; color: var(--text); }
+.team-term-stage { flex: none; font-size: 10.5px; font-weight: 600; color: var(--agent-color); }
+.team-term-status { flex: none; font-size: 10.5px; color: var(--muted); }
+.team-term-now {
+  margin-left: auto; min-width: 0; font-size: 10.5px; color: var(--muted);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+/* 终端主体占满抽屉剩余高度 —— 本次改版的核心诉求（旧版封顶 150px） */
+.team-term .ai-stream {
+  flex: 1; min-height: 0; margin: 0; display: flex; flex-direction: column;
+}
+.team-term .ai-block { display: flex; flex-direction: column; min-height: 0; }
+/* ⚠️ 必须跟着 .ai-block.hidden 一起声明：上面那条 display:flex 与全局
+   `.ai-block.hidden{display:none}` 同权重且更靠后，不写这句就把 hidden 覆盖掉了 */
+.team-term .ai-block.hidden { display: none; }
+.team-term .ai-block.out { flex: 1; }
+.team-term .ai-block pre { max-height: none; }
+.team-term .ai-block.think pre { max-height: 150px; }
+.team-term .ai-block.out pre { flex: 1; min-height: 0; font-size: 12px; line-height: 1.7; }
+.team-term .ai-block pre.term-collapsed { display: none; }
+.team-think-toggle { cursor: pointer; user-select: none; }
+.team-think-toggle:hover { color: var(--text-dim); }
+.team-term-empty {
+  flex: 1; display: flex; align-items: center; justify-content: center;
+  text-align: center; font-size: 12px; line-height: 1.9; color: var(--muted);
+}
+
+/* ---- 角色输出浮层抽屉（#team-drawer，第八轮恢复）----
+   点看板名片打开，盖在整页之上（z-index 高于页签内容、低于弹窗类模态）；
+   右侧停靠、上下留边，关掉即回时间线 —— 看输出与看现场不再互斥。
+   Teleport 到 body：面板自身 overflow:hidden 会把 absolute 浮层裁掉。
+   hidden 契约：始终渲染，只切 .hidden。 */
+#team-drawer { position: fixed; inset: 0; z-index: 90; }
+#team-drawer .team-drawer-mask {
+  position: absolute; inset: 0;
+  background: color-mix(in srgb, var(--bg) 62%, transparent);
+  backdrop-filter: blur(2px);
+}
+#team-drawer .team-drawer-box {
+  position: absolute; top: 20px; right: 20px; bottom: 20px;
+  width: min(720px, calc(100vw - 40px));
+  display: flex; flex-direction: column; min-height: 0;
+  background: var(--panel-solid); border: 1px solid var(--border-strong);
+  border-radius: 14px; box-shadow: 0 24px 80px rgba(0, 0, 0, 0.42);
+  overflow: hidden;
+}
+#team-drawer .team-drawer-head {
+  flex: none; display: flex; align-items: center; gap: 8px;
+  padding: 12px 14px; border-bottom: 1px solid var(--border); font-size: 12.5px;
+}
+#team-drawer .sp-flex { flex: 1; }
+#team-drawer .team-dot {
+  flex: none; width: 8px; height: 8px; border-radius: 50%;
+}
+#team-drawer .team-terms { flex: 1; min-height: 0; padding: 0 14px 12px; }
+#team-drawer-close.el-button { color: var(--muted); }
+#team-drawer-close.el-button:hover { color: var(--text); }
+
+/* 窄屏（单列降级）：运行台不再并排，中间段给一个够读的最小高度；
+   看板四张名片改成一行两张（右列宽度 = 主列宽度，反而更宽，保持 2×2 即可）。 */
+@media (max-width: 1080px) {
+  .ck-mid { min-height: 360px; }
+  .ck-intervene .team-intervene-list { max-height: 220px; }
+}
 
 /* ---- 工作项 ---- */
 .team-plan { display: flex; flex-direction: column; gap: 8px; }
@@ -2244,6 +2499,29 @@ details.adv .adv-body .field:first-child { padding-top: 10px; }
   display: flex; flex-direction: column; min-height: 0;
 }
 #pane-chat { grid-template-rows: minmax(360px, 1fr); }
+
+/* ⭐ 问答激活时整条高度链转「定高」：页面不再被会话内容顶长，长对话在
+   #chat-stream 内部滚（吸底跟随在 ChatPane.vue 的 stick 逻辑）。
+   为什么必须从 #app 锁起：这条链每层轨道都是 1fr（= minmax(auto,1fr)），
+   **容器高度不定时 1fr 一律按内容尺寸算**——只在中间某层写 minmax(0,1fr)
+   拦不住（那只是把最小值归零，max=1fr 在不定高下仍取内容高，实测长会话
+   把 pane 撑到 6000px+）。可用空间必须连同最小值一起变定，所以源头是
+   #app 的 height。:has 锚定激活页签（params.css 已有先例），切走后 #app
+   恢复 min-height 链，其他页签照旧「内容顶长、整页滚」。
+   min-height 480px 兜底：窗口矮到 pane 的 360px 最小可用高度都装不下时
+   （360 + 顶栏/留白约 100px），与其把输入框裁没，不如放回整页滚。 */
+#app:has(#pane-chat.active) { height: 100dvh; min-height: 480px; }
+#app:has(#pane-chat.active) .layout { grid-template-rows: minmax(0, 1fr); }
+#tabs > .el-tabs__content:has(#pane-chat.active) {
+  grid-template-rows: minmax(0, 1fr);
+  /* flex-basis:auto + overflow:visible → 自动最小尺寸 = 内容高，flex-shrink
+     压不动（长内容从这儿漏出去把页面顶长）。min-height:0 显式接管最小值。 */
+  min-height: 0;
+}
+/* 链上每个 flex/grid item 的 min-height:auto 自动最小尺寸都是内容高
+   （overflow:visible），逐个显式归零，#app 的定高才传得下去 —— 实测漏掉
+   任何一层，长会话都会从那一层把页面顶长。 */
+#app:has(#pane-chat.active) :is(.layout, .col-main, #tabs) { min-height: 0; }
 .chat-grid {
   display: grid;
   /* 中栏必须是 minmax(0,1fr)：用 1fr 的话消息里的长代码块/表格会把 min-content
@@ -2731,10 +3009,8 @@ details.adv .adv-body .field:first-child { padding-top: 10px; }
 }
 .role-line { display: flex; align-items: center; gap: 8px; }
 
-/* 看板四张角色卡：原来的 auto-fit minmax(290px) 在 1130px 宽下只切 3 列，
-   四张卡排成 3+1。降到 200px 后 auto-fit 会切出 4 列，空轨道被折叠，
-   四张卡正好平分一行。 */
-.team-agents { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+/* （2026-10-14 方案二）原来这条 `auto-fit minmax(200px)` 的看板覆盖已随名片墙改版
+   退役：列数由上方名片墙那段统一管（默认 2×2，容器 ≥1900 摊一行四张）。 */
 
 /* 多栏谱系的总闸：问「主列有多宽」，不问「视口有多宽」。
  *
@@ -2745,16 +3021,9 @@ details.adv .adv-body .field:first-child { padding-top: 10px; }
  * 换算：1280 视口 → 主列 1184（<1240，单栏）；1600 视口 → 主列 ~1504（≥1240，双栏）。
  * 改版后 check_layout_ui 那两个采样点（1280 关 / 1600 开）仍然成立。 */
 @container main (min-width: 1240px) {
-  /* 长任务的 12 栏谱系：作业表单(摘要条所在)与看板通栏；
-     工作项 | 时间线、人工介入 | 历史作业 两两并排。
-     同排两块 top 相同，不影响 check_panel_fold / check_vue_team_ui 的「顺序递增」断言。 */
-  #pane-team.active { grid-template-columns: repeat(12, minmax(0, 1fr)); }
-  #team-run-panel, #team-board-panel { grid-column: span 12; }
-  #team-plan-panel       { grid-column: span 5; }
-  #team-timeline-panel   { grid-column: span 7; }
-
-  #team-intervene-panel  { grid-column: span 5; }
-  #team-history-panel    { grid-column: span 7; }
+  /* 长任务（#pane-team）的栅格完全交给 desk.css 第 13 节 —— 第七轮改版后是
+     「配置 | 运行监视」等高两块 + 通栏历史，这里不再重复定义（两处定义同一属性
+     会打架：`grid-column: span N` 会盖掉 grid-area 的列定位）。 */
 
   /* 扩展能力：技能 | MCP 两块本来是各自单列铺满、内容却只有一行，
      并排之后一眼看完，也顺带把「两块面板长得很像」的重复感压下去。 */

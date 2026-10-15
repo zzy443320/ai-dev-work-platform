@@ -38,7 +38,11 @@ def run():
         pg.goto(BASE, wait_until="domcontentloaded")
 
         # ---- 1. 更新日志：①②③ 分点各自一行 ----
-        pg.click("#changelog-btn") if pg.locator("#changelog-btn").count() else None
+        # goto 用的是 domcontentloaded，此时 Vue 可能还没挂载（顶栏按钮是组件渲染出来的）。
+        # 原来「有按钮就点、没有就算了」会静默跳过点击，接着等一个永远不会开的弹窗，
+        # 冷启动偶发 0/1 假红（同一份产物重跑就好）。这里先等按钮出现再点。
+        pg.wait_for_selector("#changelog-btn", timeout=15000)
+        pg.click("#changelog-btn")
         # 等「真的弹出来」要看对话框本体：#chmodal 只是常驻壳（承载稳定 id 与
         # hidden 语义），el-dialog 的 overlay 是 position:fixed，不撑开父盒，
         # 所以那个壳的 bounding box 恒为 0 高，Playwright 判它不可见。
@@ -203,10 +207,12 @@ def run():
               all(v and v["h"] >= 56 and v["txt"] > 8 for v in cards.values() if v), str(cards))
 
         # ---- 3d. 参数轨 sticky 偏移必须让开顶栏（top:12 < 顶栏 34 会永久切掉轨头）----
-        pg.evaluate("() => switchTab('team')")
+        # 长任务的轨 2026-10-14 起并入发起面板（static、不吸顶），吸顶契约由仍是
+        # 独立列的需求开发 / 接口联调轨背书 —— 挑一个不在浮层里的查。
+        pg.evaluate("() => switchTab('reqdev')")
         pg.wait_for_timeout(300)
         stick = pg.evaluate("""() => {
-          const rail = document.querySelector('.prail');
+          const rail = document.getElementById('param-rail-reqdev');
           const cs = getComputedStyle(rail);
           const tb = getComputedStyle(document.querySelector('.topbar'));
           return {top: cs.top, topbarH: tb.height,
@@ -239,7 +245,7 @@ def run():
         }""")
         check("统计说明条分段有间隔", ugap >= 4, f"margin-top={ugap}")
 
-        # ---- 5. 长任务作业：说明条分行 / 输入进抽屉 / 运行中干预留在主区 ----
+        # ---- 5. 长任务作业：说明条分行 / 输入进发起面板 / 运行中干预留在主区 ----
         pg.evaluate("() => switchTab('team')")
         pg.wait_for_timeout(300)
         tn = pg.evaluate("""() => {
@@ -247,12 +253,18 @@ def run():
           return note ? note.querySelectorAll('br').length : -1;
         }""")
         check("长任务说明条分行", tn >= 2, f"br={tn}")
+        # 参数形态第五轮（2026-10-14）：参数轨不再独立成列，**嵌进发起面板**
+        # 说明文字下方（inline 模式）—— 用户点名「说明下面那块空白放参数，
+        # 就不用独立一块参数区域了」。原三条意图平移：
+        #   「表单装得下全部输入」   → 轨里字段数 >= 5；
+        #   「参数是布局不是浮层」   → position 不是 fixed；
+        #   「开始作业就在参数旁边」 → 动作条仍在轨底。
         ts = pg.evaluate("""() => {
           const panel = document.getElementById('team-run-panel');
           const rail = document.getElementById('param-rail-team');
-          return {mainFields: panel.querySelectorAll('.pf, .field').length,
-                  railFields: rail.querySelectorAll('.pf').length,
-                  railPos: getComputedStyle(rail).position,
+          return {paramsInPanel: !!(panel && rail && panel.contains(rail)),
+                  railFields: rail ? rail.querySelectorAll('.pf').length : 0,
+                  railPos: rail ? getComputedStyle(rail).position : 'missing',
                   drawerGone: !document.getElementById('mod-drawer-team'),
                   // 干预按钮组留在主区（对着看板用），且空闲时整行隐藏
                   interveneInMain: !!panel.querySelector('#btn-team-pause'),
@@ -261,26 +273,40 @@ def run():
                   // 开始作业在参数轨的常驻动作条里
                   startInRail: !!rail.querySelector('#btn-team-run')};
         }""")
-        check("长任务：作业表单全在参数轨里，主区只剩过程与产物",
-              ts["mainFields"] == 0 and ts["railFields"] >= 5 and ts["drawerGone"], str(ts))
-        check("长任务：参数轨是布局的一列而不是浮层", ts["railPos"] != "fixed", str(ts))
+        check("长任务：作业参数并入发起面板（无独立参数列）",
+              ts["paramsInPanel"] and ts["railFields"] >= 5 and ts["drawerGone"], str(ts))
+        check("长任务：参数区不是浮层", ts["railPos"] != "fixed", str(ts))
         check("长任务：运行中干预留在主区、空闲时整行隐藏",
               ts["interveneInMain"] and ts["interveneHidden"], str(ts))
         check("长任务：「开始作业」在参数轨的常驻动作条里", ts["startInRail"], str(ts))
         # 布局塌陷回归锁：ParamLayout 曾把六面板包进一层 div，`#pane-team > section`
         # 的子代选择器失效 → 面板掉回一列（459px 窄条）、右边空出 559px。
-        # 现在它是多根 fragment，面板仍是页签 grid 的直接子节点，轨占最后一列。
+        # 参数并入面板后分两档锁：1440 视口（容器 <1240）单列、不再有「主列|参数轨」
+        # 两列；1920 视口（容器 ≥1240）desk.css 第 13 节「战场 | 控制塔」areas 双栏照常。
         tcols = pg.evaluate("""() => {
           const pane = document.getElementById('pane-team');
-          const board = document.getElementById('team-board-panel');
           const rail = document.getElementById('param-rail-team');
+          const panel = document.getElementById('team-run-panel');
+          return {cols: getComputedStyle(pane).gridTemplateColumns.split(' ').length,
+                  railInPanel: !!(panel && rail && panel.contains(rail))};
+        }""")
+        check("长任务：参数并入发起面板，页签双栏、不再有第三列参数轨",
+              tcols["cols"] == 2 and tcols["railInPanel"], str(tcols))
+        pg.set_viewport_size({"width": 1920, "height": 950})
+        pg.wait_for_timeout(400)
+        tcols2 = pg.evaluate("""() => {
+          const pane = document.getElementById('pane-team');
+          const board = document.getElementById('team-board-panel');
+          const ck = document.getElementById('team-cockpit-panel');
           return {cols: getComputedStyle(pane).gridTemplateColumns.split(' ').length,
                   boardW: Math.round(board.getBoundingClientRect().width),
-                  gapRight: Math.round(innerWidth - rail.getBoundingClientRect().right)};
+                  gapRight: Math.round(innerWidth - ck.getBoundingClientRect().right)};
         }""")
-        check("长任务六面板仍按页签 grid 多列排布（轨不打破子代选择器）",
-              tcols["cols"] >= 2 and tcols["boardW"] >= 400, str(tcols))
-        check("参数轨钉在最右列，右侧不留空洞", tcols["gapRight"] <= 60, str(tcols))
+        check("长任务：配置|运行监视等高两块（areas 双栏，运行台贴主列右缘）",
+              tcols2["cols"] == 2 and tcols2["boardW"] >= 400, str(tcols2))
+        check("参数并入后主列铺满，右侧不留空洞", tcols2["gapRight"] <= 60, str(tcols2))
+        pg.screenshot(path=str(OUT / "team-layout-wide.png"))
+        pg.set_viewport_size({"width": 1440, "height": 920})
         pg.screenshot(path=str(OUT / "team-layout.png"))
 
         pg.evaluate("() => switchTab('chat')")

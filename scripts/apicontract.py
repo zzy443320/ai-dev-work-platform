@@ -276,6 +276,33 @@ def _is_shape_noise(tok: str) -> bool:
                    "message", "msg", "code"}
 
 
+def any_shape_compat(changes: Iterable[Dict]) -> List[Dict]:
+    """抓"形状无关兼容"：把枚举候选字段改成写一个兼容任意结构的取値函数。
+
+    第二批真实工单的实测：模型被教会不许一次列 3 个响应字段后，改成
+    `function pickResourceField(value, key)` + `(value as Record<string, unknown>)[key]`,
+    同一个"上游爱返回什么形状我都接着"的行为换了件外衣就过关。这里认这两个签名：
+    同一文件的新增行里**同时**判 `typeof x === 'string'` 与 `typeof x === 'object'`，
+    或者用 cast 加动态键下标。都是"我不确定契约"的自白。
+    """
+    out: List[Dict] = []
+    for ch in changes or []:
+        added = [line[1:] for line in (ch.get("diff") or "").splitlines()
+                 if line.startswith("+") and not line.startswith("+++")]
+        blob = "\n".join(added)
+        both = bool(_TYPE_STRING_RE.search(blob)) and bool(_TYPE_OBJECT_RE.search(blob))
+        dyn = bool(_CAST_DYNAMIC_RE.search(blob))
+        if both or dyn:
+            why = []
+            if both:
+                why.append("同一处同时兼容 string 与 object 两种形状")
+            if dyn:
+                why.append("cast 成 Record<string, unknown> 后用动态键取值")
+            out.append({"file_path": ch.get("file_path"), "fields": why,
+                        "dyn_cast": dyn})
+    return out
+
+
 def needs_evidence(fields: Iterable[str]) -> List[str]:
     """需要证据支撑的响应字段名（去重、保序）。"""
     out: List[str] = []

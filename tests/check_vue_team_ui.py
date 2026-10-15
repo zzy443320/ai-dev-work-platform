@@ -39,7 +39,7 @@ sys.path.insert(0, str(ROOT))
 
 from playwright.sync_api import sync_playwright      # noqa: E402
 
-from ui_select import el_select_values               # noqa: E402
+from ui_select import el_select_values, pick_select      # noqa: E402
 
 OK, BAD = [], []
 
@@ -145,29 +145,37 @@ def run(base: str, *, errors: list) -> None:
         check("#pane-team 是 grid 布局",
               page.eval_on_selector("#pane-team", "el => getComputedStyle(el).display") == "grid")
 
-        # ── 2. 折叠 + 状态记忆 ──
+        # ── 2. 折叠口径（2026-10-15 第七轮定稿）──
+        # 配置与运行监视**不可收起**（它们是这一页的输入口与现场，收起只会让人
+        # 以为没地方填参数 / 看不到进度）；历史作业仍可折叠 + 记状态。
+        nofold = page.evaluate("""() => ({
+          run: !!document.querySelector('#team-run-panel .fold-btn'),
+          cockpit: !!document.querySelector('#team-cockpit-panel .fold-btn'),
+        })""")
+        check("配置 / 运行监视不可收起（没有折叠按钮）",
+              not nofold["run"] and not nofold["cockpit"], str(nofold))
         page.evaluate("() => localStorage.removeItem('panel-fold-state')")
         page.wait_for_timeout(150)
-        h_before = page.eval_on_selector("#team-board-panel", "el => el.offsetHeight")
-        page.click("#team-board-panel .fold-btn")
+        h_before = page.eval_on_selector("#team-history-panel", "el => el.offsetHeight")
+        page.click("#team-history-panel .fold-btn")
         page.wait_for_timeout(200)
-        collapsed = page.eval_on_selector("#team-board-panel",
+        collapsed = page.eval_on_selector("#team-history-panel",
                                           "el => el.classList.contains('collapsed')")
-        h_after = page.eval_on_selector("#team-board-panel", "el => el.offsetHeight")
-        check("折叠后带 collapsed 类且变矮",
+        h_after = page.eval_on_selector("#team-history-panel", "el => el.offsetHeight")
+        check("历史作业折叠后带 collapsed 类且变矮",
               collapsed and h_after < h_before, f"{h_before}->{h_after}")
         saved = page.evaluate("() => localStorage.getItem('panel-fold-state')")
         check("折叠状态写 panel-fold-state（与旧版同键）",
-              saved and '"team-board-panel":true' in saved.replace(" ", ""), str(saved))
+              saved and '"team-history-panel":true' in saved.replace(" ", ""), str(saved))
         page.reload(wait_until="networkidle")
         page.evaluate("() => switchTab('team')")
         page.wait_for_timeout(1200)
         check("刷新后折叠状态保持",
-              page.eval_on_selector("#team-board-panel", "el => el.classList.contains('collapsed')"))
-        page.click("#team-board-panel .fold-btn")
+              page.eval_on_selector("#team-history-panel", "el => el.classList.contains('collapsed')"))
+        page.click("#team-history-panel .fold-btn")
         page.wait_for_timeout(200)
         check("二次点击展开",
-              page.eval_on_selector("#team-board-panel", "el => !el.classList.contains('collapsed')"))
+              page.eval_on_selector("#team-history-panel", "el => !el.classList.contains('collapsed')"))
         page.evaluate("() => localStorage.removeItem('panel-fold-state')")
 
         # ── 3. 时间线空态：占位提示 + 未渲染内容容器 ──
@@ -245,6 +253,63 @@ def run(base: str, *, errors: list) -> None:
         # 跑完后放大按钮应可见
         check("跑完后放大按钮可见",
               page.eval_on_selector("#btn-team-expand", "el => !el.classList.contains('hidden')"))
+
+        # ── 5a+. 时间线「只看」筛选（2026-10-15 第八轮：必须真正过滤每一行）──
+        # 后端 log 事件不带 agent，但 plan / item_status / agent_status 都带 ——
+        # 用真实 mock 作业断言：选「编码工程师」后决策官的行必须消失。
+        n_all = len(page.query_selector_all("#team-log .live-line"))
+        pick_select(page, "#team-filter", "coder")
+        page.wait_for_timeout(300)
+        lines_c = page.query_selector_all("#team-log .live-line")
+        joined = " ".join(l.inner_text() for l in lines_c)
+        check("只看=编码工程师：时间线被过滤（行数变少且无决策官行）",
+              0 < len(lines_c) < n_all and "🧭" not in joined,
+              f"all={n_all} coder={len(lines_c)}")
+        pick_select(page, "#team-filter", "all")
+        page.wait_for_timeout(300)
+        check("切回「全部」恢复完整时间线",
+              len(page.query_selector_all("#team-log .live-line")) == n_all)
+        # 时间线占满中间段剩余高度（第八轮）：pre 解除全局 420px 封顶后
+        # 应撑满 .ck-mid，与介入条只隔一拍内边距。
+        fill = page.evaluate("""() => {
+          const log = document.getElementById('team-log');
+          const mid = document.querySelector('#team-cockpit-panel .ck-mid');
+          const itv = document.getElementById('team-intervene-panel');
+          const lr = log.getBoundingClientRect();
+          return {logH: Math.round(lr.height),
+                  midH: Math.round(mid.getBoundingClientRect().height),
+                  gap: Math.round(itv.getBoundingClientRect().top - lr.bottom)};
+        }""")
+        check("时间线占满中间段剩余高度（≥60% 且距介入条 ≤48px）",
+              fill["logH"] >= fill["midH"] * 0.6 and 0 <= fill["gap"] <= 48, str(fill))
+
+        # ── 5b. 角色输出浮层抽屉（2026-10-15 第八轮：点名片弹窗看输出）──
+        # 用户推翻第七轮的「就地切视图」：那会让时间线消失，看输出时看不到现场；
+        # 抽屉盖在整页之上，关掉即回。抽屉常驻 DOM 只切 .hidden（hidden 契约）。
+        check("#team-drawer 常驻 DOM 且初始隐藏",
+              page.query_selector("#team-drawer") is not None
+              and page.eval_on_selector("#team-drawer", "el => el.classList.contains('hidden')"))
+        page.click("#team-agents .team-agent")
+        page.wait_for_timeout(400)
+        check("点名片打开浮层抽屉",
+              page.eval_on_selector("#team-drawer", "el => !el.classList.contains('hidden')"))
+        th = page.eval_on_selector(
+            "#team-drawer .team-term:not(.hidden) .ai-block.out pre",
+            "el => Math.round(el.getBoundingClientRect().height)")
+        # 抽屉上下贴边（1000 视口 - 上下 20px - 头部 ≈ 900 可用），终端应吃到大半
+        check("抽屉里的终端吃到剩余高度（≥240px）", th >= 240, f"{th}px")
+        check("抽屉带「把指令发给它」与「关闭」",
+              page.eval_on_selector("#btn-team-target-agent", "el => !!el")
+              and page.eval_on_selector("#team-drawer-close", "el => !!el"))
+        page.click("#team-drawer-close")
+        page.wait_for_timeout(300)
+        back = page.evaluate("""() => {
+          const dr = document.getElementById('team-drawer');
+          const log = document.getElementById('team-log');
+          return {closed: dr.classList.contains('hidden'),
+                  logVisible: !!(log && log.offsetParent !== null)};
+        }""")
+        check("关闭抽屉回到时间线", back["closed"] and back["logVisible"], str(back))
 
         # ── 5b. 真实介入控件：作业已结束，「发送」置灰 ──
         check("结束后「开始作业」恢复可用",
