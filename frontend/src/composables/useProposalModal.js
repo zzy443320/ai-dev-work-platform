@@ -41,6 +41,10 @@ const reworkVerdict = ref('not_fixed')
 const reworkDetail = ref('')
 const reworkRerun = ref(true)
 const reworkBusy = ref(false)
+
+/** 采纳/拒绝/撤销等决策请求进行中：闸门复检要 1-2 分钟，期间必须
+    锁死四个决策按钮，否则第二次点击会撞上"文件已被写入"的假漂移。 */
+const decideBusy = ref(false)
 // ---- 后端交接说明（预览 + 显式回写 ONES 工单评论）----
 const handoffOpen = ref(false)
 const handoffText = ref('')
@@ -247,11 +251,18 @@ async function sendHandoff() {
 /** 决策后统一刷新提案列表 / 统计 / 健康行（旧版 decide 的收尾三连）。
     useDefect 是模块级单例，这里拿到的是 DefectPane 正在渲染的同一套状态。 */
 async function decide(id, action, payloadObj) {
+  if (decideBusy.value) return false // 上一笔决策还没回来，别再发
   const payload = payloadObj || {}
   const modalOpen = visible.value
   const prevNote = note.value
   let ok = false, msg = ''
 
+  decideBusy.value = true
+  if (action === 'approve') {
+    // 闸门复检（两次 tsc + 采纳后截图）要 2-4 分钟，点击瞬间就给预期，
+    // 否则用户会以为卡死再点一次（后端有 in-flight 防护，但别让人等得心慌）
+    toast('正在采纳：写入工作区并复跑验收闸门，约 2-4 分钟，请勿关闭页面…')
+  }
   try {
     const data = await api.proposalAction(id, action, payload)
     ok = data.ok !== false
@@ -274,6 +285,8 @@ async function decide(id, action, payloadObj) {
     ok = false
     msg = `请求失败: ${e}`
     toast(msg, 'err')
+  } finally {
+    decideBusy.value = false
   }
 
   const { loadProposals, loadStats } = useDefect()
@@ -296,7 +309,7 @@ async function decide(id, action, payloadObj) {
 export function useProposalModal() {
   return {
     visible, pinnedId, detail, sections, loading, loadError,
-    note, forceConfirm, pendingError,
+    note, forceConfirm, pendingError, decideBusy,
     actions, statusText, statusClass, gateHtml, preflight,
     openProposal, selectInline, unpin, loadDetail,
     close, decide, onApprove, onForceApprove, onReject, onUndo,

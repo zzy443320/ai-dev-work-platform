@@ -7,6 +7,7 @@ repository. Writing happens only through `approve()`, which is what the Web UI's
 采纳 button calls.
 """
 import json
+import threading
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -28,6 +29,12 @@ from .proposal import (
 )
 from .repo_paths import UnsafePath, resolve_in_repo
 from .verifier import ScreenshotVerifier
+
+# 采纳防并发（模块级：web 层每次请求都 _fresh_pipeline() 新建实例，
+# 实例属性挡不住跨请求的重复点击）。闸门复检要 100 秒级，期间第二次
+# 点击会撞上「文件已被第一笔写入」的假漂移，报"提案已失效"误导用户。
+_APPROVE_LOCK = threading.Lock()
+_APPROVE_INFLIGHT: set = set()
 
 
 def _emit(emit, evt: Dict) -> None:
@@ -1085,6 +1092,21 @@ class AIDefectFixerPipeline:
     # ------------------------------------------------------------ approval
     def approve(self, proposal_id: str, force_gate: bool = False,
                 note: str = "") -> Dict:
+        # in-flight 防护：同一提案的采纳在闸门复检完成前只允许一笔在跑。
+        # 状态守卫（STATUS_APPLIED）挡不住并发——两笔请求都能在读到 pending
+        # 后闯进来，第二笔会在"文件已被第一笔写入"的现场报假漂移。
+        with _APPROVE_LOCK:
+            if proposal_id in _APPROVE_INFLIGHT:
+                return {"ok": False, "retryable": True,
+                        "error": "该提案正在采纳中（闸门复检约 1-2 分钟），请等当前操作完成，勿重复点击"}
+            _APPROVE_INFLIGHT.add(proposal_id)
+        try:
+            return self._approve_inner(proposal_id, force_gate=force_gate, note=note)
+        finally:
+            _APPROVE_INFLIGHT.discard(proposal_id)
+
+    def _approve_inner(self, proposal_id: str, force_gate: bool = False,
+                       note: str = "") -> Dict:
         proposal = self.proposals.get(proposal_id)
         if not proposal:
             return {"ok": False, "error": f"提案不存在: {proposal_id}"}

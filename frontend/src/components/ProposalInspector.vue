@@ -23,7 +23,7 @@ const emit = defineEmits(['expand'])
 
 const {
   pinnedId, detail, sections, loading, loadError, note, forceConfirm, pendingError,
-  actions, statusClass, gateHtml, preflight,
+  actions, statusClass, gateHtml, preflight, decideBusy,
   onApprove, onForceApprove, onReject, onUndo, unpin,
 } = useProposalModal()
 
@@ -161,19 +161,20 @@ const shown = computed(() => SECS.filter((s) => (sections.value || {})[s.key]))
                     placeholder="决策备注（会写进提案 JSON 与知识卡片）" />
           <el-button id="is-btn-approve" type="primary" size="small"
                      :class="{ hidden: actions.approve.hidden }"
-                     :disabled="actions.approve.disabled" :title="actions.approve.title"
-                     @click="onApprove()">采纳</el-button>
+                     :disabled="decideBusy || actions.approve.disabled"
+                     :title="decideBusy ? '正在处理中…' : actions.approve.title"
+                     @click="onApprove()">{{ decideBusy ? '处理中…' : '采纳' }}</el-button>
           <el-button id="is-btn-force" type="danger" size="small"
                      :class="{ hidden: actions.force.hidden }"
-                     :disabled="actions.force.disabled" :title="actions.force.title"
+                     :disabled="decideBusy || actions.force.disabled" :title="actions.force.title"
                      @click="onForceApprove()">强制采纳</el-button>
           <el-button id="is-btn-reject" size="small"
                      :class="{ hidden: actions.reject.hidden }"
-                     :disabled="actions.reject.disabled" :title="actions.reject.title"
+                     :disabled="decideBusy || actions.reject.disabled" :title="actions.reject.title"
                      @click="onReject()">拒绝</el-button>
           <el-button id="is-btn-undo" size="small"
                      :class="{ hidden: actions.undo.hidden }"
-                     :disabled="actions.undo.disabled" :title="actions.undo.title"
+                     :disabled="decideBusy || actions.undo.disabled" :title="actions.undo.title"
                      @click="onUndo()">撤销采纳</el-button>
         </div>
       </footer>

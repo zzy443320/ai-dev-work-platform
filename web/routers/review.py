@@ -5,6 +5,7 @@
 """
 
 from typing import Optional
+import threading
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -14,6 +15,11 @@ from web.state import _applier, _astore, _body_json, _busy_gate, _fresh_pipeline
 from scripts.artifact import diff_against_repo  # noqa: E402
 
 router = APIRouter()
+
+# 产出物采纳防并发：与 pipeline.approve 的 in-flight 防护同一动机——
+# 闸门复检耗时 100 秒级，第二次点击会在"文件已被第一笔写入"的现场报假漂移。
+_ARTIFACT_APPLY_LOCK = threading.Lock()
+_ARTIFACT_APPLY_INFLIGHT: set = set()
 
 
 
@@ -70,7 +76,17 @@ async def approve_artifact(aid: str, req: Request):
     # 这是全服务最重的一次同步操作，必须在工作线程里做（proposals/approve 早已如此，
     # artifacts/approve 之前漏了，等于点一次「采纳」整个界面冻到闸门跑完）。
     applier = _applier()
-    result = await run_in_threadpool(applier.apply, artifact, force_gate=force)
+    with _ARTIFACT_APPLY_LOCK:
+        if aid in _ARTIFACT_APPLY_INFLIGHT:
+            return JSONResponse(
+                {"ok": False, "retryable": True,
+                 "error": "该产出物正在采纳中（闸门复检约 1-2 分钟），请等当前操作完成，勿重复点击"},
+                status_code=409)
+        _ARTIFACT_APPLY_INFLIGHT.add(aid)
+    try:
+        result = await run_in_threadpool(applier.apply, artifact, force_gate=force)
+    finally:
+        _ARTIFACT_APPLY_INFLIGHT.discard(aid)
     status = result.get("status", "failed")
     if result.get("ok"):
         from datetime import datetime as _dt

@@ -13,7 +13,7 @@ import { useProposalModal } from '../composables/useProposalModal.js'
 
 const {
   visible, detail, sections, note, forceConfirm, pendingError,
-  actions, statusText, statusClass, gateHtml, preflight,
+  actions, statusText, statusClass, gateHtml, preflight, decideBusy,
   REWORK_OPTIONS, reworkOpen, reworkVerdict, reworkDetail, reworkRerun, reworkBusy,
   openRework, cancelRework, submitRework,
   handoffOpen, handoffText, handoffBusy, previewHandoff, sendHandoff,
@@ -128,15 +128,20 @@ const canRework = computed(() => (detail.value || {}).status !== 'rejected')
       </div>
       <div class="pm-actions" id="pm-actions">
         <el-button id="btn-approve" type="primary" :class="{ hidden: actions.approve.hidden }"
-                   :disabled="actions.approve.disabled" :title="actions.approve.title" @click="onApprove()">采纳</el-button>
+                   :disabled="decideBusy || actions.approve.disabled"
+                   :title="decideBusy ? '正在处理中…' : actions.approve.title"
+                   @click="onApprove()">{{ decideBusy ? '处理中…' : '采纳' }}</el-button>
         <el-button id="btn-force" type="danger" :class="{ hidden: actions.force.hidden }"
-                   :disabled="actions.force.disabled" :title="actions.force.title" @click="onForceApprove()">强制采纳</el-button>
+                   :disabled="decideBusy || actions.force.disabled" :title="actions.force.title"
+                   @click="onForceApprove()">强制采纳</el-button>
         <el-button id="btn-reject" :class="{ hidden: actions.reject.hidden }"
-                   :disabled="actions.reject.disabled" :title="actions.reject.title" @click="onReject()">拒绝</el-button>
+                   :disabled="decideBusy || actions.reject.disabled" :title="actions.reject.title"
+                   @click="onReject()">拒绝</el-button>
         <el-button id="btn-undo" :class="{ hidden: actions.undo.hidden }"
-                   :disabled="actions.undo.disabled" :title="actions.undo.title" @click="onUndo()">撤销采纳</el-button>
+                   :disabled="decideBusy || actions.undo.disabled" :title="actions.undo.title"
+                   @click="onUndo()">撤销采纳</el-button>
         <el-button id="btn-rework" type="warning" plain :class="{ hidden: !canRework }"
-                   :disabled="reworkBusy"
+                   :disabled="decideBusy || reworkBusy"
                    title="自测发现这条缺陷没修好：撤销采纳 + 记录判据 + 重跑"
                    @click="openRework()">没修好，重修</el-button>
         <el-button @click="close()">关闭</el-button>
