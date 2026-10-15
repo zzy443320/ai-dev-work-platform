@@ -193,7 +193,7 @@ def run(base: str, dirs, *, errors: list) -> None:
         # 三列主舞台（塔台|主舞台|审判台）下 top 递增不再成立 —— 意图不变：
         # DOM 源顺序必须仍是 运行 → 提案 → 统计 → 知识库（折叠记忆、
         # 无障碍树与 1440 两列降级布局都依赖它），改用 compareDocumentPosition 断言。
-        order = ["run-panel", "proposal-panel", "stats-panel", "kb-panel"]
+        order = ["proposal-panel", "stats-panel", "kb-panel"]  # run-panel 已并入 hero
         tops = page.evaluate("""ids => ids.map(id => {
           const el = document.getElementById(id);
           return el ? el.getBoundingClientRect().top : null;
@@ -221,10 +221,10 @@ def run(base: str, dirs, *, errors: list) -> None:
               gaps["rowGap"] >= 12 and gaps["colGap"] >= 12, str(gaps))
         side = page.evaluate("""() => {
           const a = document.querySelector('#proposal-panel').getBoundingClientRect();
-          const b = document.querySelector('#inspector-panel').getBoundingClientRect();
+          const b = document.querySelector('#defect-hero').getBoundingClientRect();
           return { gap: Math.round(b.left - a.right), sameRow: Math.abs(a.top - b.top) <= 4 };
         }""")
-        check("队列与检视器同行并排、中间留正间隙",
+        check("队列与驾驶舱同行并排、中间留正间隙",
               side["sameRow"] and side["gap"] >= 12, str(side))
         check("#pane-defect 是 grid 布局",
               page.eval_on_selector("#pane-defect", "el => getComputedStyle(el).display") == "grid")

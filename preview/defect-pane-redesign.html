@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>缺陷处理页布局改版方案 · 交互演示</title>
+<style>
+:root{--bg:#0f1218;--panel:#15181e;--panel2:#1b1f27;--line:#2a2f3a;--line2:#232936;
+--txt:#e6e9ef;--txt2:#9aa3b2;--txt3:#6b7382;--acc:#2fbf8f;--acc-dim:#123a2b;
+--blue:#7fc7e8;--blue-dim:#23303c;--amber:#e8b45a;--amber-dim:#3a2f12;--red:#e05c5c}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--txt);
+font:13px/1.6 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif;padding:22px 26px 60px}
+h1{font-size:16px;font-weight:500;margin:0 0 4px}
+.sub{font-size:12px;color:var(--txt2);margin:0 0 16px}
+.bar{display:flex;gap:8px;align-items:center;margin-bottom:14px}
+.btn{background:transparent;border:1px solid var(--line);color:var(--txt);border-radius:7px;
+padding:5px 13px;font-size:12px;cursor:pointer;font-family:inherit}
+.btn:hover{border-color:#3a4150}
+.btn.on{background:var(--acc);border-color:var(--acc);color:#06281c;font-weight:500}
+.btn.pri{background:var(--acc);border-color:var(--acc);color:#06281c;font-weight:500;padding:6px 18px;font-size:12.5px}
+.btn.dang{background:var(--red);border-color:var(--red);color:#2a0d0d;font-weight:500}
+.leg{font-size:11.5px;color:var(--txt3);margin-left:6px}
+.grid{display:grid;gap:14px;align-items:start}
+.g3{grid-template-columns:290px minmax(0,1fr) 300px}
+.g2{grid-template-columns:290px minmax(0,1fr)}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px}
+.panel.wide{padding:14px 16px}
+.ph{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+.ph b{font-size:13px;font-weight:500}
+.badge{font-size:10.5px;border-radius:8px;padding:1px 7px;background:var(--blue-dim);color:var(--blue)}
+.badge.g{background:var(--acc-dim);color:#5dd6a2}
+.badge.a{background:var(--amber-dim);color:var(--amber)}
+.card{border:1px solid var(--line);border-radius:8px;padding:9px 10px;margin-bottom:8px;cursor:pointer}
+.card:hover{border-color:#3a5f8a;background:#16202b}
+.card.sel{border-color:#3a5f8a;background:#16202b}
+.ct{font-size:12px;line-height:1.5;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.cm{font-size:10.5px;color:var(--txt3);margin-top:3px}
+.chips{display:flex;gap:5px;margin-bottom:4px;flex-wrap:wrap}
+.hero{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+.hrow{display:flex;align-items:center;gap:10px}
+.ic{width:22px;height:22px;border-radius:6px;background:var(--blue-dim);display:flex;
+align-items:center;justify-content:center;font-size:12px;flex:none}
+.ht{font-size:14px;font-weight:500}
+.dot{width:6px;height:6px;border-radius:50%;background:var(--acc);display:inline-block;margin-right:4px}
+.split{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,6fr);gap:16px;margin-top:13px}
+.box{border:1px solid var(--line2);border-radius:8px;padding:12px}
+.mono{font-family:ui-monospace,Consolas,monospace}
+.bl{font-size:12px;font-weight:500;color:#c9cfda;margin-bottom:8px}
+.bl span{color:var(--txt2);font-weight:400}
+.frow{display:grid;grid-template-columns:74px minmax(0,1fr);gap:7px;align-items:center}
+.frow label{font-size:11.5px;color:var(--txt2)}
+input,select{background:#0f1218;border:1px solid var(--line);border-radius:6px;color:#c9cfda;
+font-size:11.5px;padding:4px 8px;width:100%;font-family:inherit}
+.cbs{display:flex;gap:14px;font-size:11px;color:var(--txt2);margin-top:2px}
+.ops{border-top:1px solid var(--line2);padding-top:9px;display:flex;gap:8px;align-items:center;margin-top:2px}
+.note{font-size:11.5px;color:#c9cfda;line-height:1.55}
+.num{width:16px;height:16px;border-radius:50%;background:var(--amber);color:#1a1508;font-size:11px;
+font-weight:500;display:flex;align-items:center;justify-content:center;flex:none}
+.tag{display:flex;align-items:flex-start;gap:7px;margin-top:11px}
+.foot{display:flex;gap:14px;font-size:11px;color:var(--txt3);margin-top:9px;padding-top:9px;
+border-top:1px solid var(--line2);flex-wrap:wrap}
+.stage{display:flex;flex-direction:column;gap:6px;font-size:11.5px}
+.st{display:flex;gap:7px;align-items:center;color:var(--txt3)}
+.st.on{color:var(--acc)}
+.st.done{color:#c9cfda}
+.st i{width:14px;height:14px;border-radius:50%;border:1px solid var(--line);display:inline-block;font-style:normal;
+font-size:9px;line-height:12px;text-align:center;flex:none}
+.st.on i{border-color:var(--acc);color:var(--acc)}
+.st.done i{border-color:var(--acc);background:var(--acc-dim);color:#5dd6a2}
+.fold{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 14px;
+display:flex;align-items:center;gap:10px;margin-top:12px}
+.fold b{font-size:12px;font-weight:500}
+.console{background:#0d1015;border:1px solid var(--line);border-radius:8px;padding:9px 11px;margin-top:9px;
+font-family:ui-monospace,Consolas,monospace;font-size:11px;color:#8fb8a6;max-height:140px;overflow:auto}
+.console div{white-space:pre-wrap}
+.insp{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:0;overflow:hidden}
+.insp-h{padding:10px 12px;border-bottom:1px solid var(--line);font-size:12.5px;font-weight:500}
+.insp-b{padding:12px;font-size:11.5px;color:var(--txt2)}
+.empty{color:var(--txt3);font-size:11.5px;padding:16px 12px;text-align:center}
+.ov{position:fixed;inset:0;background:rgba(6,8,12,.72);display:none;align-items:center;justify-content:center;z-index:40}
+.ov.on{display:flex}
+.modal{background:var(--panel);border:1px solid var(--line);border-radius:12px;width:min(880px,92vw);
+max-height:86vh;display:flex;flex-direction:column}
+.mh{padding:13px 16px;border-bottom:1px solid var(--line);display:flex;gap:10px;align-items:flex-start}
+.mh h3{margin:0;font-size:13.5px;font-weight:500;flex:1;line-height:1.5}
+.mb{padding:14px 16px;overflow:auto;font-size:12px}
+.sec{margin-bottom:14px}
+.sec>h4{margin:0 0 7px;font-size:12px;font-weight:500;color:#c9cfda}
+pre{margin:0;background:#0d1015;border:1px solid var(--line);border-radius:8px;padding:10px;
+font-family:ui-monospace,Consolas,monospace;font-size:11px;overflow:auto;line-height:1.65}
+pre .add{color:#5dd6a2}pre .del{color:#e08a8a}pre .hd{color:#6b7382}
+.mf{padding:11px 16px;border-top:1px solid var(--line);display:flex;gap:8px;align-items:center}
+.mf input{flex:1;max-width:300px}
+.tip{font-size:11px;color:var(--txt3);margin-left:auto}
+.rowsel{display:flex;gap:6px}
+</style>
+</head>
+<body>
+<h1>缺陷处理页布局改版方案 · 交互演示</h1>
+<p class="sub">点卡片、填参数、点运行都能真操作。上方切换「改前 / 改后」对比两种布局。</p>
+
+<div class="bar">
+  <button class="btn" id="m-before">改前（现状）</button>
+  <button class="btn on" id="m-after">改后（方案）</button>
+  <span class="leg" id="leg">改后：点卡片直接开弹窗；参数与运行按钮同处一块；「运行流水线」面板已并入顶部驾驶舱</span>
+</div>
+
+<div class="grid g2" id="layout"></div>
+
+<div class="ov" id="ov"><div class="modal">
+  <div class="mh"><h3 id="mt"></h3><button class="btn" onclick="closeModal()">关闭</button></div>
+  <div class="mb" id="mb"></div>
+  <div class="mf">
+    <button class="btn pri" onclick="fake('已写入工作区（1 个文件，未 commit）')">采纳</button>
+    <button class="btn" onclick="fake('已拒绝该提案，未改动仓库')">拒绝</button>
+    <button class="btn" onclick="fake('已标记返工，旧补丁将从工作区还原')">没修好，重修</button>
+    <input placeholder="决策备注（会写进提案 JSON 与知识卡片）">
+    <span class="tip">弹窗内可看 diff / 采纳 / 拒绝 / 返工，与右侧检视器能力完全一致</span>
+  </div>
+</div></div>
+
+<script>
+const CARDS=[
+ {t:'【云枢 Agent 中显示词英文与词典自定义名表述不一致】',s:'accepted',f:'base-config.vue',m:'10 分钟前',b:'已采纳',extra:'闸门真跑'},
+ {t:'【云枢 Agent 中显示词英文与词典自定义名表述不一致】',s:'pending',f:'3 个补丁块',m:'刚刚',b:'待审批',extra:'沙箱真跑'},
+ {t:'【AI 平台角色设定文案错误，应显示提示词设定】',s:'rejected',f:'ai-platform.zh-CN.ts',m:'1 小时前',b:'已拒绝',extra:'人工返工'},
+ {t:'【自定义 Agent 详情页角色设定项文案不正确】',s:'pending',f:'1 个补丁块',m:'2 小时前',b:'待审批',extra:'沙箱真跑'}
+];
+const DIFF='<pre><span class="hd">--- a/packages/cloudpivot-ai/ai-platform/components/ai-agent/ai-agent-detail/base-config.vue</span>\n<span class="hd">+++ b/packages/cloudpivot-ai/ai-platform/components/ai-agent/ai-agent-detail/base-config.vue</span>\n<span class="hd">@@ -74,11 +74,12 @@</span>\n       groups: [\n         {\n           label:\n<span class="del">-            this.agentData.executionMode === AgentExecutionMode.REASON</span>\n<span class="del">-              ? this.$t(\'languages.aiPlatform.roleSetting\').toString()</span>\n<span class="del">-              : this.$t(</span>\n<span class="del">                   \'languages.aiPlatform.skillExecutionInstruction\',</span>\n<span class="del">-                ).toString(),</span>\n<span class="add">+            this.agentData.executionMode ===</span>\n<span class="add">+            AgentExecutionMode.EXECUTE_SINGLE_SKILL</span>\n<span class="add">+              ? this.$t(</span>\n<span class="add">+                  \'languages.aiPlatform.skillExecutionInstruction\',</span>\n<span class="add">+                ).toString()</span>\n<span class="add">+              : this.$t(\'languages.aiPlatform.roleSetting\').toString(),</span>\n           value: \'role\',\n           keys: [\'role\'],\n         },\n</pre>';
+
+function queue(after){
+  return '<div class="panel"><div class="ph"><b>待审批提案</b><span class="badge">15 篇/专家</span>'+
+   '<span style="margin-left:auto;font-size:11px;color:var(--txt2)">筛选 ▾</span></div>'+
+   CARDS.map((c,i)=>'<div class="card" data-i="'+i+'"><div class="chips">'+
+     '<span class="badge '+(c.s==='accepted'?'g':c.s==='pending'?'a':'')+'">'+c.b+'</span>'+
+     '<span class="badge">'+c.extra+'</span></div>'+
+     '<div class="ct">'+c.t+'</div><div class="cm">'+c.f+' · '+c.m+'</div></div>').join('')+
+   '<div class="tag"><span class="num">1</span><span class="note">改后：点任意卡片直接打开提案弹窗（看 diff、采纳、拒绝、返工都在弹窗里），右侧检视器整列删除</span></div></div>';
+}
+
+function heroBox(after){
+  const ring='<svg width="96" height="96" viewBox="0 0 96 96"><circle cx="48" cy="48" r="38" fill="none" stroke="#232936" stroke-width="9"/>'+
+   '<circle id="arc" cx="48" cy="48" r="38" fill="none" stroke="#2fbf8f" stroke-width="9" stroke-dasharray="0 239" stroke-linecap="round" transform="rotate(-90 48 48)"/>'+
+   '<text id="pct" x="48" y="52" text-anchor="middle" fill="#e6e9ef" font-size="16" font-weight="500">—</text></svg>';
+  const stages=[['拉取','拉取 ONES 工单'],['定位','扫全仓库 + 关键文件'],['生成提案','SEARCH/REPLACE 补丁'],['闸门','沙箱真跑验收'],['完成','等你裁决']]
+   .map((s,i)=>'<div class="st" data-s="'+i+'"><i>'+(i+1)+'</i>'+s[0]+'<span style="color:var(--txt3);margin-left:4px">'+s[1]+'</span></div>').join('');
+  const params='<div class="box"><div class="bl">启动参数'+(after?' <span>· 从下方「运行流水线」面板上提</span>':'')+'</div>'+
+   '<div class="frow"><label>拉取条数</label><select id="f-limit"><option>全部（不限制）</option><option>近 20 条</option></select></div>'+
+   '<div class="frow"><label>参考进度</label><input id="f-days" value="4"></div>'+
+   '<div class="frow"><label>范围关键词</label><input id="f-kw" value="工单 UUID / 编号 / 标题匹配"></div>'+
+   '<div class="cbs"><span>☑ 只看我负责</span><span>☐ 跳过页面复验</span></div>'+
+   (after?'<div class="ops"><button class="btn pri" id="run">▶ 运行</button>'+
+     '<button class="btn" id="dry">▷ 试运行</button><span class="num" style="margin-left:2px">2</span>'+
+     '<span class="note">填完参数，视线下移就是运行</span></div>':'')+'</div>';
+
+  return '<div class="hero"><div class="hrow"><span class="ic">◉</span>'+
+   '<span class="ht" id="target">待运行 · 本轮目标会显示在这里</span>'+
+   '<span class="badge"><span class="dot"></span>待命</span>'+
+   '<span class="mono" id="timer" style="margin-left:auto;font-size:15px;color:var(--txt2)">00:00</span>'+
+   (after?'<button class="btn" style="margin-left:8px">↻ 刷新</button>'
+        :'<button class="btn pri" id="run" style="margin-left:8px">▶ 运行</button><button class="btn" id="dry">▷ 试运行</button><button class="btn">↻</button>')+
+   '</div>'+
+   '<div class="split"><div class="box" style="display:flex;gap:14px;align-items:center">'+ring+
+     '<div style="display:flex;flex-direction:column;gap:10px">'+
+     '<div><div class="mono" style="font-size:20px;font-weight:500" id="dn">0<span style="font-size:13px;color:var(--txt2)">/5</span></div><div style="font-size:11px;color:var(--txt2)">阶段完成</div></div>'+
+     '<div><div class="mono" style="font-size:20px;font-weight:500">15</div><div style="font-size:11px;color:var(--txt2)">待审提案</div></div>'+
+     '<div class="stage">'+stages+'</div></div></div>'+params+'</div>'+
+   '<div class="tag"><span class="num">3</span><span class="note">原「运行流水线」折叠面板整体并入本卡：试运行 = 拉取 + 定位（不生成提案、不写文件）；运行 = 完整流水线产出提案，不改动目标仓库，人工采纳才写工作区（不 commit、不 push）</span></div>'+
+   '<div class="foot"><span>闸门 · 正常</span><span>复现用例 · 沙箱先跑红再修绿</span><span>采纳才写工作区 · 不 commit</span></div>'+
+   (after?'<div class="fold" style="margin-top:12px;background:transparent;border:0;padding:0">'+
+     '<b>▶ 运行控制台</b><span style="font-size:11px;color:var(--txt2)">实时阶段进展与大模型输出 · 运行时自动展开 · ⌃` 收起</span>'+
+     '<span class="num" style="margin-left:2px">4</span>'+
+     '<span class="note">再往下就是输出：看着参数点「运行」，日志就在同一张卡里滚，不用跨面板找</span></div>'+
+     '<div class="console" id="log" style="display:none"></div>':'')+
+   '</div>';
+}
+
+function inspector(){
+  return '<div class="insp" id="insp"><div class="insp-h">提案检视器</div>'+
+   '<div class="insp-b" id="insp-b"><div class="empty">从左侧队列一键钉图签<br>（未选中标时整列是空态）</div></div></div>';
+}
+function afterView(){
+  return queue(true)+'<div>'+heroBox(true)+
+   '<div class="fold"><b>▶ 复现用例 · 分类统计 · 知识库</b><span style="font-size:11px;color:var(--txt2)">保持在驾驶舱之外的独立模块</span></div></div>';
+}
+function beforeView(){
+  return queue(false)+'<div>'+heroBox(false)+
+   '<div class="panel wide" style="margin-top:12px"><div class="ph"><b>运行流水线</b>'+
+   '<span style="margin-left:auto;font-size:11px;color:var(--txt2)">折叠 / 展开 ▾</span></div>'+
+   '<div class="frow"><label>拉取条数</label><select><option>全部（不限制）</option></select></div>'+
+   '<div class="frow" style="margin-top:7px"><label>参考进度</label><input value="4"></div>'+
+   '<div class="frow" style="margin-top:7px"><label>范围关键词</label><input value="工单 UUID / 编号 / 标题匹配"></div>'+
+   '<div class="tag"><span class="num">!</span><span class="note">参数在这里，运行按钮在页面最顶上 —— 填完参数要往上找按钮；折叠起来时更找不到</span></div></div>'+
+   '<div class="fold"><b>▶ 运行控制台</b><span style="font-size:11px;color:var(--txt2)">实时阶段进展与大模型输出</span>'+
+   '<span class="num">!</span><span class="note">与驾驶舱隔着一整个参数面板 —— 点完运行要往下滚才看得到日志</span></div>'+
+   '<div class="console" id="log" style="display:none"></div>'+
+   '<div class="fold"><b>▶ 复现用例 · 分类统计 · 知识库</b></div></div>'+inspector();
+}
+
+function render(mode){
+  const L=document.getElementById('layout');
+  L.className='grid '+(mode==='after'?'g2':'g3');
+  L.innerHTML=mode==='after'?afterView():beforeView();
+  document.getElementById('m-after').classList.toggle('on',mode==='after');
+  document.getElementById('m-before').classList.toggle('on',mode==='before');
+  document.getElementById('leg').textContent=mode==='after'
+    ?'改后：点卡片直接开弹窗；参数 + 运行按钮 + 运行控制台全部并入顶部驾驶舱一张卡'
+    :'改前：点卡片钉到右侧检视器；参数在下面、运行按钮在最顶上、控制台又隔一个面板';
+  L.querySelectorAll('.card').forEach(el=>el.onclick=()=>{
+    const c=CARDS[+el.dataset.i];
+    L.querySelectorAll('.card').forEach(x=>x.classList.remove('sel'));
+    el.classList.add('sel');
+    if(mode==='after') openModal(c);
+    else{const b=document.getElementById('insp-b');
+      b.innerHTML='<div style="color:#c9cfda;font-size:12px;line-height:1.6">'+c.t+'</div>'+
+        '<div style="margin-top:6px;color:var(--txt3)">'+c.f+' · '+c.m+'</div>'+
+        '<div class="tag"><span class="num">!</span><span class="note">这里只显示摘要。要看 diff 或采纳，还得再点一次「放大」进弹窗 —— 两步</span></div>';}
+  });
+  const r=document.getElementById('run'),d=document.getElementById('dry');
+  if(r)r.onclick=()=>run(false); if(d)d.onclick=()=>run(true);
+}
+function openModal(c){
+  document.getElementById('mt').textContent=c.t;
+  document.getElementById('mb').innerHTML=
+   '<div class="sec"><h4>归因</h4><div style="color:var(--txt2)">自定义 Agent 走了三元判定的 else 分支，取了 skillExecutionInstruction（技能执行指令）；应只在 EXECUTE_SINGLE_SKILL 时取它，其余取 roleSetting（角色设定）。改动点在引用方取的 key，不在语言包的值。</div></div>'+
+   '<div class="sec"><h4>补丁 · base-config.vue（1 块，仅显示改动上下文）</h4>'+DIFF+'</div>'+
+   '<div class="sec"><h4>验收闸门</h4><div style="color:var(--txt2)">沙箱真跑：typecheck packages/admin 34s ✓ · typecheck packages/portal 40.9s ✓ · 结论 checks_pass</div></div>';
+  document.getElementById('ov').classList.add('on');
+}
+function closeModal(){document.getElementById('ov').classList.remove('on')}
+document.getElementById('ov').onclick=e=>{if(e.target.id==='ov')closeModal()};
+function fake(m){alert(m)}
+
+let timer=null,t=0,dry=false;
+function run(isDry){
+  dry=isDry;
+  if(timer){clearInterval(timer);timer=null}
+  t=0;
+  const log=document.getElementById('log');log.style.display='block';log.innerHTML='';
+  const lines=['[拉取] ONES GraphQL 全团队扫描 · 命中 15 条工单','[定位] 关键词稀有度闸门 + 中文短语内容命中 · ai-platform.zh-CN.ts:442',
+   '[定位] 词条二级跳转 · base-config.vue:78（引用方取的 key）','[取证] 修复前截图：localhost 不可达，跳过（没有真实验证，请勿视为通过）',
+   '[修复] 沙箱第 5 轮 unbuilt → 第 6 轮 tsc 转绿','[闸门] typecheck admin ✓ / portal ✓','[提案] 已落盘 pending，等你裁决'];
+  if(dry)lines.splice(3);
+  const steps=lines.length;
+  let i=0;
+  timer=setInterval(()=>{
+    if(i<lines.length){
+      log.innerHTML+='<div>'+lines[i]+'</div>';log.scrollTop=1e6;
+      document.querySelectorAll('.st').forEach((el,k)=>{el.className='st '+(k<i?'done':k===i?'on':'')});
+      i++;
+      const p=Math.round(i/steps*100);
+      document.getElementById('arc').setAttribute('stroke-dasharray',(2.39*p)+' 239');
+      document.getElementById('pct').textContent=p+'%';
+      document.getElementById('dn').innerHTML=Math.min(i,steps)+(dry?'<span style="font-size:13px;color:var(--txt2)">/2</span>':'<span style="font-size:13px;color:var(--txt2)">/5</span>');
+    }
+    t++;const m=String(Math.floor(t/60)).padStart(2,'0'),s=String(t%60).padStart(2,'0');
+    document.getElementById('timer').textContent=m+':'+s;
+    if(i>=lines.length&&t%3===0){
+      clearInterval(timer);timer=null;
+      log.innerHTML+='<div style="color:#5dd6a2">[完成] '+(dry?'试运行结束：只验证连通性与定位，未生成提案':'提案已生成，可在左侧队列点开卡片审阅')+'</div>';
+      document.getElementById('target').textContent='已完成 · 【云枢 Agent 中显示词英文与词典自定义名表述不一致】';
+    }
+  },900);
+}
+document.getElementById('m-after').onclick=()=>{if(timer){clearInterval(timer);timer=null}render('after')};
+document.getElementById('m-before').onclick=()=>{if(timer){clearInterval(timer);timer=null}render('before')};
+render('after');
+</script>
+</body>
+</html>

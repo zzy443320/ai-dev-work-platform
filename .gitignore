@@ -58,3 +58,14 @@ Thumbs.db
 
 # 用例运行期的改写副本（check_vue_all 的 LEGACY 组），不是源码
 /.scratch/
+
+# ── 本机一次性的设计稿 / 方案截图（体积大，且只是走查时的中间产物）──
+# design_concepts/ 是界面候选方案的整屏截图，mockups/ 是候选 HTML，
+# 两者都随轮次废弃，不随发布版走。
+/design_concepts/
+/mockups/
+# 同理：一次性的「截图机 / 演示服务」脚本（跑在临时实例上，输出进 screenshots/）
+/tests/cfg_layout_*.py
+/tests/cfg_cockpit_shots.py
+/tests/team_*.py
+/tests/serve_demo_config.py

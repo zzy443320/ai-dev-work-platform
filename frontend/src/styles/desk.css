@@ -308,25 +308,11 @@ body { font-size: 13px; letter-spacing: -0.003em; }
 /* ===========================================================================
    9. 缺陷修复工作台：队列（master）+ 检视器（detail）+ 控制台（tier 2）
    =========================================================================== */
-/* #pane-defect 仍是 grid（用例断言 display:grid），只是从单列变成「队列 | 检视器」两列。
-   通栏的那几块显式跨列，其余按内容自然流。 */
-#pane-defect.active { grid-template-columns: minmax(340px, 400px) minmax(0, 1fr); }
-#pane-defect > #run-panel,
-#pane-defect > #stats-panel,
-#pane-defect > #kb-panel,
-#pane-defect > .defect-hero,
-#pane-defect > [id^="artifact-panel"] { grid-column: 1 / -1; }
-#pane-defect > #proposal-panel { grid-column: 1; min-width: 0; }
-#pane-defect > #inspector-panel { grid-column: 2; min-width: 0; align-self: start; }
-/* 主列不够宽就退回单列。阈值 900 = 队列 340 + 间距 18 + 检视器还能看 diff 的 542。
-   再窄下去两列各 <500px，补丁整行换行，比一列到底更难读。
-   ⚠️ 用容器查询而不是视口：参数抽屉打开时 .col-main 有 400px 右内边距，
-   按视口判会在「1500 屏 + 抽屉开着」时误判成宽屏（实测主列只剩 942px）。 */
-@container main (max-width: 900px) {
-  #pane-defect.active { grid-template-columns: minmax(0, 1fr); }
-  #pane-defect > #proposal-panel,
-  #pane-defect > #inspector-panel { grid-column: 1; }
-}
+/* #pane-defect 仍是 grid（用例断言 display:grid）。默认单列流式：驾驶舱 → 队列 →
+   复现用例 → 裁决 → 统计 → 知识库。窄容器下「队列 | 驾驶舱」两列会把驾驶舱挤到
+   600px 以内，环形与参数块都放不开，不如一列到底。
+   宽容器（@container main ≥1240px）才切成「队列 | 主舞台」两列，见下方 §9。 */
+#pane-defect.active { grid-template-columns: minmax(0, 1fr); }
 
 /* ---- 队列：卡片排成密行 ---- */
 .prop-queue { display: flex; flex-direction: column; gap: 6px; }
@@ -353,43 +339,8 @@ body { font-size: 13px; letter-spacing: -0.003em; }
   border-radius: 2px; background: var(--ac);
 }
 
-/* ---- 检视器 ---- */
-.inspector { display: flex; flex-direction: column; gap: 0; padding: 0 !important; overflow: hidden; }
-.insp-empty {
-  display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: 8px; padding: 52px 24px; text-align: center; color: var(--txt3);
-}
-.ie-mark { width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center;
-  background: var(--surf3); color: var(--txt4); }
-.ie-t { font-size: 13px; font-weight: 600; color: var(--txt2); }
-.ie-d { font-size: 11.5px; line-height: 1.75; color: var(--txt4); max-width: 380px; }
-.insp-head {
-  display: flex; align-items: flex-start; gap: 12px;
-  padding: 13px 15px 12px; border-bottom: 1px solid var(--line); background: var(--surf2);
-}
-.ih-main { flex: 1; min-width: 0; }
-.ih-title { font-size: 13.5px; font-weight: 600; line-height: 1.45; letter-spacing: -0.005em; }
-.ih-tags { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; margin-top: 7px; }
-.ih-id { font-family: var(--mono); font-size: 11px; color: var(--ac); padding: 1px 6px;
-  border-radius: 5px; background: var(--ac-bg); box-shadow: inset 0 0 0 1px var(--ac-ln); }
-.ih-st { font-size: 10.5px; font-weight: 600; padding: 2px 7px; border-radius: 5px; }
-.ih-meta { font-size: 11px; color: var(--txt4); font-family: var(--mono); }
-.ih-acts { display: flex; align-items: center; gap: 4px; flex: none; }
-.insp-verdict {
-  display: flex; align-items: center; gap: 7px; padding: 8px 15px;
-  font-size: 11.5px; color: var(--txt2); background: var(--surf); border-bottom: 1px solid var(--line3);
-}
-.iv-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ac); flex: none; }
-.insp-body { padding: 13px 15px 15px; overflow: auto; max-height: 62vh; }
-.insp-root { font-size: 12.5px; line-height: 1.7; color: var(--txt2); margin-bottom: 10px;
-  padding: 10px 12px; border-radius: var(--r-s); background: var(--surf2); border: 1px solid var(--line); }
-.insp-sec { margin-bottom: 14px; }
-.insp-loading { font-size: 11.5px; color: var(--txt4); }
-.insp-loading.hidden { display: none; }
-.insp-foot { padding: 11px 15px 13px; border-top: 1px solid var(--line); background: var(--surf2); }
-.insp-actrow { display: flex; align-items: center; gap: 7px; }
-.insp-actrow .is-note { flex: 1; min-width: 0; }
-.insp-actrow .el-button + .el-button { margin-left: 0; }
+/* 检视器（#inspector-panel）已随 2026-10-15 改版删除：点提案卡片直接开弹窗，
+   弹窗覆盖检视器的全部能力，右侧那一列连同这里的样式一起退役。 */
 
 /* ---- 控制台（运行日志折叠条）---- */
 .console { border: 1px solid var(--line); border-radius: var(--r-m); overflow: hidden; background: var(--term); }
@@ -545,6 +496,30 @@ body { font-size: 13px; letter-spacing: -0.003em; }
 .dh-ops { display: flex; gap: 8px; align-items: center; flex: none; }
 
 .dh-stage { display: flex; align-items: center; justify-content: center; gap: 26px; padding: 6px 0 2px; }
+
+/* ---- 驾驶舱主区：左「过程」（环 + 阶段），右「输入」（启动参数 + 运行）----
+   参数与运行按钮必须同处一块，控制台也在这张卡里 —— 三件事拆成三块时，
+   填完参数要往上找按钮、点完运行要往下找日志（2026-10-15 改版）。
+   默认上下叠：容器不够宽时把阶段环与参数并排会把环挤变形。 */
+.dh-body { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }
+.dh-body > * { min-width: 0; }
+.dh-body .dh-stage { flex-wrap: wrap; gap: 18px; }
+@container main (min-width: 1500px) {
+  .dh-body { grid-template-columns: minmax(0, 1fr) minmax(300px, 360px); align-items: start; }
+}
+.dh-params {
+  display: flex; flex-direction: column; gap: 9px; align-self: start;
+  padding: 12px; border: 1px solid var(--line); border-radius: var(--r-m);
+  background: var(--surf2);
+}
+/* ⚠️ ParamLocked 根节点自带 .pcol（页签 grid 里钉在参数列用的），进到这里
+   grid 定位失效但 align-self:start 还在 —— 会缩成 shrink-to-fit 半截宽
+   （长任务页踩过同款坑），必须摘干净并恢复 stretch。 */
+.dh-params .pcol { grid-column: auto; grid-row: auto; align-self: stretch; position: static; }
+.dh-params .pstrip { margin-bottom: 0; }
+.dh-runops { display: flex; align-items: center; gap: 8px; padding-top: 9px; border-top: 1px solid var(--line); }
+.dh-note { margin: 0; font-size: 11.5px; line-height: 1.6; color: var(--txt3); }
+.dh-console { margin-top: 2px; }
 .dh-nums { display: flex; flex-direction: column; gap: 10px; width: 150px; flex: none; }
 .dh-nums .nu { border: 1px solid var(--line); border-radius: 11px; background: var(--code-bg); padding: 12px 14px; }
 .dh-nums .nu .v { font-size: 22px; font-weight: 700; color: var(--text); }
@@ -616,18 +591,19 @@ body { font-size: 13px; letter-spacing: -0.003em; }
    不会把中间的 hero 挤瘪。 */
 @container main (min-width: 1240px) {
   #pane-defect.active {
-    grid-template-columns: minmax(252px, 300px) minmax(0, 1fr) minmax(318px, 372px);
+    /* 两列：塔台（队列）| 主舞台。原第三列「审判台（检视器）」整列删除 ——
+       点卡片直接开弹窗，检视器能做的事弹窗都能做，留着只是占一屏宽度；
+       原第二行的 run 面板也已并入 hero（参数 + 控制台都在驾驶舱内）。 */
+    grid-template-columns: minmax(252px, 300px) minmax(0, 1fr);
     grid-template-areas:
-      "tower hero  bench"
-      "tower run   bench"
-      "tower repro verdict"
-      "stats stats stats"
-      "kb    kb    kb";
+      "tower hero"
+      "tower repro"
+      "tower verdict"
+      "stats stats"
+      "kb    kb";
   }
   #pane-defect > .defect-hero { grid-area: hero; }
-  #pane-defect > #run-panel { grid-area: run; }
   #pane-defect > #proposal-panel { grid-area: tower; min-width: 0; align-self: start; }
-  #pane-defect > #inspector-panel { grid-area: bench; }
   #pane-defect > #today-verdict { grid-area: verdict; align-self: start; }
   #pane-defect > [id^="artifact-panel"] { grid-area: repro; }
   #pane-defect > #stats-panel { grid-area: stats; }

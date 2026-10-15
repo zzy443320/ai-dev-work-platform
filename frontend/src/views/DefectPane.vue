@@ -29,7 +29,6 @@ import RunLog from '../components/RunLog.vue'
 import RunLeaseBar from '../components/RunLeaseBar.vue'
 import ArtifactsPanel from '../components/ArtifactsPanel.vue'
 import ProposalCard from '../components/ProposalCard.vue'
-import ProposalInspector from '../components/ProposalInspector.vue'
 import ProposalPager from '../components/ProposalPager.vue'
 import KbCard from '../components/KbCard.vue'
 
@@ -58,30 +57,16 @@ const { pinnedId, selectInline } = useProposalModal()
 const { form: settingsForm } = useSettings()
 
 /**
- * master-detail：点队列行 = 选中并在右侧检视器展开，**不再**直接弹全屏窗。
- * 列表一直在旁边，审十几份时不用反复开关（旧版每份都要「开 → 看 → 关」三步）。
- */
-function onPickRow(id) { selectInline(id) }
-
-/** 检视器右上角「放大」：把当前这份升格成弹窗（备注 / 一键返工 / 后端交接都在那里） */
-function onExpand() {
-  if (pinnedId.value) emit('open-proposal', pinnedId.value)
-}
-
-/**
- * master-detail 的表头数据源：队列里的那一行**摘要**，不是详情接口。
+ * 点队列卡片 = 直接开提案弹窗（2026-10-15 改版）。
  *
- * 为什么不从 detail 里凑：/api/proposals/{id} 的载荷是按区块嵌套的
- * （analysis.title / patch.blocks / gate.checks / agent.rounds…），而标题、分类、
- * 优先级、+/- 行数这些在列表摘要里就是平铺好的。检视器表头要的是「这份是什么」，
- * 正文要的才是「细节」—— 用列表已有的摘要当表头，既不用重新映射一遍嵌套字段，
- * 也保证队列里看到的和表头说的永远是同一份口径。
+ * 原先是「点行 → 钉到右侧检视器 → 再点放大才进弹窗」两步，右侧一整列还常是空态。
+ * 弹窗里 diff / 采纳 / 拒绝 / 返工 / 后端交接全都有，检视器没有独占能力，
+ * 所以直接开弹窗，检视器整列删除，队列那一步高亮照样留着（一眼看出在审哪一份）。
  */
-const selProposal = computed(() => {
-  const id = pinnedId.value
-  if (!id) return null
-  return (proposals.value || []).find((p) => (p.id || p.defect_id) === id) || null
-})
+function onPickRow(id) {
+  selectInline(id)
+  emit('open-proposal', id)
+}
 
 // 服务端占用（可能是外部脚本 / 别的标签页 / 刷新前留下的线程）。本地 `running`
 // 只知道自己这个标签页发起的运行，两者取并集才是「现在能不能点运行」。
@@ -247,16 +232,8 @@ onMounted(async () => {
         <div class="lab">{{ running ? '本轮耗时' : '上轮耗时' }}</div>
       </div>
       <div class="dh-ops">
-        <el-button type="primary" id="btn-run" :disabled="!canStart" @click="onStart('run')"
-                   :title="canStart ? '' : '槽位被占用，见左列运行塔台（可点「停止」）'">
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="6 3 20 12 6 21 6 3" /></svg>
-          运行
-        </el-button>
-        <el-button id="btn-probe" :disabled="!canStart" @click="onStart('probe')"
-                :title="canStart ? '只拉取 ONES 工单并 AI 定位问题，不生成提案、不进审批、不写任何文件' : '槽位被占用，见左列运行塔台（可点「停止」）'">
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></svg>
-          试运行
-        </el-button>
+        <!-- 运行 / 试运行已下移到参数块底部（填完参数视线下移就是按钮），
+             名牌行只留不依赖参数的刷新。 -->
         <el-button id="btn-defect-refresh" @click="refreshAll()"
                    title="重新拉取提案 / 统计 / 知识库列表">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.6-6.3" /><polyline points="21 3 21 9 15 9" /></svg>
@@ -265,50 +242,46 @@ onMounted(async () => {
       </div>
     </div>
 
-    <div class="dh-stage">
-      <div class="dh-nums">
-        <div class="nu"><div class="v mono">{{ doneCount }}<em>/5</em></div><div class="l">阶段完成</div></div>
-        <div class="nu"><div class="v mono">{{ openCount }}</div><div class="l">待审提案</div></div>
+    <!-- 驾驶舱主区：左 = 阶段环 / 阶段列表（过程），右 = 启动参数 + 运行按钮（输入）。
+         参数与「运行」必须同处一块 —— 之前参数在下方折叠面板里、按钮在页面最顶上，
+         填完参数要往上找按钮；控制台也没跟操作在一张卡里，点完运行得往下滚。 -->
+    <div class="dh-body">
+      <div class="dh-stage">
+        <div class="dh-nums">
+          <div class="nu"><div class="v mono">{{ doneCount }}<em>/5</em></div><div class="l">阶段完成</div></div>
+          <div class="nu"><div class="v mono">{{ openCount }}</div><div class="l">待审提案</div></div>
+        </div>
+        <StageRing :states="stageStates" :running="running" :size="260" />
+        <div class="dh-stagelist"><slot name="stage-flow" /></div>
       </div>
-      <StageRing :states="stageStates" :running="running" :size="260" />
-      <div class="dh-stagelist"><slot name="stage-flow" /></div>
+
+      <div class="dh-params">
+        <!-- 参数形态（2026-10-13）：四条参数走**就地控件条**（定义在 /api/params/schema），
+             控件 id #opt-mine / #opt-skip-verify / #opt-limit / #opt-defect 一律不动。
+             跑动中定格成只读（ParamLocked），值改了对这一批无效，说清楚而不是禁用。 -->
+        <ParamLocked v-if="running" class="plock-wide" title="运行参数" :items="batch"
+                     note="流水线按启动时的参数推进，跑动中改这些值对这一批无效；本轮结束后表单恢复可编辑。" />
+        <ParamStrip v-else name="defect" :model="params" />
+        <div class="dh-runops">
+          <el-button type="primary" id="btn-run" :disabled="!canStart" @click="onStart('run')"
+                     :title="canStart ? '' : '槽位被占用，见左列运行塔台（可点「停止」）'">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="6 3 20 12 6 21 6 3" /></svg>
+            运行
+          </el-button>
+          <el-button id="btn-probe" :disabled="!canStart" @click="onStart('probe')"
+                  :title="canStart ? '只拉取 ONES 工单并 AI 定位问题，不生成提案、不进审批、不写任何文件' : '槽位被占用，见左列运行塔台（可点「停止」）'">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></svg>
+            试运行
+          </el-button>
+        </div>
+        <div class="info-note dh-note" id="dry-warn">「试运行」只拉取 ONES 工单并 AI 定位问题（不生成提案、不进审批、不写文件），用来独立验证连通性和定位效果。<br>「运行」走完整流水线产出提案（补丁 + diff + 闸门结果 + 截图），同样不改动目标仓库，人工采纳才写工作区（不 commit、不 push）。<br>运行过程中可实时看到每个阶段的进展，以及大模型的思考与输出。</div>
+      </div>
     </div>
 
-    <!-- 护盾 chip 读真实闸门配置：降级态一眼可见，不用点进配置页确认。
-         复现用例 chip 是引导不是状态断言 —— 数据在 repro 面板里，不假装有数。 -->
-    <div class="dh-chips">
-      <span class="dh-chip" :class="settingsForm.gate.degraded ? 'is-warn' : 'is-ok'">
-        护盾 · {{ settingsForm.gate.degraded ? '降级为语法检查' : '闸门真跑' }}
-      </span>
-      <span class="dh-chip">复现用例 · 沙箱先跑红再修绿，挂在本页下方待你采纳</span>
-    </div>
-  </section>
-
-  <section class="panel collapsible" id="run-panel" :class="{ collapsed: isCollapsed('run-panel') }">
-    <div class="panel-head">
-      <h2>
-        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="6 3 20 12 6 21 6 3" /></svg>
-        运行流水线
-      </h2>
-      <button class="fold-btn" title="折叠 / 展开" @click="toggleFold('run-panel')">
-        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9" /></svg>
-      </button>
-    </div>
-    <!-- 主区只放过程与产物：参数条 + 实时运行日志。
-         参数形态改版（2026-10-13）：四条参数走**就地控件条**（定义在
-         /api/params/schema），不再有右侧浮层抽屉 —— 摘要 chip 只能看不能改、
-         改要先开抽屉、抽屉一开主列让位 436px 这三件事一起消失。
-         v2：运行/试运行/刷新已上移到主舞台名牌行；租约条移到左列塔台。 -->
-    <ParamLocked v-if="running" class="plock-wide" title="运行参数" :items="batch"
-                 note="流水线按启动时的参数推进，跑动中改这些值对这一批无效；本轮结束后表单恢复可编辑。" />
-    <ParamStrip v-else name="defect" :model="params" />
-    <div class="info-note" id="dry-warn">说明：「试运行」只拉取 ONES 工单并 AI 定位问题（不生成提案、不进审批、不写文件），用来独立验证连通性和定位效果；<br>「运行」走完整流水线产出提案（补丁 + diff + 闸门结果 + 截图），同样不改动目标仓库，人工采纳才写工作区（不 commit、不 push）。<br>运行过程中可实时看到每个阶段的进展，以及大模型的思考与输出。</div>
-
-    <!-- 控制台区：日志收成一块可折叠的终端面板（IDE 底部面板那个形态）。
-         默认展开 —— #run-log 的 420px 限高与空态占位都由 style.css 锁着，
-         折叠只收内容不删 DOM，所以 :empty::before 那套占位逻辑不受影响。
-         驾驶舱语义下它就是「AGENT 直播」：实时阶段进展与大模型输出。 -->
-    <div class="console" :class="{ 'console-collapsed': isCollapsed('run-console') }">
+    <!-- 控制台并入驾驶舱：点完运行，日志就在同一张卡里滚（IDE 底部面板那个形态）。
+         #run-log 的 420px 限高与空态占位由 style.css 锁着；折叠只收内容不删 DOM，
+         所以 :empty::before 那套占位逻辑不受影响。 -->
+    <div class="console dh-console" :class="{ 'console-collapsed': isCollapsed('run-console') }">
       <div class="console-bar">
         <button type="button" class="cb-toggle" id="btn-console-toggle"
                 :title="isCollapsed('run-console') ? '展开运行日志' : '收起运行日志'"
@@ -329,6 +302,15 @@ onMounted(async () => {
         @open-proposal="(id) => emit('open-proposal', id)"
         @expand="(p) => emit('expand-log', p)"
       />
+    </div>
+
+    <!-- 护盾 chip 读真实闸门配置：降级态一眼可见，不用点进配置页确认。
+         复现用例 chip 是引导不是状态断言 —— 数据在 repro 面板里，不假装有数。 -->
+    <div class="dh-chips">
+      <span class="dh-chip" :class="settingsForm.gate.degraded ? 'is-warn' : 'is-ok'">
+        护盾 · {{ settingsForm.gate.degraded ? '降级为语法检查' : '闸门真跑' }}
+      </span>
+      <span class="dh-chip">复现用例 · 沙箱先跑红再修绿，挂在本页下方待你采纳</span>
     </div>
   </section>
 
@@ -380,10 +362,6 @@ onMounted(async () => {
     </div>
     <p class="panel-note">运行流水线不会写目标仓库，只产出提案；在这里点「采纳」只会把改动写入工作区（不 commit、不 push），由你确认后自行提交。</p>
   </section>
-
-  <!-- 检视器（detail）：与队列并排，点行即换。放在 #proposal-panel 之后、
-       复现用例面板之前 —— 两者在 #pane-defect 的同一行栅格里（见 desk.css）。 -->
-  <ProposalInspector :proposal="selProposal" @expand="onExpand" />
 
   <!-- 今日裁决常驻摘要：没有待审时审判台也不空（数字来自 proposals 全量聚合）。 -->
   <div class="verdict" id="today-verdict">
