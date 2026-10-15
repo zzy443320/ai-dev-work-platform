@@ -211,7 +211,8 @@ TOOL_SPECS: List[Dict] = [
             "type": "object",
             "properties": {
                 "pattern": {"type": "string", "description": "正则表达式"},
-                "glob": {"type": "string", "description": "可选：限定文件，如 .vue / .ts / src/**"},
+                "glob": {"type": "string", "description": "可选：限定文件，如 .vue / .ts / src/**，"
+                                                           "也支持 {ts,vue,json} 这类花括号写法"},
                 "max_hits": {"type": "integer", "description": "最多返回多少条命中，默认 60"},
             },
             "required": ["pattern"],
@@ -339,18 +340,89 @@ class RepoReader:
                     f"\"arguments\":{{\"path\":\"{path}\",\"start\":{last + 1}}}}}）")
         return head + "\n".join(body_rows) + tail
 
+    @staticmethod
+    def _expand_braces(g: str, cap: int = 24) -> List[str]:
+        """展开 shell 风格的花括号：`**/*.{ts,vue,js}` → 三个 glob。
+
+        ⭐ 必做：花括号是 **shell** 的语法，git 的 wildmatch 与 Python 的 fnmatch
+        都不认。工单 215722 里模型连发 4 次 `glob="**/*.{ts,vue,js,json}"`，
+        pathspec 匹配到 0 个文件 → git grep 退出码 1 → 被当成「全仓无命中」
+        回给模型 → 模型认定「文案在仓库里不存在」而认输，而真实命中一直都在
+        （cloudpivot-locale/locales/ai-platform/ai-platform.zh-CN.ts:442）。
+        不展开 = 工具在骗模型，且骗得毫无痕迹。
+        """
+        g = str(g or "").strip()
+        m = re.search(r"\{([^{}]*)\}", g)
+        if not m:
+            return [g]
+        head, body, tail = g[:m.start()], m.group(1), g[m.end():]
+        out: List[str] = []
+        for part in body.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            out.extend(RepoReader._expand_braces(head + part + tail, cap))
+            if len(out) > cap:
+                break
+        # 嵌套展开会产生重复项（`{a,{b,c}}` 里 a 走了两遍），保序去重
+        return list(dict.fromkeys(out))[:cap] or [g]
+
     def _glob_pathspecs(self, g: str) -> List[str]:
-        """把界面上的 glob（.vue / *.ts / src/**）转成 git pathspec。"""
+        """把界面上的 glob（.vue / *.ts / src/** / **/*.{ts,vue}）转成 git pathspec。
+
+        花括号展开成**多条** pathspec 一起交给 git —— git 一次调用只接受一个
+        pattern，但可以接受多个 pathspec（关系是「或」）。
+        """
         g = str(g or "").strip()
         if not g:
             return []
         if g.startswith(":") or g.startswith("("):
             return [g]  # 已经是 pathspec magic 写法，原样透传
-        if "/" in g or "**" in g:
-            return [":(glob)" + g]
-        if "*" in g:
-            return [g]
-        return ["*" + g]  # ".vue" → "*.vue"（路径通配，递归匹配所有目录）
+        out: List[str] = []
+        for v in self._expand_braces(g):
+            if "/" in v or "**" in v:
+                out.append(":(glob)" + v)
+            elif "*" in v:
+                out.append(v)
+            else:
+                out.append("*" + v)  # ".vue" → "*.vue"（路径通配，递归所有目录）
+        return out or [g]
+
+    @staticmethod
+    def _glob_matches(rel: str, g: str) -> bool:
+        """Python 侧的 glob 判定（git 不可用走兜底扫描时用）。同样要先展开花括号。
+
+        fnmatch 的 `*` 跨 `/`，所以 `**/*.ts` 与 `*.ts` 都能匹配深层路径。
+        """
+        if not g:
+            return True
+        rel_l = str(rel or "").lower()
+        for v in RepoReader._expand_braces(g):
+            v = v.strip().lower()
+            if not v:
+                return True
+            if rel_l.endswith(v) or fnmatch.fnmatch(rel_l, v):
+                return True
+        return False
+
+    def _pathspec_file_count(self, pathspecs: List[str]) -> int:
+        """这条 pathspec 在仓库里到底圈到了几个文件。-1 = 查不出来。
+
+        用于「无命中」时的护栏：区分「仓库里没有这个内容」与「glob 没圈到任何
+        文件」——后者是工具用法问题，绝不能让模型误读成前者。
+        """
+        if not pathspecs:
+            return -1
+        try:
+            r = subprocess.run(
+                ["git", "-C", str(self.root), "ls-files", "--", *pathspecs],
+                capture_output=True, timeout=30)
+        except Exception:
+            return -1
+        if r.returncode != 0:
+            return -1
+        return len([l for l in r.stdout.decode("utf-8", "replace").splitlines()
+                    if l.strip()])
 
     def _git_grep(self, pattern: str, glob: str, max_hits: int) -> Optional[str]:
         """git grep 引擎：大仓库无扫描上限，天然跳二进制、遵守 .gitignore、含未跟踪文件。
@@ -370,19 +442,30 @@ class RepoReader:
                 return None
             if r.returncode not in (0, 1):
                 continue  # 非 git 仓 / 该方言编译失败 → 换下一种
-            g = str(glob or "").strip().lower()
+            g = str(glob or "").strip()
             hits: List[str] = []
             for ln in r.stdout.decode("utf-8", "replace").splitlines():
                 parts = ln.split(":", 2)
                 if len(parts) < 3:
                     continue
                 rel = parts[0].replace("\\", "/")
-                if g and not (rel.lower().endswith(g) or fnmatch.fnmatch(rel.lower(), g)):
+                if not self._glob_matches(rel, g):
                     continue
                 hits.append(f"{rel}:{parts[1]}: {parts[2].strip()[:220]}")
                 if len(hits) >= max_hits:
                     break
             if not hits:
+                # ⭐ 护栏：glob 一个文件都没圈到时，「无命中」是工具用法问题，不是
+                # 仓库事实。直接自动放宽重搜一次，别把「glob 失效」当成
+                # 「内容不存在」回给模型（215722：模型据此认定文案不在仓库里）。
+                if pathspecs and self._pathspec_file_count(pathspecs) == 0:
+                    inner = self._git_grep(pattern, "", max_hits)
+                    if inner and not inner.startswith("[无命中]"):
+                        return (f"⚠ 你给的 glob {glob!r} 在本仓库没有匹配到任何文件"
+                                f"（git pathspec 不支持的写法），已自动不限定文件"
+                                f"类型重搜：\n{inner}")
+                    return (f"[无命中] glob {glob!r} 没匹配到任何文件；去掉 glob 后"
+                            f"全仓也没有匹配 /{pattern}/ 的内容")
                 return (f"[无命中] 全仓（git 跟踪 + 未跟踪文件，跳过二进制与 .gitignore）"
                         f"没有匹配 /{pattern}/ 的内容")
             tail = f"\n…（已达上限 {max_hits} 条）" if len(hits) >= max_hits else ""
@@ -400,7 +483,7 @@ class RepoReader:
             if scanned >= GREP_SCAN_CAP:
                 truncated = True
                 break
-            if g and not (rel.lower().endswith(g) or fnmatch.fnmatch(rel.lower(), g)):
+            if not self._glob_matches(rel, g):
                 continue
             p = self.resolve(rel)
             if p is None or not p.is_file():

@@ -388,12 +388,52 @@ class DefectAnalyzer:
         self._wants_validation = any(
             t in text.lower() for t in ("必填", "校验", "required", "validate", "validator"))
         suspect_files = self._scan_repo(keywords, path_tokens)
+
+        # ── 文案短语的内容级命中 ───────────────────────────────────────
+        # 界面文案类缺陷的改动点常在 i18n 资源里，路径打分永远排不进来；拿工单
+        # 原串全仓搜，命中文件免竞争置顶，并把短语并入 keywords——大文件的读取
+        # 窗口因此锚定在命中行，模型看到的是 `roleSetting: '角色设定'` 这种能
+        # 直接写进 SEARCH 块的原文，而不是靠猜。
+        phrases = self._extract_phrases(text)
+        content_hits = self._content_scan(phrases)
+        phrase_meta: List[str] = []
+        if content_hits:
+            # 二级跳转：词条 key → 引用它的组件（改动点常在引用方，见 _key_refs_scan）
+            for rel, info in self._key_refs_scan(content_hits).items():
+                content_hits.setdefault(rel, info)
+            # 置顶最多 4 个：必须给路径打分（目录判定 / 历史先例 / 稀有标识符）
+            # 留 2 个名额，否则文案类工单会把其它信号全挤掉。
+            top = list(content_hits)[:4]
+            suspect_files = top + [f for f in suspect_files if f not in top]
+            # 只并入**确实命中了**的短语：没命中的短语并进来只会污染开窗
+            # （泛中文在无关组件里也能命中几行，把窗口拖偏）。
+            hit_phrases = [i["phrase"] for i in content_hits.values()
+                           if i.get("kind") == "phrase"]
+            keywords = list(dict.fromkeys(hit_phrases)) + [
+                k for k in keywords if k not in hit_phrases]
+            for rel, info in list(content_hits.items())[:5]:
+                how = ("工单原文文案" if info.get("kind") != "key"
+                       else f"上一条文案的词条 key「{info['phrase']}」被引用")
+                phrase_meta.append(
+                    f"{how}命中 {rel} 第 "
+                    f"{','.join(str(n) for n in info['lines'][:4])} 行，"
+                    f"原文：{info['samples'][0][:120]}")
+        elif phrases:
+            # 全搜不到也是有效结论，必须明说。否则模型会把它当成「没搜过」：
+            # 要么盲猜一个不存在的文件，要么直接认输（215722 就是这么交回人工的）。
+            phrase_meta.append(
+                "工单提到的界面文案 " + " / ".join(phrases[:4])
+                + " 在全仓（含未跟踪文件、跳过二进制）都没有搜到——改动点可能不在"
+                  "本仓库（后端下发 / 其它分支 / 已被人改过）。请检查相邻词条与"
+                  "组件对这些词条的引用后再下结论，不要直接认定无解")
+
         # 堆栈点名的文件提到最前：这是唯一"不依赖打分、直接读"的信号，
         # 因为堆栈行号就是出错现场（`at packages/a/b/c.vue:405`）。
         stack = [f for f in getattr(self, "_stack_files", []) if f not in suspect_files]
         if stack:
             suspect_files = stack + suspect_files
         snippets, meta = self._read_contexts(suspect_files, keywords)
+        meta = phrase_meta + meta
 
         prompt = self._build_prompt(defect, snippets, meta)
         # reasoning 模型（deepseek-flash 等）的隐藏推理 token 与正式回答共享
@@ -555,6 +595,9 @@ class DefectAnalyzer:
             "suspect_files": suspect_files,
             "read_files": list(snippets),
             "locate_empty": not snippets,
+            "phrases": phrases,
+            "phrase_hits": {rel: info["lines"][:6]
+                            for rel, info in (content_hits or {}).items()},
             "locate_retry": retry_note,
             "patch_retry": patch_retry,
             "truncation": meta,
@@ -1130,6 +1173,175 @@ class DefectAnalyzer:
                     if d not in dirs:
                         dirs.append(d)
         return dirs
+
+    # ---------------------------------------------- 文案短语的内容级命中
+    # 语言包/词条替换类缺陷（工单 215722「提示词设定文案 应该是角色设定」）的
+    # 改动点在 i18n 资源文件里，**路径与工单关键词毫无关系**：本次 18 个嫌疑
+    # 文件里一个语言包都没有，读取窗口 6 个名额全被 ai-agent-detail 路径下的
+    # 组件占满，模型三轮都看不到 languages.aiPlatform.roleSetting 在哪。
+    # 而界面上那几个字本身就是仓库里的字面量 —— 拿工单原文去全仓按原串搜，
+    # 一搜即得且带行号，比任何路径打分都硬。
+    _PHRASE_STOPWORDS = (
+        "测试环境", "测试步骤", "预期结果", "实际结果", "前置条件", "测试分支",
+        "测试账号", "功能验收", "问题描述", "复现步骤", "补充说明", "登录账号",
+        "环境地址", "所属模块", "严重程度", "优先级", "负责人", "迭代",
+    )
+    _PHRASE_NOISE_SUBSTR = (
+        "应该", "对应", "改成", "这个", "那个", "此处", "显示", "变成",
+        "修改成", "而非", "不是", "需要", "要求", "希望",
+    )
+
+    def _extract_phrases(self, text: str, limit: int = 6) -> List[str]:
+        """抽取工单里「界面上看得见的中文短语」。
+
+        只取连续中文段（≥3 字），丢掉表单模板词（测试步骤/预期结果…）——
+        那些词在仓库里命中一堆测试/文档文件，是纯噪音。
+        """
+        out: List[str] = []
+        seen = set()
+        # 下限 4 字：3 字中文（自定义 / 配置项 / 数据源）在业务仓库里到处都是，
+        # 命中几百个文件，纯噪音（实测「自定义」灌进来一堆 docs/ 文档）。
+        for seg in re.findall(r"[\u4e00-\u9fff]{4,10}", str(text or "")):
+            if seg in seen:
+                continue
+            seen.add(seg)
+            if any(w in seg for w in self._PHRASE_STOPWORDS):
+                continue
+            # 「应该改成角色设定」「原自主规划对应的文案」是解说句，不是界面上的
+            # 字：搜它必空，却要白扫一遍大仓（每次 ~8s）。按虚词剔除。
+            if any(w in seg for w in self._PHRASE_NOISE_SUBSTR):
+                continue
+            out.append(seg)
+        # 长度接近 5 字的先搜：界面文案通常就这个长度（角色设定 / 提示词设定），
+        # 而「长优先」会把解说长句排到前面，反而把真正的证据挤到最后才搜。
+        out.sort(key=lambda s: (abs(len(s) - 5), s))
+        return out[:limit]
+
+    _CODE_GLOBS = ("*.ts", "*.vue", "*.js", "*.tsx", "*.jsx", "*.json")
+
+    def _content_scan(self, phrases: List[str], max_files: int = 3,
+                      max_hits: int = 10, noise_files: int = 8) -> Dict[str, Dict]:
+        """按原文串搜代码文件，返回 {rel: {phrase, lines, samples}}。
+
+        走 `git grep -F`（固定串：中文安全、天然跳二进制与 .gitignore、含未跟踪
+        文件），并用 pathspec 限定代码扩展名——文档/设计稿里的同名字符串不是
+        改动点，混进来只会占掉宝贵的窗口名额。
+
+        两道闸门：
+        - **早停**：命中文件够了就收手，不为每个短语各扫一遍大仓（实测 5 个
+          短语全扫要 52s）；
+        - **泛词丢弃**：单个短语命中文件数 > noise_files 说明它是通用词
+          （「自定义」这类），整条丢弃——它没有定位价值，只会挤掉真正的证据。
+        """
+        pathspecs = [":(glob)**/" + g for g in self._CODE_GLOBS]
+        hits: Dict[str, Dict] = {}
+        self._noisy_phrases: List[str] = []
+        for ph in phrases:
+            if len(hits) >= max_files:
+                break
+            try:
+                r = subprocess.run(
+                    ["git", "-C", str(self.repo_path), "-c", "core.quotePath=false",
+                     "grep", "-nIF", "--untracked", "-e", ph, "--", *pathspecs],
+                    capture_output=True, timeout=40)
+            except Exception:
+                continue
+            if r.returncode not in (0, 1):
+                continue
+            found: Dict[str, Dict] = {}
+            for ln in r.stdout.decode("utf-8", "replace").splitlines():
+                parts = ln.split(":", 2)
+                if len(parts) < 3:
+                    continue
+                rel = parts[0].replace("\\", "/")
+                try:
+                    no = int(parts[1])
+                except ValueError:
+                    continue
+                item = found.setdefault(
+                    rel, {"phrase": ph, "kind": "phrase",
+                          "lines": [], "samples": []})
+                if len(item["lines"]) < max_hits:
+                    item["lines"].append(no)
+                    item["samples"].append(parts[2].strip()[:160])
+                # 已经明显是泛词了，没必要再收集
+                if len(found) > noise_files:
+                    break
+            if len(found) > noise_files:
+                self._noisy_phrases.append(ph)
+                continue
+            for rel, info in found.items():
+                if rel in hits:
+                    continue
+                hits[rel] = info
+                if len(hits) >= max_files:
+                    break
+        return hits
+
+    def _key_refs_scan(self, hits: Dict[str, Dict], max_files: int = 2,
+                       max_hits: int = 8) -> Dict[str, Dict]:
+        """从命中的语言包行反解出词条 key，再搜「谁引用了这个 key」。
+
+        ⭐ 语言包替换类缺陷的改动点常常**不在语言包里**而在引用方——215722 界面
+        显示「提示词设定」，真凶是 base-config.vue 在非 REASON 模式取了另一个
+        key（skillExecutionInstruction）。只把语言包摆到模型面前，它只能去改
+        文案值；把引用方一起给出去，它才看得见那行三元表达式，才可能给出
+        「把 key 换成 roleSetting」这种正确补丁。
+        """
+        keys: List[str] = []
+        for _rel, info in hits.items():
+            ph = str(info.get("phrase") or "")
+            if not ph:
+                continue
+            for s in info.get("samples", []):
+                # 只认「值就是这条文案」的定义行：roleSetting: '角色设定',
+                # 句子里顺带含这几个字的行（'可为角色设定排列顺序…'）不是词条
+                # 定义——拿它的 key 去跳转会把引用方引到无关模块（实测
+                # sortKeyTips 抢走名额，真正的 roleSetting 反而没轮到）。
+                m = re.match(r"\s*([A-Za-z_$][\w$]*)\s*:\s*['\"]"
+                             + re.escape(ph) + r"['\"]", s)
+                if m and m.group(1) not in keys:
+                    keys.append(m.group(1))
+            if len(keys) >= 3:
+                break
+        if not keys:
+            return {}
+        pathspecs = [":(glob)**/" + g for g in self._CODE_GLOBS]
+        refs: Dict[str, Dict] = {}
+        for key in keys[:3]:
+            if len(refs) >= max_files:
+                break
+            try:
+                r = subprocess.run(
+                    ["git", "-C", str(self.repo_path), "-c", "core.quotePath=false",
+                     "grep", "-nIF", "--untracked", "-e", key, "--", *pathspecs],
+                    capture_output=True, timeout=40)
+            except Exception:
+                continue
+            if r.returncode not in (0, 1):
+                continue
+            for ln in r.stdout.decode("utf-8", "replace").splitlines():
+                parts = ln.split(":", 2)
+                if len(parts) < 3:
+                    continue
+                rel = parts[0].replace("\\", "/")
+                if rel in hits:  # 语言包自身上一步已经给过了
+                    continue
+                # 别的语种包（en-US / zh-TW）与语言目录同样不是「引用方」
+                if re.search(r"(locale|languages|i18n|/lang)", rel, re.I):
+                    continue
+                try:
+                    no = int(parts[1])
+                except ValueError:
+                    continue
+                item = refs.setdefault(rel, {"phrase": key, "kind": "key",
+                                             "lines": [], "samples": []})
+                if len(item["lines"]) < max_hits:
+                    item["lines"].append(no)
+                    item["samples"].append(parts[2].strip()[:160])
+                if len(refs) >= max_files:
+                    break
+        return refs
 
     def _read_contexts(
         self, files: List[str], keywords: List[str]
