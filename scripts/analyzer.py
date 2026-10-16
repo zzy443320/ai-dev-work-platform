@@ -35,13 +35,21 @@ _THIRD_PARTY_RE = re.compile(
 # grep **扫描阶段**就排除掉的路径：与 `_THIRD_PARTY_RE` 同一套语义（这些目录/
 # 产物永远不是修复目标），只是把过滤从「拿到结果之后」提前到「根本不去读」。
 #
-# ⭐ 为什么必须提前（2026-10-16 实测）：目标仓里被 vendor 进来的
-# `packages/admin/public/monaco-editor-0.52.2/` 有 9MB 的打包 js，**每一个**
-# 关键词的 grep 都要把它们整份读一遍 —— 单次 7~10s，20 个关键词就是两三分钟；
-# 更要命的是像 `schedule` 这种关键高频词会直接撞上 10s 超时，被**静默**当成
-# 「没命中」丢掉，于是真凶所在目录一分都拿不到 → 读取窗口里没有真凶
-# （locate_miss 的一大来源，工单 215890 正是如此）。
-# 实测：逐词 20 次 ≈ 160s 且丢词 → 批量 + 排除 `**/public/**` ≈ 7s 且一个不丢。
+# ⭐ 结论先行（2026-10-16 二次实测，**纠正了当天早些时候的归因**）：提速全靠**批量**，
+# 排除 vendor 只是顺手——别再把 monaco 当成慢的原因（它只有 2 个文件）。
+# 原先逐词 grep：20 个关键词 = 20 次全树扫描 ≈ 160s，而 `schedule` / `超时时间` 这类
+# 词会撞上单次超时被**静默**当成「没命中」丢掉 → 真凶所在目录一分都拿不到 → 读取
+# 窗口里没有真凶（locate_miss 的一大来源，工单 215890 正是如此）。
+#
+# 当天实测账（目标仓 8797 文件 / 100MB；D 盘裸读只有 **3.4MB/s**）：
+#   · 单次全树 grep ≈ 8~13s（冷缓存 ~25s），**逐文件 open/read 的开销占绝对大头**；
+#   · 排除 `**/public/**`（−21MB / −281 文件）后耗时**没有任何可测变化**
+#     （交替各 3 次：10760ms vs 10725ms、13189 vs 13295、9812 vs 8055）；
+#   · `packages/admin`（含 19MB monaco）单跑只要 1.1s —— 8.7MB 的 tsWorker.js 是
+#     一个文件，按文件数计几乎不花钱。
+#   · 真正的 20 倍来自「N 次扫描 → 1 次」：160s → ≈7s。
+# 排除仍然保留：不花时间，且结果里不再出现产物目录的噪音命中（语义与
+# `_THIRD_PARTY_RE` 完全一致，只是把过滤提前到「根本不去读」）。
 _GREP_EXCLUDES = (
     ":(exclude,glob)**/node_modules/**",
     ":(exclude,glob)**/dist/**",
@@ -744,11 +752,12 @@ class DefectAnalyzer:
         text = " ".join(str(ai_result.get(k) or "")
                         for k in ("root_cause", "explanation", "prevention"))
         raw = re.findall(r"\b[\w-]+(?:/[\w-]+)+\b", text, re.A)
-        raw += re.findall(r"[\w./-]+\.(?:ts|tsx|js|jsx|vue)", text)
+        raw_ext = re.findall(r"[\w./-]+\.(?:ts|tsx|js|jsx|vue)", text)
+        ext_re = r"\.(?:ts|tsx|js|jsx|vue)$"
         # 裸文件名（repeat-form.vue，无斜杠）不能过 _clean_path_tokens
         # 的「必须含 /」检查——单独放行，交给 _resolve_file_hint 解析
-        raw_files = [t for t in raw if "/" not in t
-                     and re.search(r"\.(?:ts|tsx|js|jsx|vue)$", t, re.I)]
+        raw_files = [t for t in raw + raw_ext if "/" not in t
+                     and re.search(ext_re, t, re.I)]
         raw = [t for t in raw if "/" in t]
         # 正文里的「标识符/标识符」（SingleObject/List）是模型在复述返回值
         # 类型枚举，不是仓库路径——放行会被 _resolve_dir_hint 的尾缀匹配
@@ -757,12 +766,31 @@ class DefectAnalyzer:
         raw = [t for t in raw
                if not all(re.fullmatch(r"[A-Z][A-Za-z0-9]*", seg)
                           for seg in t.split("/") if seg)]
-        # 模型常直接点名页面路由（admin/#/demo-skill-log），`#` 会把
-        # 路径正则切断——必须走路由反解，否则二次定位拿不到目录提示
+        # ⭐⭐ **带扩展名的完整文件路径必须排在最前**，因为下面 `out` 有 [:8] 截断，
+        # 而这是最强的一档信号：调用方按扩展名把它挑出来走 `_resolve_file_hint`
+        # **强制开窗**（不参与得分排序，真改动点排到窗口外也照样进）。
+        # 旧写法把 `raw`（正则 1：**不带扩展名**，如 `…/composer/mobile/index`）
+        # 整体串在 `raw_ext`（正则 2：带扩展名）之前，于是只要不带扩展名的候选
+        # 攒够 8 条，带扩展名的完整路径就会被 [:8] **一条不剩地截掉**。
+        # 工单 215890（2026-10-16）的实测后果：模型在 explanation 里把真凶写全了
+        # ——`cloudpivot-ai/chat/chat-kit/components/composer/mobile/index.vue`
+        # （真实落点 packages/…/composer/mobile/index.vue，718 行）——抽出来的
+        # 却是「点名文件 -」，一个文件提示都没有，于是窗口里只有一堆
+        # `lui/**/schedule/*.vue`。修复 agent 只能靠 grep 重新找、读到 280 行
+        # 时轮次耗尽、认输转人工（记录见 proposals/L4Zo7p9zlZYhlDQY-*155758.json）。
+        file_toks = _clean_path_tokens([t for t in raw_ext if "/" in t])
+        # 同一路径的「去扩展名孪生」（…/mobile/index）会与文件提示抢预算、
+        # 且指向同一处，直接让位给别的目录线索。
+        stems = {t.lower().rsplit(".", 1)[0] for t in file_toks if "." in t}
+        dir_toks = [t for t in _clean_path_tokens(
+            [t for t in raw if not re.search(ext_re, t, re.I)])
+            if t.lower() not in stems]
         routes = _route_to_dir_tokens(text)
+        # 模型常直接点名页面路由（admin/#/demo-skill-log），`#` 会把路径正则切断
+        # ——必须走路由反解，否则二次定位拿不到目录提示
         known = {t.lower() for t in known_tokens}
         out: List[str] = []
-        for tok in _clean_path_tokens(raw) + _dedupe(raw_files) + routes:
+        for tok in file_toks + _dedupe(raw_files) + dir_toks + routes:
             if tok.lower() in known:
                 continue
             if tok not in out:
@@ -953,12 +981,13 @@ class DefectAnalyzer:
                    timeout: int = 120) -> Tuple[Dict[str, set], List[str]]:
         """一次 `git grep` 拿到「每个关键词命中了哪些文件」。
 
-        ⭐ 为什么要批量 + 排除 vendor（2026-10-16 实测）：目标仓里 vendor 进来的
-        monaco 打包文件（9MB）让**每个**关键词的 grep 都要多花 7~10s；20 个关键词
-        串行就是两三分钟，而 `schedule` / `超时时间` 这种词直接撞 10s 超时被静默
-        丢弃 —— 命中分没了，真凶目录就进不了读取窗口（locate_miss 的主因之一）。
-        改成「一个 `-e` 一个关键词、一次扫完」并排除 `**/public/**` 等产物目录后，
-        实测从 ≈160s 降到 ≈7s，且**一个词都不会丢**。
+        ⭐ 为什么必须批量（2026-10-16 实测，含一次归因纠正）：目标仓单次全树 grep
+        就要 8~13s（D 盘裸读 3.4MB/s，开销在逐文件 open/read），逐词调用 = 一个词一遍
+        全树；20 个关键词 ≈160s，且 `schedule` / `超时时间` 这类词会撞上单次超时被
+        **静默**丢弃 —— 命中分没了，真凶目录就进不了读取窗口（locate_miss 的主因之一）。
+        改成「一个 `-e` 一个关键词、一次扫完」后实测 ≈160s → ≈7s，且**一个词都不会丢**。
+        （同日 A/B 实测：排除 `**/public/**` 对耗时**没有任何影响**，所以别再把
+        vendor 的 monaco 当原因 —— 详见 `_GREP_EXCLUDES` 上面的账。）
 
         用 `-o` 只输出命中片段（而不是整行）返查是哪个关键词命中的；模式按长度
         降序传入，避免「read」抢在「readOnly」前面把长词的命中吃掉。

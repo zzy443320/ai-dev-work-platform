@@ -40,7 +40,33 @@ def check(name, ok, detail=""):
 
 
 def main() -> int:
-    print("== 定位算法回归 3（重试文件提示预算 / 214872）==")
+    print("== 定位算法回归 3（重试文件提示预算 / 214872 + 215890）==")
+
+    # ── ④ 带扩展名的完整文件路径不许被 [:8] 截掉（2026-10-16，工单 215890）──
+    # 这一段是**纯函数**断言，不需要真实仓库，所以放在 SKIP 之前。
+    # 旧实现把「正则 1（不带扩展名）」整体串在「正则 2（带扩展名）」之前，于是
+    # 只要不带扩展名的候选攒够 8 条，带扩展名的完整路径**一条都留不下**：
+    # 模型在 explanation 里写全了 cloudpivot-ai/chat/chat-kit/components/composer/
+    # mobile/index.vue（真实落点 packages/…，718 行），抽出来的却是「点名文件 -」，
+    # 真凶没进窗口 → 修复 agent 只能靠 grep 重找 → 轮次耗尽认输。
+    noext = " ".join(f"packages/app/a{i}/b{i}/c-component" for i in range(10))
+    ai_215890 = {
+        "root_cause": noext + " lui/mobile/pages/schedule/schedule-editor",
+        "explanation": ("缺陷只可能落在移动端 Composer（cloudpivot-ai/chat/chat-kit/"
+                        "components/composer/mobile/index.vue）内部：其模型入口的显示条件、"
+                        "向父组件派发的事件名，或模型弹层的层级。"),
+        "prevention": "",
+    }
+    hints4 = DefectAnalyzer._model_hints(None, ai_215890, [])
+    f4 = [h for h in hints4 if h.rsplit(".", 1)[-1].lower()
+          in ("vue", "ts", "tsx", "js", "jsx")]
+    check("10 条无扩展名候选之后，带扩展名的完整路径仍被抽出",
+          any(h.endswith("composer/mobile/index.vue") for h in f4), str(hints4))
+    check("文件提示排在提示表最前（先于任何目录提示）",
+          bool(f4) and hints4 and hints4[0] == f4[0], str(hints4[:2]))
+    check("同路径「去扩展名孪生」不再与文件提示抢预算",
+          not any(h.endswith("composer/mobile/index") for h in hints4), str(hints4))
+
     settings_file = PROJECT_ROOT / "ui_settings.json"
     if not settings_file.exists():
         print("  [SKIP] 无 ui_settings.json（未配置目标仓库），本测试需要真实目标仓库")
