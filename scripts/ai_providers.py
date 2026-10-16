@@ -10,6 +10,7 @@ Only `requests` is used — no vendor SDK — so a relay that deviates slightly 
 the official shape can still be accommodated through config.
 """
 import json
+import os
 import time
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
@@ -54,7 +55,7 @@ class AIError(Exception):
         self.status = status
         self.body = body[:1500]
         self.seconds = round(seconds, 2)
-        self.kind = kind  # config | request | http | parse
+        self.kind = kind  # config | request | http | parse | timeout（单次调用总时长超上限，主动中断）
 
     def to_dict(self) -> Dict:
         return {
@@ -597,8 +598,32 @@ def complete_stream(cfg: AIConfig, prompt: str, system: str = "",
     parts: List[str] = []
     think_parts: List[str] = []
     last_usage = None
+    # 单次调用的**总时长**上限。`iter_lines` 的超时只管「两个 chunk 之间的间隔」，
+    # 推理模型完全可以每 30s 吐一个思考 token，把总时长拖到十几分钟 —— 而调用方
+    # （fix_agent 的 deadline 只在**轮次边界**检查）根本拦不住，现场表现就是
+    # 「流水线没报错、但十几分钟毫无进展」。2026-10-16 实测：一次把额度全部烧在
+    # 推理上的调用要 182s，加倍额度后的重试更久（同一天见到 400s+、诊断期间见到
+    # 十分钟以上），而且最后仍然没有 content。宁可在这里主动断掉、把「模型在
+    # max_tokens 上打转」如实回报给上层（上层已有加倍重试与失败归类），
+    # 也不要让一条工单的白等从 3 分钟变成 15 分钟。
+    # `ai.timeout` 是用户已有的旋钮（读超时），总时长上限取它的 2 倍、最少 240s；
+    # 特殊网关可用环境变量 AI_CALL_CAP_SECONDS 覆盖。
+    try:
+        cap = float(os.environ.get("AI_CALL_CAP_SECONDS") or 0)
+    except ValueError:
+        cap = 0.0
+    if cap <= 0:
+        cap = max(float(cfg.timeout or 120) * 2.0, 240.0)
     try:
         for raw in resp.iter_lines(decode_unicode=True):
+            if time.time() - t0 > cap:
+                try:
+                    resp.close()
+                except Exception:
+                    pass
+                raise _fail(AIError(
+                    f"单次调用超过 {int(cap)}s 仍未结束（推理模型在 max_tokens 上打转，"
+                    "正文一直没开始），已主动中断", url=url, kind="timeout"))
             if not raw:
                 continue
             line = raw.strip()
