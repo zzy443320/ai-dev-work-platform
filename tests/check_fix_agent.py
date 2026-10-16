@@ -25,9 +25,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # 仓库根：别�
 sys.path.insert(0, str(Path(__file__).resolve().parent))      # tests/：本目录内的夹具
 
 from scripts.fix_agent import (  # noqa: E402
-    CONCLUSION_BUDGET, CONCLUSION_GREEN, CONCLUSION_NO_PATCH, CONCLUSION_NO_SANDBOX,
-    CONCLUSION_STALLED, CONCLUSION_UNVERIFIED, CONCLUSION_VERIFIED, FixAgent,
-    checks_signature, compare_with_baseline, parse_action, suggest_commands,
+    READ_RULES, CONCLUSION_BUDGET, CONCLUSION_GREEN, CONCLUSION_NO_PATCH,
+    CONCLUSION_NO_SANDBOX, CONCLUSION_STALLED, CONCLUSION_UNVERIFIED,
+    CONCLUSION_VERIFIED, FixAgent, _tools_text, checks_signature, compare_with_baseline,
+    parse_action, parse_embedded_actions, suggest_commands,
 )
 from scripts.sandbox import Sandbox  # noqa: E402
 
@@ -652,6 +653,144 @@ def t_dep_dirs_and_truncation():
           _is_reasoning_truncation("响应里的目标字段为空" + normal) is False)
 
 
+def t_embedded_actions():
+    """正文在前、动作在后（甚至一轮给好几个动作）必须被执行 —— 不能记成 noop。
+
+    215890 二次重放（2026-10-16）实测：修复循环原先只在「回复里有**空**
+    SEARCH/REPLACE 块」时才去捞夹带的工具调用，于是「正文 + 动作、一个块都没有」这种
+    更常见的偏离走不到救援分支 —— 整轮记成 `noop`，模型还收到一句**不实**的系统提示
+    「你这条回复既没有调用工具」。7 轮预算里烧掉两轮，最后以「轮次已用尽」认输转人工，
+    而工单真正的改动点早已躺在读取窗口里。
+    """
+    print("\n[14] 正文夹带动作 / 一轮多个动作：必须执行，不许静默空转")
+    calls = parse_embedded_actions(
+        "先看两处。\n"
+        '{"action":"call","tool":"repo_read","arguments":{"path":"src/a.js"}}\n'
+        '{"action":"call","tool":"repo_grep","arguments":{"pattern":"BUG"}}\n'
+        '{"action":"call","tool":"repo_read","arguments":{"path":"src/a.js"}}')
+    check("多个动作按出现顺序全捞出、重复的去掉",
+          [c["tool"] for c in calls] == ["repo_read", "repo_grep"], str(calls))
+    check("give_up 不从正文里捞（它必须整条回复表意清楚）",
+          parse_embedded_actions('卡住了。\n{"action":"give_up","reason":"x"}') == [])
+    check("未知工具名不认（避免正文里的 JSON 例子误触）",
+          parse_embedded_actions('{"action":"call","tool":"随便写的"}') == [])
+
+    repo = make_repo()
+    before = snapshot(repo)
+    ai = FakeAI([
+        "先读关键文件。\n"
+        '{"action":"call","tool":"repo_read","arguments":{"path":"src/a.js"}}',
+        "再看两处。\n"
+        '{"action":"call","tool":"repo_read","arguments":{"path":"package.json"}}\n'
+        '{"action":"call","tool":"repo_grep","arguments":{"pattern":"BUG"}}',
+        "一口气看四个：\n"
+        '{"action":"call","tool":"repo_list","arguments":{"path":"src"}}\n'
+        '{"action":"call","tool":"repo_list","arguments":{"path":"."}}\n'
+        '{"action":"call","tool":"repo_read","arguments":{"path":"check.py"}}\n'
+        '{"action":"call","tool":"repo_read","arguments":{"path":"src/a.js"}}',
+        "我没什么想法。",                    # 真空转：这才是 noop 该管的情况
+        json.dumps({"action": "give_up", "reason": "到此为止"}),
+    ])
+    res = agent_for(repo, ai, max_rounds=6).run({"id": "T14", "title": "x"})
+    kinds = [t.get("kind") for t in res["trace"]]
+    tools = [t.get("tool") for t in res["trace"] if t.get("kind") == "tool"]
+    # 每轮在轨迹里是「reply + 若干 tool」，所以只按 tool 序列核对
+    check("夹带动作的轮次按工具执行，一轮两个动作也执行两个",
+          tools[:3] == ["repo_read", "repo_read", "repo_grep"], str(tools))
+    check("一轮给 4 个动作时只执行前 3 个（防它把回复写成工具清单）",
+          tools[3:] == ["repo_list", "repo_list", "repo_read"], str(tools))
+    check("真空转才记 noop，且只在那一轮（6 个 tool + 1 个 noop）",
+          kinds.count("noop") == 1 and kinds.count("tool") == 6
+          and kinds[-2:] == ["noop", "reply"], str(kinds))
+    # 第 N 轮的反馈出现在第 N+1 次调用的 prompt 里（prompts[i] 对第 i+1 轮）
+    p1 = ai.prompts[1]["prompt"] if len(ai.prompts) > 1 else ""
+    p2 = ai.prompts[2]["prompt"] if len(ai.prompts) > 2 else ""
+    p3 = ai.prompts[3]["prompt"] if len(ai.prompts) > 3 else ""
+    p4 = ai.prompts[4]["prompt"] if len(ai.prompts) > 4 else ""
+    check("工具结果真的回喂给模型（夹带的那一轮不是白执行）",
+          "### 工具 repo_read" in p1 and "### 工具 repo_grep" in p2,
+          p2[-300:][:160])
+    check("超出上限时如实说「只执行了前 3 个」", "只执行了前 3 个" in p3, p3[-300:][:160])
+    check("空转提示不再谎称「没调用工具」（说的是「一个动作都没找到」）",
+          "一个动作都没找到" in p4 and "既没有调用工具" not in p4, p4[-300:][:200])
+    check("仓库未被动过", snapshot(repo) == before)
+
+
+def t_model_failures_dont_kill_run():
+    """模型调用失败（空回复 / 推理吃光 max_tokens）是**随机**的，不该一次就判「修不了」。
+
+    2026-10-16 实测（真实网关 + deepseek-flash）：同一份提示词 5 次调用里 3 次返回空内容
+    （reasoning_tokens = max_tokens，content 一个字没有），另 2 次正常。旧行为是第一次
+    失败就 break 整个循环 → 工单直接转人工，把「运气差」记成「模型没招」。现在按连续
+    失败计数（成功即清零），连败到上限才收工，并明确写成「模型不可用」而不是「没补丁」。
+    """
+    print("\n[15] 模型调用失败：重试该轮，而不是杀掉整个循环")
+    err = "响应里的目标字段为空：模型把 max_tokens 全部用在了推理上"
+    repo = make_repo()
+    ai = FakeAI([Exception(err), patch_reply()])
+    res = agent_for(repo, ai, max_rounds=4).run({"id": "T15", "title": "x"})
+    check("第一次模型失败后循环继续，第二轮照样拿到补丁",
+          res["patch_text"].startswith("这次把")
+          and res["conclusion"] in (CONCLUSION_GREEN, CONCLUSION_VERIFIED),
+          f"{res['conclusion']} / {res['patch_text'][:40]!r}")
+    check("失败原因如实进 notes",
+          any("max_tokens" in s for s in res["notes"]), str(res["notes"])[:180])
+    saw = ai.prompts[1]["prompt"] if len(ai.prompts) > 1 else ""
+    check("告诉模型「这一轮调用失败，不是你的问题」",
+          "模型调用失败" in saw, saw[-260:][:170])
+
+    repo2 = make_repo()
+    ai2 = FakeAI([Exception("响应里的目标字段为空（空响应）") for _ in range(8)])
+    res2 = agent_for(repo2, ai2, max_rounds=6).run({"id": "T15b", "title": "x"})
+    check("连败到上限（3 次）就收工，不再白烧后面几轮", res2["rounds"] == 3,
+          str(res2["rounds"]))
+    check("结论指向「模型不可用」而不是含糊的「没补丁」",
+          any("模型未返回任何内容" in s for s in res2["notes"]), str(res2["notes"])[:200])
+    check("没有伪造 attempt", res2["attempts"] == [], str(len(res2["attempts"])))
+
+
+def t_rounds_starved_and_prompt_budget():
+    """轮次是最贵的资源：提示词必须教模型「一轮多给几个动作」「确定案发现场就整段读」，
+    并在倒数第二轮提前告知「下一轮不能再调工具」。
+
+    2026-10-16（工单 215890 二次重放）：7 轮预算里 5 轮各只读了一个文件，真凶文件
+    （718 行）的脚本段直到轮次耗尽都没读到，最后一轮被规则禁止调工具 → 只能 give_up。
+    记录里 attempts 为空、rounds 顶到 max_rounds、trace 全是 tool 轮 —— 缺的是**预算
+    效率**，不是能力（归类见 postmortem 的 rounds_starved）。所以这里把效率契约钉死。
+    """
+    print("\n[16] 轮次预算：一轮多动作 + 倒数第二轮提醒")
+    tt = _tools_text()
+    check("工具说明书说明「一轮可给 1~3 个动作」", "1~3 个" in tt)
+    check("工具说明书说明 repo_read 不给 end 就读到文件尾", "文件尾" in tt)
+    check("查仓库规矩点明「轮次 = 一次模型调用」", "轮次 = 一次模型调用" in READ_RULES)
+    check("查仓库规矩要求别把一个文件切成好几次读", "别把一个文件切成好几次读" in READ_RULES)
+
+    repo = make_repo()
+    before = snapshot(repo)
+    ai = FakeAI([
+        json.dumps({"action": "call", "tool": "repo_grep",
+                    "arguments": {"pattern": "BUG"}}),
+        json.dumps({"action": "call", "tool": "repo_read",
+                    "arguments": {"path": "src/a.js"}}),
+        patch_reply(),
+    ])
+    res = agent_for(repo, ai, max_rounds=3).run({"id": "T16", "title": "x"})
+    check("3 轮预算（2 轮查代码 + 1 轮交补丁）也能产出补丁",
+          res["patch_text"].startswith("这次把")
+          and res["conclusion"] in (CONCLUSION_GREEN, CONCLUSION_VERIFIED),
+          f"{res['conclusion']} / {res['patch_text'][:40]!r}")
+    # max_rounds=3 → 第 2 轮正是「倒数第二轮」，此时一次补丁都还没交
+    p1 = ai.prompts[0]["prompt"] if ai.prompts else ""
+    p2 = ai.prompts[1]["prompt"] if len(ai.prompts) > 1 else ""
+    p3 = ai.prompts[2]["prompt"] if len(ai.prompts) > 2 else ""
+    check("常规轮提示本轮的动作上限", "本轮最多可给 3 个动作" in p1)
+    check("倒数第二轮提前预告「下一轮就是最后一轮、不能再调工具」",
+          "下一轮就是最后一轮" in p2 and "不能再调用工具" in p2, p2[-300:])
+    check("最后一轮仍然禁止调工具（只能交补丁或 give_up）",
+          "最后一轮" in p3 and "不要再调用工具" in p3)
+    check("跑完仓库仍未被动过", snapshot(repo) == before)
+
+
 def main():
     print("== agentic 修复循环行为用例 ==")
     t_isolation_and_red_to_green()
@@ -667,6 +806,9 @@ def main():
     t_pipeline_wiring()
     t_config_roundtrip()
     t_dep_dirs_and_truncation()
+    t_embedded_actions()
+    t_model_failures_dont_kill_run()
+    t_rounds_starved_and_prompt_budget()
     print("\n" + ("ALL PASS" if not FAIL else f"{len(FAIL)} FAIL: {FAIL}"))
     sys.exit(1 if FAIL else 0)
 

@@ -43,12 +43,22 @@ from .sandbox import CmdResult, Sandbox, resolve_sandbox_cfg
 DEFAULT_MAX_ROUNDS = 8
 DEFAULT_DEADLINE_SECONDS = 360
 DEFAULT_MAX_STALL = 3
+# 连续多少轮「模型调用本身失败（空内容/超时，不是模型不干活）」才停止转人工。
+# 起点是 1（一次失败就杀掉整个循环）：推理模型的失败是**随机**的——同一份提示词
+# 有时 2.7k 推理就收尾、有时把 32k 额度全烧在思考上、正文一个字都没有
+# （2026-10-16 实测 5 次调用里 3 次空）。一次就收工等于把「运气差」判成「修不了」。
+# 给 3 次机会，代价被轮次预算与 deadline 双向封住。
+DEFAULT_MAX_MODEL_FAILURES = 3
 DEFAULT_NOTE_BUDGET = 60000
 # 复现环节要先占一轮（写用例 + 跑红），不额外给预算就会把修代码的轮次挤光
 DEFAULT_REPRO_EXTRA_ROUNDS = 2
 DEFAULT_REPRO_MAX_REWRITE = 2
 REPRO_CHECK_NAME = "repro"
 # 单轮送进模型的验证输出上限：再长就该用更精确的命令，而不是把日志整份吞进上下文
+# 一轮回复里夹带的工具调用，最多执行几个：模型偶尔一口气给两三个（读两个文件、
+# 或 grep 完再读）。按顺序执行掉比丢掉划算——丢掉就是白烧一轮预算（见
+# `parse_embedded_actions` 的事故注释）。上限只是防它把一条回复写成工具清单。
+MAX_ACTIONS_PER_REPLY = 3
 MAX_FEEDBACK_CHARS = 6000
 MAX_DIFF_CHARS = 4000
 
@@ -147,7 +157,13 @@ AGENT_SYSTEM = """\
 
 READ_RULES = """\
 ## 查仓库的规矩
-- 先 `repo_grep` 拿到「路径:行号」，再用 `repo_read` 的 start/end 读 ±30 行窗口；不要一上来就读大文件。
+- ⭐ **轮次 = 一次模型调用，是你最贵的资源**。查代码时**一轮可以给 1~3 个动作 JSON**
+  （系统按顺序执行；超过 3 个只执行前 3 个）。要同时看 3 个候选文件、或同时搜 3 组关键词，
+  **一轮就一起给出来**，别一次只问一个 —— 215890 实测：7 轮预算里有 5 轮花在「一次只读一个文件」上，
+  真凶文件的脚本段直到轮次耗尽都没读到，只能认输。
+- 先用 `repo_grep` 拿到「路径:行号」再读，但**别把一个文件切成好几次读**：一旦确定它是案发现场，
+  `repo_read` 只给 `path`（不给 `end`）就一次读到文件尾 —— 单次上限 12000 字符，700 行的 vue 一次读完够用。
+  分片读只用在「文件特别大、你只要其中一段」的情况。
 - 报错堆栈里点名的文件（工单里有的话）几乎就是案发现场，优先读它。
 - ⭐ **工单里写的路径可能是过时的**（少一层 `runtime/` 之类）。`repo_read` 报「文件不存在」时
   它会把仓库里同名/相近的真实路径一并给你，照着重试；也可以 `repo_grep` 搜类名/文件名。
@@ -191,7 +207,8 @@ BROWSER_RULES = """\
 def _tools_text(browser: bool = False) -> str:
     rows = [
         ("repo_list", "列目录：{\"path\": \"packages/app/src\"}"),
-        ("repo_read", "读文件：{\"path\": \"…\", \"start\": 120, \"end\": 160}"),
+        ("repo_read", "读文件：{\"path\": \"…\", \"start\": 120, \"end\": 160}；"
+                      "**不给 end 就一次读到文件尾**（改一处 bug 常需要整段上下文时用它）"),
         ("repo_grep", "搜代码：{\"pattern\": \"getFinalContent\", \"glob\": \"*.vue\"}"),
         ("repro_add", "写复现用例（沙箱内新建文件，立刻在未修复代码上跑一次）："
                       "{\"path\": \"…\", \"content\": \"…\"}"),
@@ -212,7 +229,9 @@ def _tools_text(browser: bool = False) -> str:
                         "\"target\": \"CSS选择器\"}], \"with_patch\": \"last\"}。"
                         "actions 可省（只打开页面）；with_patch=last 表示先把上一份已构建的"
                         "补丁落进沙箱再看，看完自动还原；不带它看到的是**未打补丁**的基线页面"))
-    return "\n".join(f"- `{n}` {d}" for n, d in rows)
+    head = ("一轮回复里可以给 **1~3 个**动作 JSON（按出现顺序执行；第 4 个起本轮不执行）。"
+            "要同时读几个文件、搜几组词，**一轮一起给**最省轮次。\n")
+    return head + "\n".join(f"- `{n}` {d}" for n, d in rows)
 
 
 # ------------------------------------------------------------------ 动作解析
@@ -243,27 +262,31 @@ def parse_action(text: str) -> Optional[Dict]:
             "arguments": args if isinstance(args, dict) else {}}
 
 
-def parse_embedded_action(text: str) -> Optional[Dict]:
-    """从「正文 + 夹带 action JSON」的回复里捞出最后一个**工具调用**。
+def parse_embedded_actions(text: str) -> List[Dict]:
+    """从「正文 + 夹带 action JSON」的回复里捞出**全部**工具调用（按出现顺序）。
 
-    ⭐ 契约要求整条回复只有一个 JSON，但模型偶尔会把 tool call 写在说明文字中间。
-    215890 第 4 轮原文是：
+    ⭐ 契约要求整条回复只有一个 JSON，但模型真实行为是「正文在前、动作在后」，而且
+    一轮常常给两个动作。215890 二次重放（2026-10-16）抓到的两轮原文是：
 
-        <<<<<<< SEARCH packages/cloudpivot-ai/lui/pages/schedule/schedule-editor.vue
-        =======
-        >>>>>>> REPLACE
+        先读关键嫌疑文件。
+        {"action":"call","tool":"repo_read","arguments":{...}}
+        {"action":"call","tool":"repo_read","arguments":{...}}
 
-        Wait — 我不能这样空提交。先查仓库。
-        {"action":"call","tool":"repo_grep","arguments":{...}}
+    `parse_embedded_action` 原本只被「回复里有**空** SEARCH/REPLACE 块」那条分支调用，
+    这种一个块都没有的回复根本走不到，于是整轮被记成 `noop`，模型还收到一句**不实**的
+    系统提示「你这条回复既没有调用工具，也没有给出 SEARCH/REPLACE 块，因此什么都没发生」
+    —— 它明明调了两次。7 轮预算里烧掉两轮，最后以「轮次已用尽」认输转人工。
+    所以改成：只要是已知工具的调用，不管写在正文哪个位置、给了几个，都按顺序捞出来，
+    由调用方决定本轮执行几个（`MAX_ACTIONS_PER_REPLY`）。
 
-    旧解析只认「整条回复以 `{` 开头」，这一轮于是两头落空：既没执行 grep，又把一段
-    **空 SEARCH/REPLACE** 当成补丁交去沙箱（目标文件还不存在），白烧一轮——而它的预算
-    只有 7 轮。只认工具调用，不认识 verdict / give_up：这两个要整条回复表意清楚才算数。
+    另一起事故（空块占位）见调用点注释：只认工具调用，不认识 verdict / give_up ——
+    这两个必须整条回复表意清楚才算数，不能从正文里「猜」出来。
     """
     t = _strip_dsml(text or "")
     known = {"repo_list", "repo_read", "repo_grep", "repro_add", "api_probe",
              "check_run", "browser_look"}
-    best: Optional[Dict] = None
+    out: List[Dict] = []
+    seen = set()
     for m in re.finditer(r"\{", t):
         try:
             obj, _end = json.JSONDecoder().raw_decode(t[m.start():])
@@ -276,9 +299,21 @@ def parse_embedded_action(text: str) -> Optional[Dict]:
         if str(obj.get("tool") or "").strip() not in known:
             continue
         cand = parse_action(json.dumps(obj, ensure_ascii=False))
-        if cand and cand.get("tool"):
-            best = cand
-    return best
+        if not (cand and cand.get("tool")):
+            continue
+        key = (cand["tool"], json.dumps(cand.get("arguments") or {},
+                                        sort_keys=True, ensure_ascii=False))
+        if key in seen:  # 同一条回复里复读同一个动作没有意义
+            continue
+        seen.add(key)
+        out.append(cand)
+    return out
+
+
+def parse_embedded_action(text: str) -> Optional[Dict]:
+    """兼容入口：取夹带工具调用里的**最后一个**（空块占位场景下的真实意图）。"""
+    calls = parse_embedded_actions(text)
+    return calls[-1] if calls else None
 
 
 def compare_with_baseline(baseline: Dict[str, bool], after: Dict[str, bool]) -> Dict:
@@ -378,6 +413,8 @@ class FixAgent:
         self.deadline_seconds = _int(self.cfg.get("deadline_seconds"),
                                      DEFAULT_DEADLINE_SECONDS, 30, 1800)
         self.max_stall = _int(self.cfg.get("max_stall"), DEFAULT_MAX_STALL, 1, 8)
+        self.max_model_failures = _int(self.cfg.get("max_model_failures"),
+                                       DEFAULT_MAX_MODEL_FAILURES, 1, 10)
         self.note_budget = _int(self.cfg.get("note_budget"), DEFAULT_NOTE_BUDGET, 8000, 400000)
         self.command_timeout = _int(self.cfg.get("per_command_timeout"), 240, 10, 1800)
         self.sandbox_cfg = resolve_sandbox_cfg(self.cfg)
@@ -530,6 +567,10 @@ class FixAgent:
         verdict_tries = 0
         verdict_asked = False
         adapted = False
+        self._model_failures = 0
+        self._last_ask_error = ""
+        # 到目前交过几次补丁（`_prompt` 要在「倒数第二轮」提醒里用，见那处注释）
+        self._patch_attempts = 0
 
         try:
             for rnd in range(1, self.max_rounds + 1):
@@ -551,9 +592,28 @@ class FixAgent:
                     break
                 text = self._ask(reader, context, rnd, deadline, result)
                 if text is None:
-                    conclusion = CONCLUSION_NO_PATCH
-                    broke_early = True
-                    break
+                    # ⭐ 模型调用失败（推理吃光 max_tokens 导致空内容 / 网关超时）**不是**
+                    # 「模型修不了」：同一条提示词下一次可能就正常返回（2026-10-16 实测
+                    # 5 次调用里 3 次空、2 次正常）。旧行为是一次失败就 break 整个循环，
+                    # 于是把运气问题判成能力问题、工单直接转人工。现在按「连续失败」计数：
+                    # 中间任何一次成功就清零，连败到上限才收工（总时长仍由 deadline 兜住）。
+                    self._model_failures += 1
+                    err = self._last_ask_error or "模型没有返回内容"
+                    if self._model_failures >= self.max_model_failures:
+                        conclusion = CONCLUSION_NO_PATCH
+                        result["notes"].append(
+                            f"连续 {self._model_failures} 轮模型未返回任何内容"
+                            f"（网关空响应 / 推理吃光 max_tokens，不是模型不会修）：{err[:200]}。"
+                            "已停止，按「模型不可用」处理。")
+                        broke_early = True
+                        break
+                    context.append(
+                        f"### 系统（第 {rnd} 轮）\n这一轮**模型调用失败**，不是你的问题："
+                        f"{err[:200]}\n"
+                        "请把你上一轮想做的动作（一个 action JSON）或补丁块重新提交一次；"
+                        "如果刚才只是一个说明性的回复，直接给出动作或补丁即可。")
+                    continue
+                self._model_failures = 0
                 action = parse_action(text)
                 if action and action.get("give_up"):
                     conclusion = CONCLUSION_STALLED
@@ -591,21 +651,29 @@ class FixAgent:
                 usable = [b for b in blocks
                           if str(getattr(b, "search", "") or "").strip()
                           or str(getattr(b, "replace", "") or "").strip()]
-                if blocks and not usable:
-                    # 空 SEARCH/REPLACE（模型「先占位、再去查仓库」）不值得当补丁交：那一轮
-                    # 必定以「文件不存在 / SEARCH 为空」失败，而它往往同时夹带了真正的工具
-                    # 调用（215890 第 4 轮）。有工具就先执行工具，空块丢掉。
-                    emb = parse_embedded_action(text)
-                    if emb and emb.get("tool"):
-                        context.extend(self._exec_tool(emb["tool"], emb["arguments"],
+                # ⭐ 没有可用的补丁块时，先看这条回复里有没有**夹带的工具调用**：模型
+                # 经常「正文在前、动作在后」，甚至一轮给两个动作。以前只有「有空
+                # SEARCH/REPLACE 块」才会去捞（第 4 轮那种占位式回复），于是
+                # 「正文 + 动作」被整轮记成 noop，还回它一句不实的「你什么都没调用」
+                # ——215890 二次重放里 7 轮有 2 轮是这么烧掉的，最后认输。
+                embedded = [] if (blocks and usable) else parse_embedded_actions(text)
+                if embedded:
+                    for call in embedded[:MAX_ACTIONS_PER_REPLY]:
+                        context.extend(self._exec_tool(call["tool"], call["arguments"],
                                                        reader, sandbox, commands, rnd))
                         result["trace"].append({"round": rnd, "kind": "tool",
-                                                "tool": emb["tool"]})
-                        continue
+                                                "tool": call["tool"]})
+                    if len(embedded) > MAX_ACTIONS_PER_REPLY:
+                        context.append(
+                            f"### 系统（第 {rnd} 轮）\n你这条回复里有 {len(embedded)} 个动作，"
+                            f"本轮只执行了前 {MAX_ACTIONS_PER_REPLY} 个。一轮只给一个动作 JSON，"
+                            "多余的下一轮再说。")
+                    continue
                 if blocks:
                     attempt = self._try_patch(text, blocks, sandbox, commands,
                                               baseline, rnd)
                     attempts.append(attempt)
+                    self._patch_attempts = len(attempts)
                     context.extend(self._attempt_feedback(attempt, rnd))
                     self._stage(
                         f"第 {rnd} 轮补丁验证：{attempt['conclusion']}"
@@ -651,9 +719,14 @@ class FixAgent:
                     continue
                 result["trace"].append({"round": rnd, "kind": "noop"})
                 context.append(
-                    "### 系统（第 %d 轮）\n你这条回复既没有调用工具，也没有给出 "
-                    "SEARCH/REPLACE 块，因此什么都没发生。请二选一：查代码（只输出一个 "
-                    "action JSON）或交补丁（输出 SEARCH/REPLACE 块）。" % rnd)
+                    "### 系统（第 %d 轮）\n这条回复里我**一个动作都没找到**（没有可识别的 "
+                    "action JSON，也没有 SEARCH/REPLACE 块），所以这一轮什么都没发生，"
+                    "白烧了一轮。请二选一：\n"
+                    "- 查代码：给一个**完整**的 action JSON（可以带说明文字，JSON 本身要完整、"
+                    '键名写全），例如 {"action":"call","tool":"repo_read","arguments":'
+                    '{"path":"…","start":1,"end":120}}；\n'
+                    "- 交补丁：给出 SEARCH/REPLACE 块（SEARCH 必须是文件里的原文）。\n"
+                    "注意别把动作写成散文，也别给重复的同一个动作。" % rnd)
             if not broke_early:
                 conclusion = CONCLUSION_BUDGET if attempts else CONCLUSION_NO_PATCH
         finally:
@@ -762,6 +835,7 @@ class FixAgent:
         # 模型想再看可以重新调 browser_look——不要让同一张图反复烧上下文预算。
         self._pending_images = []
         if res.get("error"):
+            self._last_ask_error = str(res["error"])
             result["notes"].append(f"模型调用失败：{str(res['error'])[:300]}")
             self._stage(f"模型调用失败：{str(res['error'])[:160]}", status="fail")
             return None
@@ -778,7 +852,8 @@ class FixAgent:
             "## 任务\n处理下面这条缺陷工单。你可以用工具查仓库、提交候选补丁、"
             "在沙箱里跑命令。每提交一次补丁，系统都会给你**真实的**验证结果。\n\n"
             "### 可用工具\n" + _tools_text(browser=has_browser)
-            + f"\n\n轮次预算：{self.max_rounds} 轮（一次「提交补丁 + 验证」算一轮）。",
+            + f"\n\n轮次预算：{self.max_rounds} 轮。**每一次你的回复都算一轮**（查代码也算），"
+            "所以「一轮多给几个动作」直接决定你能查多少代码。",
             READ_RULES,
             PATCH_RULES,
             GIVE_UP_RULES,
@@ -792,9 +867,21 @@ class FixAgent:
         if rnd >= self.max_rounds:
             parts.append("## 最后一轮\n这是本轮缺陷能用的最后一轮。**不要再调用工具**："
                          "要么给出你认为最佳的一份 SEARCH/REPLACE 补丁，要么 give_up 说明卡在哪。")
+        elif rnd >= self.max_rounds - 1 and not self._patch_attempts:
+            # ⭐ 倒数第二轮、且一次补丁都还没交 → 模型正踩在「查不完就只能认输」的边缘上。
+            # 215890 二次重放（2026-10-16）就是这样：7 轮里 5 轮一次只读一个文件，
+            # 到最后一轮被规则禁止调用工具，只能 give_up —— 而它离真凶只差 1 次读
+            # （脚本段 281-718 行没读到）。这一轮把机制向它说清楚：本轮还能读（可一次给
+            # 2~3 个动作），下一轮只能交补丁。
+            parts.append(
+                f"## 倒数第二轮（还剩 {self.max_rounds - rnd} 轮 / {left}s）\n"
+                "⚠ **下一轮就是最后一轮，而最后一轮不能再调用工具**（只能交补丁或 give_up）。\n"
+                "所以本轮把你**还差的上下文一次读完**：一轮可以给 2~3 个动作（例如同时读某个"
+                "文件的脚本段、再搜一个事件名/属性名），下一轮必须交出 SEARCH/REPLACE 补丁。\n"
+                "如果现在信息已经够了，也可以本轮直接交补丁。")
         else:
-            parts.append(f"## 现在（第 {rnd} 轮，剩余 {self.max_rounds - rnd} 轮 / {left}s）\n"
-                         "按协议继续。")
+            parts.append(f"## 现在（第 {rnd} 轮，剩余 {self.max_rounds - rnd} 轮 / {left}s，"
+                         "本轮最多可给 3 个动作）\n按协议继续。")
         return "\n\n".join(parts)
 
     # ---------------------------------------------------------------- 种子上下文
