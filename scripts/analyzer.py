@@ -577,14 +577,20 @@ class DefectAnalyzer:
             dir_hints = [h for h in hints if h not in file_hints]
             snippets2, meta2 = dict(snippets), list(meta)
             forced: List[str] = []
+            # 模型**明确点名**的文件（③ 要用它的同目录邻居做扩散开窗）
+            hint_files: List[str] = []
             # 预算按「成功开窗数」计，不是按提示条数截断：模型常把已读过的
             # 文件再点一遍、或点名一个不存在的文件（幻觉名）——若在解析前
             # 就 [:2] 截断，真提示会被前面两条废提示挤掉（工单 214872：
             # file_hints=['edit-method_table.vue'(已读), 'edit-method_sap.vue'
             # (不存在), 'method-extra-fields.vue'(真改动点)]，第三条永远轮不到）。
+            # ⭐ 上限 2 → 3（2026-10-16，215890 第 4 趟）：模型在结论里按**完整路径**
+            # 点名了三份文件（`composer/mobile/index.vue`、`composer-mobile-toolbar.vue`、
+            # `composer.mixin.ts`）并明说「缺陷取决于三份未被提供的文件」——只开 2 个
+            # 就一定少一份，而它已经指得很准了。总量仍由 max_files+4 兜住。
             opened_file_hints = 0
             for fp in file_hints:
-                if opened_file_hints >= 2 or len(snippets2) >= self.max_files + 4:
+                if opened_file_hints >= 3 or len(snippets2) >= self.max_files + 4:
                     break
                 resolved = self._resolve_file_hint(fp)
                 if not resolved or resolved in snippets2:
@@ -596,6 +602,7 @@ class DefectAnalyzer:
                     if note:
                         meta2.append(note)
                     forced.append(resolved)
+                    hint_files.append(resolved)
                 opened_file_hints += 1
             # ② 目录提示的直接子组件强制开窗：模型点名目录时，真正的流程/
             # 校验主组件常因关键词得分不如目录里的报告/预览组件而进不了窗口
@@ -620,6 +627,35 @@ class DefectAnalyzer:
                         if note:
                             meta2.append(note)
                         forced.append(rel)
+            # ③ ⭐ 点名文件的**同目录邻居**也要开窗（2026-10-16，215890 第 4 趟重放）。
+            # 模型点名某个文件之后，答案经常就在它旁边：同一个功能模块拆成
+            # `index.vue` + `xxx-toolbar.vue` + 上一级的 `xxx.mixin.ts` 是这类仓库的常态。
+            # 第 4 趟实测：模型被强制开窗拿到 `composer/mobile/index.vue` 之后，结论变成
+            # 「openModelPanel / selectMobileModel / <ComposerMobileModelPanel> 三处全是转发
+            # 逻辑，缺陷取决于**三份未被提供的文件**」—— 而那三份正是它的同目录 / 上一级
+            # 目录邻居。偏偏这一轮的目录提示是 `keepEditorExpanded/showSubmit`、`props/events`
+            # 这类**标识符**（`_resolve_dir_hint` 解析不出目录），于是邻居一个都没进窗口，
+            # 7 轮耗尽只能认输。邻居同样走关键词命中排序（`_dir_entry_children`），
+            # 且只吃剩余预算；不作为「点名文件」记进 note（那个措辞要如实）。
+            if hint_files and len(snippets2) < self.max_files + 4:
+                sib_dirs: List[str] = []
+                for rel in hint_files:
+                    for d in self._sibling_dirs(rel, up=2):
+                        if d not in sib_dirs:
+                            sib_dirs.append(d)
+                for d in sib_dirs[:2]:
+                    if len(snippets2) >= self.max_files + 4:
+                        break
+                    for rel in self._dir_entry_children(d, keywords):
+                        if len(snippets2) >= self.max_files + 4:
+                            break
+                        if rel in snippets2:
+                            continue
+                        t, note = self._read_one(rel, keywords)
+                        if t is not None:
+                            snippets2[rel] = t
+                            if note:
+                                meta2.append(note)
             if dir_hints:
                 merged = (dir_hints + list(path_tokens))[:8]
                 kws2, _ = self._extract_keywords(text + "\n" + " ".join(dir_hints))
@@ -1213,6 +1249,25 @@ class DefectAnalyzer:
                 if idx >= 0:
                     return f[:idx + len(tail)]
         return ""
+
+    @staticmethod
+    def _sibling_dirs(rel: str, up: int = 2) -> List[str]:
+        """点名文件的「同目录 → 上一级目录 → …」候选（邻居扩散开窗用）。
+
+        215890 第 4 趟实测：模型摸到 `composer/mobile/index.vue` 后结论是
+        「三处全是转发逻辑，缺陷取决于三份**未被提供**的文件」，而那三份就在它的
+        同目录与上一级目录里（`composer-mobile-toolbar.vue` / `composer.mixin.ts`）。
+        上一级也要给：同一个功能模块常拆成 `mobile/` + 上一级的 `xxx.mixin.ts`。
+        只返回既有的祖先目录（不含文件名），空串/裸文件名返回空列表。
+        """
+        parts = [p for p in str(rel or "").split("/") if p]
+        out: List[str] = []
+        for cut in range(1, max(1, int(up)) + 1):
+            if len(parts) > cut:
+                d = "/".join(parts[:-cut])
+                if d and d not in out:
+                    out.append(d)
+        return out
 
     def _dir_entry_children(self, dir_rel: str, keywords: List[str],
                             limit: int = 3) -> List[str]:

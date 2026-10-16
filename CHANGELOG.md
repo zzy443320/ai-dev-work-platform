@@ -610,3 +610,10 @@
 - 做法：把「窗口」和「补丁」拆成两件事——补丁是这一轮的**产出**，窗口是真金白银查出来的**信息**，不能因为没产出就把信息也扔了。重试的 else 分支现在**无条件采纳** `snippets2` / `meta2` / `fresh`（第一轮的结论字段优先级不变，仍然让第二轮更新的结论覆盖）。
 - 文件：scripts/analyzer.py（二次定位 else 分支提交窗口）、README.md、tests/check_locate_regression3.py（新增 [6] 端到端两条判断）
 - 影响：只影响定位阶段的窗口组成。验收方式是**离线重放**（`.scratch/replay_locate_offline.py`，喂落盘回答，不花 token）：改前 `read_files` 6 个全是 `schedule/*`、真凶不在其中；改后真凶 `packages/cloudpivot-ai/chat/chat-kit/components/composer/mobile/index.vue` 及其三个兄弟（`composer.mixin.ts`、`composer/index.vue`、`composer-mobile-toolbar.vue`）都进了 `read_files`——正是模型在说明里说它需要的 `ComposerMobileToolbar` 那一块。新增用例 [6] 用真仓库 + 桩模型跑**完整 `analyze()`**（只断言提示抽取是不够的，死因在后半段）。
+
+## 2026-10-16 17:40 · 修复 · 拿到真凶还不够：模型要的「隔壁那两个文件」也得一起进窗口
+
+- 内容：改完上面两条之后拿真实网关又重放了一趟 215890，**同一份工单三次重放、三个完全不同的死法**，这一趟暴露的是第三层。前两层确实好了：定位 554s → **306s**，单轮从 20~243s 降到 ~34s，7 轮里模型发了 **12 次工具调用（改前 6 次）**——「一轮给 1~3 个动作」的提示词真的生效了；`read_files` 的第一名就是真凶 `packages/cloudpivot-ai/chat/chat-kit/components/composer/mobile/index.vue`（改前**根本不在窗口里**）。新的失败方式其实更"高级"：模型读完主文件后给出结论「`openModelPanel` / `selectMobileModel` / `<ComposerMobileModelPanel>` 三处全是转发逻辑，缺陷取决于**三份未被提供的文件**」，并明确拒绝按其自身规则交出猜测补丁（它还举例说明：给 schedule-editor 调 `popupZIndex` 极可能无效，因为 composer 内的默认值 2000 本就更高）。而那三份文件，全部是**我们刚刚强制开窗的那个文件的隔壁邻居**。
+- 做法：① **邻居扩散开窗**：模型点名某个文件后，把它的**同目录 + 上一级目录**里的相关文件也开进窗口（上一级必须给——同一功能模块常拆成 `mobile/` + 上一级的 `xxx.mixin.ts`）。走的是同一套关键词命中排序（`_dir_entry_children`，新增纯函数 `_sibling_dirs` 算目录），且**只吃剩余预算**、不计入「点名文件」的措辞。② 点名文件的开窗上限 **2 → 3**：模型这次按完整路径一次点名了三份文件并明说「取决于三份」，只开 2 个就一定少一份，而它已经指得很准了（总量仍由 `max_files + 4` 兜住）。
+- 文件：scripts/analyzer.py（`_sibling_dirs` + 邻居扩散 + 上限 2→3）、tests/check_locate_regression3.py（[4] 新增 2 条纯函数断言）
+- 影响：只影响定位窗口组成。**离线验收**（`.scratch/replay_locate_offline.py` 喂落盘回答、真仓库、桩模型）改后 `read_files` = 真凶 `composer/mobile/index.vue` + `composer/composer.mixin.ts` + `composer/index.vue` + `composer/mobile/composer-mobile-toolbar.vue` + 6 个 `schedule/*`——**正是模型点名的「三份未被提供的文件」**，修复 agent 不必再花轮次自己找。⚠ 这一趟还量到一件事：第 7 轮（最后一轮）时墙钟**还剩 684s**、轮次已用尽——**轮次预算**仍然是绑定约束，要更多轮就去 配置→修复策略→轮次预算 调大，不是改代码。

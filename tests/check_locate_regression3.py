@@ -66,6 +66,19 @@ def main() -> int:
           bool(f4) and hints4 and hints4[0] == f4[0], str(hints4[:2]))
     check("同路径「去扩展名孪生」不再与文件提示抢预算",
           not any(h.endswith("composer/mobile/index") for h in hints4), str(hints4))
+    # 邻居扩散：点名文件的「同目录 + 上一级目录」——215890 第 4 趟模型明说
+    # 「缺陷取决于三份未被提供的文件」，而那三份正是它的同目录/上级目录邻居
+    # （composer-mobile-toolbar.vue / composer.mixin.ts）。上一级必须给：同一功能
+    # 模块常拆成 `mobile/` + 上一级的 `xxx.mixin.ts`。
+    sd = DefectAnalyzer._sibling_dirs(
+        "packages/x/chat/chat-kit/components/composer/mobile/index.vue")
+    check("邻居目录取「同目录 + 上一级」（且在上一层就停）",
+          sd == ["packages/x/chat/chat-kit/components/composer/mobile",
+                 "packages/x/chat/chat-kit/components/composer"], str(sd))
+    check("裸文件名/空串没有邻居目录（不许把仓库根当目录扫）",
+          DefectAnalyzer._sibling_dirs("index.vue") == []
+          and DefectAnalyzer._sibling_dirs("") == []
+          and DefectAnalyzer._sibling_dirs("a/b.vue", up=1) == ["a"], "")
 
     settings_file = PROJECT_ROOT / "ui_settings.json"
     if not settings_file.exists():

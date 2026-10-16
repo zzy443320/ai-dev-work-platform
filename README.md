@@ -213,6 +213,12 @@ pytest 只当收编器：`tests/suite_pytest.py` 用子进程跑筛过的安全�
 `read_files`（修复 agent 的上下文），而改前 6 个窗口全是 `schedule/*`。
 用例 `tests/check_locate_regression3.py [4][6]`（已并入 convergence；[6] 用真仓库 + 桩模型跑
 完整 `analyze()`，只断言提示抽取是不够的——死因在后半段）。
+**而且「拿到那个文件」还不够**：模型摸到真凶后常常发现「改法取决于它的隔壁」——第 4 趟重放的
+结论就是「三处全是转发逻辑，缺陷取决于三份未被提供的文件」。所以现在还会把它**同目录 + 上一级
+目录**的相关文件一起开进窗口（`_sibling_dirs` + 既有的关键词命中排序，只吃剩余预算），
+点名文件的开窗上限也从 2 提到 3（模型常一次点三份）。离线复算：`read_files` = 真凶 +
+`composer.mixin.ts` + `composer/index.vue` + `composer-mobile-toolbar.vue` + 原 6 个
+`schedule/*`，正是它要的那三份。
 
 看落盘提案到底卡在哪一类、下一步该做什么：
 
