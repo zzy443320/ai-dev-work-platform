@@ -203,7 +203,16 @@ pytest 只当收编器：`tests/suite_pytest.py` 用子进程跑筛过的安全�
 `packages/…/composer/mobile/index.vue`，718 行），抽出来却是「点名文件 -」，窗口里只剩一堆
 `lui/**/schedule/*.vue`；修复 agent 只能靠 grep 重新找，读到 280 行时轮次耗尽，认输转人工
 （记录 `proposals/L4Zo7p9zlZYhlDQY-*155758.json`）。现在**文件提示排最前**，同路径的
-「去扩展名孪生」让位给别的目录线索。用例 `tests/check_locate_regression3.py`（已并入 convergence）。
+「去扩展名孪生」让位给别的目录线索。
+⚠ 而且**只把提示抽出来还不够**：二次定位算出的新窗口原来只在「重试拿到了补丁」时才提交，
+重试没补丁就整批丢弃 —— 可「模型说『我得先看到那个文件』」正是触发重试的理由，这一路才是常态。
+于是记录自相矛盾（说明里点名 composer，窗口里全是 schedule）。现在**窗口作为「信息」无条件采纳**
+（补丁才是「产出」）：同一份落盘回答离线重跑整条链路，真凶文件
+`packages/cloudpivot-ai/chat/chat-kit/components/composer/mobile/index.vue` 与其三个兄弟
+（`composer.mixin.ts` / `composer/index.vue` / `composer-mobile-toolbar.vue`）都进了
+`read_files`（修复 agent 的上下文），而改前 6 个窗口全是 `schedule/*`。
+用例 `tests/check_locate_regression3.py [4][6]`（已并入 convergence；[6] 用真仓库 + 桩模型跑
+完整 `analyze()`，只断言提示抽取是不够的——死因在后半段）。
 
 看落盘提案到底卡在哪一类、下一步该做什么：
 

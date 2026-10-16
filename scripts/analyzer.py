@@ -658,8 +658,21 @@ class DefectAnalyzer:
                 else:
                     retry_note = note + "；重试仍未获得补丁"
                     parse_errors = parse_errors + [retry_note]
-                    # 第二轮窗口更全（含模型点名强制开窗的文件），即使仍无补丁，
-                    # 其根因结论也比第一轮新鲜。不采纳会让 UI 停留在第一轮的
+                    # ⭐⭐ **窗口必须一起采纳，不能只看「这一轮有没有补丁」**
+                    # （2026-10-16，215890 三趟重放才挖到）。旧实现只在
+                    # 「重试拿到了补丁」时才把 snippets2 / fresh 提交上去；重试没补丁
+                    # 就整批丢弃 —— 可「模型说『我得先看到那个文件』」正是触发重试的
+                    # 理由，这一路才是常态。于是记录自相矛盾：说明里写着「缺陷只可能
+                    # 落在移动端 Composer（…/chat/chat-kit/components/composer/
+                    # mobile/index.vue）」，窗口里却全是 `lui/**/schedule/*`，
+                    # 一个 chat/composer 文件都没有。模型点名强制开窗的那几个文件是
+                    # 真金白银查出来的**信息**，补丁只是这一轮的**产出** —— 不能因为
+                    # 没产出就把信息也扔了：修复 agent 拿不到窗口就只能自己 grep 重找，
+                    # 轮次耗尽认输（这正是 215890 的实际死法）。
+                    snippets, meta = snippets2, meta2
+                    suspect_files = suspect_files + [f for f in fresh
+                                                     if f not in suspect_files]
+                    # 第二轮根因结论也比第一轮新鲜。不采纳会让提案停留在第一轮的
                     # 过时判断（曾一直显示「common.ts 本次未提供」，而第二轮
                     # 实际已看过该文件并改判「根因在后端」），误导排查方向。
                     for k in ("root_cause", "explanation", "prevention",

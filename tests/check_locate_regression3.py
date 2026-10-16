@@ -117,6 +117,37 @@ def main() -> int:
     fresh = [f for f in snippets2 if f not in read_files]
     check("fresh 非空 → 触发第二轮 AI 分析", bool(fresh), str(fresh))
 
+    # ── ⑥ 端到端：重试**没拿到补丁**时，强制开窗的文件也必须留在窗口里 ──
+    # 2026-10-16（215890）：旧实现只在「重试拿到了补丁」时才提交 snippets2/fresh，
+    # 重试没补丁就整批丢弃 —— 可「模型说『我得先看到那个文件』」正是触发重试的理由，
+    # 这一路才是常态。后果是记录自相矛盾：说明里写着根因在 composer/mobile/index.vue，
+    # 窗口里却全是 lui/**/schedule/*，修复 agent 只能自己 grep 重找、轮次耗尽认输。
+    # 这里用真实 analyze() 跑完整链路（真仓库 + 桩模型），断言「文件真的进了 read_files」——
+    # 只断言 _model_hints 抽出了路径是不够的，后半段（解析→强制开窗→提交窗口）才是死因。
+    stub = {
+        "root_cause": ai_result.get("root_cause") or "",
+        "explanation": ai_result.get("explanation") or "",
+        "prevention": "", "category": "其他",
+        "patch_blocks": "", "fix_suggestion": "",
+    }
+
+    class _Stub:
+        mode = "stub"
+        model = "stub"
+
+        def complete(self, prompt, system="", max_tokens=None, on_delta=None):
+            return dict(stub)   # 永远不给补丁 —— 就是出问题的那条路
+
+    defect = prop.get("defect") or {}
+    out = DefectAnalyzer(repo, _Stub()).analyze(
+        {"id": defect.get("id"), "title": defect.get("title"),
+         "description": defect.get("description") or defect.get("desc") or ""})
+    rf = out.get("read_files") or []
+    check("重试未拿到补丁时，模型点名强制开窗的文件仍留在窗口里（read_files）",
+          any("method-extra-fields" in f for f in rf), str(rf))
+    check("窗口里仍保留第一轮的上下文（不是被替换掉）",
+          any(f in rf for f in read_files) and len(rf) > len(read_files), str(len(rf)))
+
     print()
     failed = [c for c in checks if not c[1]]
     print(f"== {len(checks) - len(failed)}/{len(checks)} 通过 ==")
