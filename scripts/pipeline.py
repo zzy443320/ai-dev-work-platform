@@ -17,7 +17,7 @@ from .analyzer import DefectAnalyzer
 from .artifact import ArtifactStore
 from .fix_agent import FixAgent
 from .fixer import CodeFixer
-from .gate import resolve_commands, run_gate
+from .gate import apply_baseline, resolve_commands, run_gate
 from .kb import KnowledgeBase
 from .mock_data import SAMPLE_DEFECTS
 from .ones_fetcher import OnesClient
@@ -1014,7 +1014,11 @@ class AIDefectFixerPipeline:
                        "skipped": False, "seconds": c.get("seconds", 0),
                        "output_tail": (c.get("output") or "")[-3000:]}
                       for n, c in best["checks"].items()]
-            failed = [c["name"] for c in checks if not c["ok"]]
+            # ⭐ 基线本来就红的检查不再拦人：修复循环已经把同一批命令在未打补丁时跑过，
+            # 仓库自身环境问题（缺 @types、lint 配置错）会让它们永远是红的 —— 补丁再对
+            # 也过不了闸门，只能靠人勾强制采纳。实测 41 份提案里有 7 份是这样被挡下的。
+            baseline_verdict = apply_baseline(checks, agent.get("baseline") or {})
+            failed = list(baseline_verdict["failed"])
             if str(agent.get("conclusion") or "") == "symptom_persists":
                 # 命令全绿但页面复验说现象仍在：闸门必须判未通过。否则这条提案会停在
                 # pending、采纳按钮直接可点，而 README 与界面都写着「按未修好处理」——
@@ -1029,6 +1033,7 @@ class AIDefectFixerPipeline:
                 failed.append("page-reverify")
             notes = [f"验收命令在**沙箱里打在补丁上**真跑过（第 {best.get('round')} 轮）；"
                      f"循环结论 {agent.get('conclusion')}"]
+            notes.extend(baseline_verdict["notes"])
             notes.extend(agent.get("notes") or [])
             if not failed:
                 notes.append("沙箱未复现工作区改动：补丁只落在临时副本里，你的仓库未被写入。")

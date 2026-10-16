@@ -64,6 +64,9 @@ def main():
     p.add_argument("--limit", type=int, default=3)
     p.add_argument("--list-proposals", action="store_true", help="列出待审批提案")
     p.add_argument("--show", default=None, metavar="PROPOSAL_ID", help="打印某个提案的 diff")
+    p.add_argument("--postmortem", nargs="?", const="", default=None, metavar="PROPOSAL_ID",
+                   help="失败归类：为什么这一批（或某一条）没产出补丁、下一步做什么。"
+                        "不带值 = 汇总全部提案")
     # 知识库保底三条（knowledge_base/ 不入库，是流水线唯一会增值的资产，必须有备份
     # 与可提交的脱敏副本）。三条都在建流水线之前处理，不需要 ONES / 模型配置。
     p.add_argument("--backup-kb", action="store_true",
@@ -87,6 +90,15 @@ def main():
 
     kb_dir = Path((config.get("knowledge_base") or {}).get("output_dir")
                   or "./knowledge_base")
+
+    if args.postmortem is not None:
+        # 归类器不需要 ONES / 模型 / 仓库，读落盘的提案就能给出结论
+        from scripts.postmortem import main as postmortem_main
+        argv = ["--dir", str(Path((config.get("proposals") or {}).get("output_dir")
+                                 or "./proposals"))]
+        if args.postmortem:
+            argv += ["--id", args.postmortem]
+        return postmortem_main(argv)
 
     if args.backup_kb:
         from scripts.kb_backup import backup_zip

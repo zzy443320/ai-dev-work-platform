@@ -60,6 +60,53 @@ class GateResult:
         return d
 
 
+def _baseline_entry(baseline: Dict, name: str) -> Optional[Dict]:
+    """在基线里找同名检查：先精确匹配，再退到「:」前的短名（balance:path 这类）。"""
+    if not baseline:
+        return None
+    for key in (name, str(name).split(":", 1)[0]):
+        item = baseline.get(key)
+        if isinstance(item, dict):
+            return item
+    return None
+
+
+def apply_baseline(checks: List[Dict], baseline: Optional[Dict]) -> Dict:
+    """把「未打补丁时就红的检查」从闸门失败里摘出来（仍留在 checks 里可见）。
+
+    ## 为什么必须这么判
+
+    修复循环本来就把同一批命令在**未打补丁**时跑过一遍（agent.baseline）。仓库自身的
+    环境问题（例如 tsc 缺 @types/*、lint 配置本来就有错）会让这些检查永远红——补丁再
+    正确也过不了闸门，提案就停在 `gate_failed`，只能靠人在界面上勾「强制采纳」。
+    实测 41 份提案里有 7 份是这样被一道与它无关的闸门挡下的：人看到的是"闸门没过"，
+    实际是"仓库本来就红"。这类噪声会直接吞掉真实信号。
+
+    摘出来 ≠ 藏起来：检查行保留在 checks 里并标 `preexisting=True`，notes 里如实点名，
+    界面上仍能看到它红着。**只有"补丁新弄红"的检查才真正拦人。**
+
+    返回 {"failed": [...], "preexisting": [...], "notes": [...]}；failed 只含新失败项。
+    """
+    failed: List[str] = []
+    preexisting: List[str] = []
+    for c in checks:
+        if c.get("ok") or c.get("skipped"):
+            continue
+        entry = _baseline_entry(baseline or {}, str(c.get("name") or ""))
+        if entry is not None and entry.get("ok") is False:
+            c["preexisting"] = True
+            preexisting.append(str(c.get("name")))
+        else:
+            failed.append(str(c.get("name")))
+    notes: List[str] = []
+    if preexisting:
+        notes.append("以下检查在**未打补丁**时就是红的（仓库自身环境/配置问题，"
+                     "见沙箱基线），因此不计入本次闸门失败："
+                     + "、".join(preexisting)
+                     + "。它们仍列在 checks 里，请你决定要不要顺手治理。")
+    return {"failed": failed, "preexisting": preexisting, "notes": notes}
+
+
 def resolve_commands(repo_path: str, gate_cfg: Optional[Dict]) -> List[Dict[str, str]]:
     """Return [{"name", "cmd"}] from config, else infer from package.json."""
     gate_cfg = gate_cfg or {}
@@ -152,6 +199,17 @@ def run_gate(
                 "已降级为括号/字符串闭合与 py 编译检查——"
                 "**这只证明代码没被写坏，不证明类型和测试通过，请务必人工复核 diff。**"
             )
+            # .vue 的降级校验刻意不判失败（模板字符串/插值会误报，见 _vue_check），代价是
+            # 半截改动在 .vue 上没有硬闸门。取舍可以留，但**不能静默**：把"没通过硬校验、
+            # 且扫描疑似不平衡"的文件点名写进 notes，让人知道该重点看哪里。
+            suspect = [c for c in checks
+                       if c.skipped and "疑似不平衡" in (c.output_tail or "")]
+            if suspect:
+                result.notes.append(
+                    "⚠ 以下文件既没有可跑的验收命令、降级扫描又疑似括号/引号不平衡，"
+                    "**没有任何硬校验兜住它们**，请逐行复核 diff："
+                    + "、".join(c.name.split(":", 1)[-1] for c in suspect)
+                )
         else:
             result.level = "none"
             result.notes.append("没有任何可执行的验收手段，该提案完全依赖人工审查。")

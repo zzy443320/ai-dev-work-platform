@@ -149,6 +149,9 @@ READ_RULES = """\
 ## 查仓库的规矩
 - 先 `repo_grep` 拿到「路径:行号」，再用 `repo_read` 的 start/end 读 ±30 行窗口；不要一上来就读大文件。
 - 报错堆栈里点名的文件（工单里有的话）几乎就是案发现场，优先读它。
+- ⭐ **工单里写的路径可能是过时的**（少一层 `runtime/` 之类）。`repo_read` 报「文件不存在」时
+  它会把仓库里同名/相近的真实路径一并给你，照着重试；也可以 `repo_grep` 搜类名/文件名。
+  **不要拿同一个错路径反复试，更不要对不存在的文件交补丁** —— 轮次是有限的。
 - 改公共组件/hook/工具函数前，用 `repo_grep` 把**所有调用方**过一遍，不然你就是在一半的调用点上埋雷。
 - 需要单独验证某个用例时可以用 `check_run`（例如 `npx vitest run src/foo.spec.ts`），它跑在同一个沙箱里。
 """
@@ -238,6 +241,44 @@ def parse_action(text: str) -> Optional[Dict]:
     args = obj.get("arguments")
     return {"tool": str(obj.get("tool") or "").strip(),
             "arguments": args if isinstance(args, dict) else {}}
+
+
+def parse_embedded_action(text: str) -> Optional[Dict]:
+    """从「正文 + 夹带 action JSON」的回复里捞出最后一个**工具调用**。
+
+    ⭐ 契约要求整条回复只有一个 JSON，但模型偶尔会把 tool call 写在说明文字中间。
+    215890 第 4 轮原文是：
+
+        <<<<<<< SEARCH packages/cloudpivot-ai/lui/pages/schedule/schedule-editor.vue
+        =======
+        >>>>>>> REPLACE
+
+        Wait — 我不能这样空提交。先查仓库。
+        {"action":"call","tool":"repo_grep","arguments":{...}}
+
+    旧解析只认「整条回复以 `{` 开头」，这一轮于是两头落空：既没执行 grep，又把一段
+    **空 SEARCH/REPLACE** 当成补丁交去沙箱（目标文件还不存在），白烧一轮——而它的预算
+    只有 7 轮。只认工具调用，不认识 verdict / give_up：这两个要整条回复表意清楚才算数。
+    """
+    t = _strip_dsml(text or "")
+    known = {"repo_list", "repo_read", "repo_grep", "repro_add", "api_probe",
+             "check_run", "browser_look"}
+    best: Optional[Dict] = None
+    for m in re.finditer(r"\{", t):
+        try:
+            obj, _end = json.JSONDecoder().raw_decode(t[m.start():])
+        except Exception:
+            continue
+        if not isinstance(obj, dict):
+            continue
+        if str(obj.get("action") or "").strip().lower() not in ("call", "tool"):
+            continue
+        if str(obj.get("tool") or "").strip() not in known:
+            continue
+        cand = parse_action(json.dumps(obj, ensure_ascii=False))
+        if cand and cand.get("tool"):
+            best = cand
+    return best
 
 
 def compare_with_baseline(baseline: Dict[str, bool], after: Dict[str, bool]) -> Dict:
@@ -547,6 +588,20 @@ class FixAgent:
                                             "tool": action["tool"]})
                     continue
                 blocks, _errs = parse_blocks(text)
+                usable = [b for b in blocks
+                          if str(getattr(b, "search", "") or "").strip()
+                          or str(getattr(b, "replace", "") or "").strip()]
+                if blocks and not usable:
+                    # 空 SEARCH/REPLACE（模型「先占位、再去查仓库」）不值得当补丁交：那一轮
+                    # 必定以「文件不存在 / SEARCH 为空」失败，而它往往同时夹带了真正的工具
+                    # 调用（215890 第 4 轮）。有工具就先执行工具，空块丢掉。
+                    emb = parse_embedded_action(text)
+                    if emb and emb.get("tool"):
+                        context.extend(self._exec_tool(emb["tool"], emb["arguments"],
+                                                       reader, sandbox, commands, rnd))
+                        result["trace"].append({"round": rnd, "kind": "tool",
+                                                "tool": emb["tool"]})
+                        continue
                 if blocks:
                     attempt = self._try_patch(text, blocks, sandbox, commands,
                                               baseline, rnd)
@@ -1394,6 +1449,18 @@ class FixAgent:
                 lines.append("另外：**这条流水线不支持新建文件**。仓库里不存在的路径不能当"
                              "SEARCH 目标。确实需要新增文件时，在最终说明里写清路径与内容，"
                              "交给人工创建，别硬造。")
+                # 补丁打偏到不存在的路径时，把仓库里的真实路径直接喂回去——否则模型只能
+                # 靠轮次反复猜（215890 就是这样烧掉了 7 轮里的 4 轮）。
+                sugg = ""
+                for e in attempt.get("errors", []):
+                    if "文件不存在" not in e:
+                        continue
+                    miss = e.split("文件不存在", 1)[-1].lstrip(":： ").strip()
+                    if miss:
+                        sugg += self.reader.suggest_paths(miss)
+                if sugg:
+                    lines.append("你要改的这个路径不存在，仓库里文件名相近的是这些"
+                                 "（直接换成其中之一重来）：" + sugg)
             return ["\n".join(lines)]
         for note in attempt.get("notes", []):
             lines.append(f"（提醒）{note}")

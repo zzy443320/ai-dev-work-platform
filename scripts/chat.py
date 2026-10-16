@@ -191,7 +191,9 @@ TOOL_SPECS: List[Dict] = [
     },
     {
         "name": "repo_read",
-        "description": "读取仓库中某个文本文件的内容（带行号，便于引用具体行）。改了哪一行要能指出来。",
+        "description": "读取仓库中某个文本文件的内容（带行号，便于引用具体行）。改了哪一行要能指出来。"
+                       "路径写错时会一并返回仓库里同名/相近的真实路径，照着它重试即可，"
+                       "不要凭工单或历史卡片里的路径反复试。",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -272,13 +274,67 @@ class RepoReader:
                     return out
         return out
 
+    # -- 「路径写错了」时的自救：仓库里到底有没有相近的路径
+    def suggest_paths(self, path: str, limit: int = 8) -> str:
+        """路径不存在时，按文件名（再退到目录名）在仓库里找出相近的**真实**路径。
+
+        ⭐ 为什么这必须是工具的职责：工单描述与知识卡片里的路径都会过时。215890 的先例
+        卡片给的是 `packages/cloudpivot-ai/lui/pages/schedule/schedule-editor.vue`，
+        真实落点带 `runtime/` 前缀。修复 agent 第 3 轮 repo_read 猜错路径时只拿到一句
+        「文件不存在」——没有任何方向，于是第 4 轮又白交一份指向不存在文件的空补丁，
+        到第 7 轮预算耗尽只能 give_up。**拿轮次去试路径，是工具在偷懒。**
+        """
+        rel = str(path or "").replace("\\", "/").strip().strip("/")
+        parts = [p for p in rel.split("/") if p and p != "."]
+        if not parts:
+            return ""
+        files = self.files()
+        if not files:
+            return ""
+        want = parts[-1].lower()
+        stem = want.rsplit(".", 1)[0]
+
+        def rank(p: str) -> Tuple[int, int]:
+            # 与请求路径重合的目录段落越多越可能是它；同分时短的优先
+            low = p.lower()
+            overlap = sum(1 for seg in parts[:-1] if seg.lower() in low)
+            return (-overlap, len(p))
+
+        cands: List[str] = []
+        for f in files:  # 同名文件（最常见：前缀不同 / 目录层级不同）
+            if f.rsplit("/", 1)[-1].lower() == want:
+                cands.append(f)
+        if not cands:  # 同名目录（把目录当文件读、或目录名少写了一层）
+            # 目录本身不在 files() 里，得从文件的**所有祖先层级**里找；找到几十个就够
+            seen: set = set()
+            for f in files:
+                segs = f.split("/")[:-1]
+                for i in range(1, len(segs) + 1):
+                    d = "/".join(segs[:i])
+                    if d in seen:
+                        continue
+                    seen.add(d)
+                    if d.rsplit("/", 1)[-1].lower() == want:
+                        cands.append(d)
+                if len(cands) >= 40:
+                    break
+        if not cands and len(stem) >= 4:  # 后缀不同 / 名字多打了字
+            cands = [f for f in files if stem in f.rsplit("/", 1)[-1].lower()]
+        if not cands:
+            return ""
+        cands = sorted(set(cands), key=rank)
+        more = f"\n…（另有 {len(cands) - limit} 个相近路径）" if len(cands) > limit else ""
+        return ("\n仓库里名称相同/相近的真实路径（**以这些为准**，不要照抄工单描述或"
+                "历史卡片里的旧路径，直接用下面的路径重试）：\n"
+                + "\n".join(f"- {c}" for c in cands[:limit]) + more)
+
     # -- 工具实现
     def list_dir(self, path: str = "", limit: int = 120) -> str:
         target = self.resolve(path) if str(path or "").strip() else self.root
         if target is None:
             return f"[错误] 路径越界或非法：{path!r}（只能访问仓库内的路径）"
         if not target.exists() or not target.is_dir():
-            return f"[错误] 目录不存在：{path or '.'}"
+            return f"[错误] 目录不存在：{path or '.'}" + self.suggest_paths(path)
         try:
             limit = max(1, min(int(limit or 120), 400))
         except Exception:
@@ -305,7 +361,7 @@ class RepoReader:
         if target is None:
             return f"[错误] 路径越界或非法：{path!r}（只能访问仓库内的路径）"
         if not target.is_file():
-            return f"[错误] 文件不存在：{path}"
+            return f"[错误] 文件不存在：{path}" + self.suggest_paths(path)
         if target.stat().st_size > MAX_FILE_BYTES:
             return f"[错误] 文件过大（{target.stat().st_size / 1024:.0f} KB），请用 repo_grep 定位后分段读取"
         try:

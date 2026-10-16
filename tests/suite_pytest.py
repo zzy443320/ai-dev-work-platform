@@ -50,7 +50,21 @@ PIPELINE = [
     "check_usage.py",
 ]
 
-ALL = SECURITY + PIPELINE
+# 失败收敛层：把「线上撞见过的每一类失败」钉成可重复跑的用例。
+# 纯离线、不起服务、不读私有仓（check_grep_glob / check_path_suggest 需要 git，
+# 没有 git 的机器会自己 SKIP）。改工具、改闸门、改提示词后优先跑这一组。
+CONVERGENCE = [
+    "check_grep_glob.py",         # 工具不许骗模型：花括号 glob、文案短语定位
+    "check_path_suggest.py",      # 路径不存在时要回真实候选；夹带 tool call 要能捞
+    "check_route_entry.py",       # 复现/验收路由不许丢掉入口段（/mobile#/...）
+    "check_route_tokens.py",      # 路由里的单词段是目录钥匙；grep 要批量 + 排除 vendor
+    "check_side_stale.py",        # 端侧加权 + 过时路径自愈（不许只回「文件不存在」）
+    "check_gate_baseline.py",     # 基线本来就红的检查不许拦人；新弄红的一律拦
+    "check_postmortem.py",        # 失败归类：判据要准，只有新类才打扰人
+    "ticket_battery.py",          # 合成工单跑道：每条假工单一类失败，且都不得零交付
+]
+
+ALL = SECURITY + PIPELINE + CONVERGENCE
 
 
 def _run_script(name: str) -> None:
@@ -95,6 +109,11 @@ def test_security_scripts(name):
 
 @pytest.mark.parametrize("name", PIPELINE, ids=PIPELINE)
 def test_pipeline_scripts(name):
+    _run_script(name)
+
+
+@pytest.mark.parametrize("name", CONVERGENCE, ids=CONVERGENCE)
+def test_convergence_scripts(name):
     _run_script(name)
 
 
