@@ -85,11 +85,18 @@ def unit_resolve():
     link = root / "src" / "link.ts"
     try:
         link.symlink_to(outside)
-        try:
-            got = resolve_in_repo(root, "src/link.ts")
-            check("符号链接指向仓外 → 拒", False, f"竟然放行 → {got}")
-        except UnsafePath:
-            check("符号链接指向仓外 → 拒", True)
+        # ⚠ 必须先确认「真的建出了软链」。在受控沙箱 / 无重解析点权限的环境里，
+        # symlink_to 会**静默降级**成普通文件（`os.readlink` 报 WinError 4390
+        # 「不是一个重分析点」）：此时仓内就是一个普通文件，resolve_in_repo 放行
+        # 是**正确**行为，断言的前提根本没成立 —— 直接断言只会得到一条假红。
+        if not link.is_symlink():
+            print("  SKIP   符号链接用例（本机未真正创建出软链，环境把 symlink 降级了）")
+        else:
+            try:
+                got = resolve_in_repo(root, "src/link.ts")
+                check("符号链接指向仓外 → 拒", False, f"竟然放行 → {got}")
+            except UnsafePath:
+                check("符号链接指向仓外 → 拒", True)
     except (OSError, NotImplementedError) as e:
         print(f"  SKIP   符号链接用例（本机无权创建软链：{type(e).__name__}）")
     shutil.rmtree(root, ignore_errors=True)

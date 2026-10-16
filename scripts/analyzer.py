@@ -3,7 +3,7 @@ import json
 import re
 import subprocess
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from . import usage
 from .patch_engine import parse_blocks, render_block_prompt
@@ -31,6 +31,31 @@ _THIRD_PARTY_RE = re.compile(
     r"(^|/)(node_modules|dist|build|public|coverage)(/|$)"
     r"|\.min\.(js|css)$|\.map$|^yarn\.lock$|^package-lock\.json$"
     r"|demo_index|iconfont|monaco-editor|kindeditor", re.I)
+
+# grep **扫描阶段**就排除掉的路径：与 `_THIRD_PARTY_RE` 同一套语义（这些目录/
+# 产物永远不是修复目标），只是把过滤从「拿到结果之后」提前到「根本不去读」。
+#
+# ⭐ 为什么必须提前（2026-10-16 实测）：目标仓里被 vendor 进来的
+# `packages/admin/public/monaco-editor-0.52.2/` 有 9MB 的打包 js，**每一个**
+# 关键词的 grep 都要把它们整份读一遍 —— 单次 7~10s，20 个关键词就是两三分钟；
+# 更要命的是像 `schedule` 这种关键高频词会直接撞上 10s 超时，被**静默**当成
+# 「没命中」丢掉，于是真凶所在目录一分都拿不到 → 读取窗口里没有真凶
+# （locate_miss 的一大来源，工单 215890 正是如此）。
+# 实测：逐词 20 次 ≈ 160s 且丢词 → 批量 + 排除 `**/public/**` ≈ 7s 且一个不丢。
+_GREP_EXCLUDES = (
+    ":(exclude,glob)**/node_modules/**",
+    ":(exclude,glob)**/dist/**",
+    ":(exclude,glob)**/build/**",
+    ":(exclude,glob)**/public/**",
+    ":(exclude,glob)**/coverage/**",
+    ":(exclude,glob)**/*.min.js",
+    ":(exclude,glob)**/*.min.css",
+    ":(exclude,glob)**/*.map",
+    ":(exclude,glob)**/*monaco-editor*/**",
+    ":(exclude,glob)**/*kindeditor*/**",
+    ":(exclude,glob)**/*iconfont*/**",
+    ":(exclude,glob)**/*demo_index*",
+)
 
 # 中文停用词：ONES 工单模板里的样板词，对代码定位没有价值
 _ZH_STOPWORDS = {"测试环境", "测试分支", "测试账号", "测试链接", "迭代", "缺陷",
@@ -130,6 +155,48 @@ _FORM_HOST_HINTS = ("editor", "form", "edit", "create", "modal", "dialog",
 # 纯路由壳子/入口，通常只做拼装，不写校验
 _CONTAINER_FILES = {"index.vue", "index.ts", "index.tsx", "app.vue", "main.ts"}
 
+# ── 端侧（移动端 / 桌面端）──────────────────────────────────────────────
+# 同一个页面在同仓里常有两份实现：`…/lui/pages/schedule/schedule-editor.vue`
+# 与 `…/lui/mobile/pages/schedule/schedule-editor.vue`。文件名相同、内容高度
+# 相似、关键词命中几乎一样，**没有任何信号**的话排序只能靠运气。工单明说
+# 「移动端」时把窗口偏向 mobile 那一份，模型才不会照着桌面端代码写补丁
+# （215890 就是：工单是移动端，verify 阶段去拍的也是桌面页）。
+_SIDE_MOBILE = ("移动端", "手机端", "手机版", "移动版", "app端", "小程序", "h5", "wap")
+_SIDE_DESKTOP = ("桌面端", "电脑端", "pc端", "网页端", "web端", "桌面版")
+# 路径段里的端侧标记（按 -_. 分段后整段比对，避免 "mobile" 命中 "mobilesale"）
+# ⚠ 桌面端只认 pc/desktop：`web/` 在 monorepo 里太常见，拿它当桌面标记会让
+# 一整棵子树白拿加权，把真正的改动点淹掉。
+_MOBILE_SEGS = {"mobile", "h5", "wap", "mapp"}
+_DESKTOP_SEGS = {"pc", "desktop"}
+
+
+def _side_hint_of(text: str) -> str:
+    """从工单正文判端侧：'mobile' / 'desktop' / ''（判不出来就两边都不偏）。
+
+    ⚠ 必须「哪边信号多才偏哪边」：工单描述里同时出现「移动端」和「桌面端」
+    （对比类描述很常见）时返回空串，宁可不用这个信号也不能押错端。"""
+    low = (text or "").lower()
+    mob = sum(1 for t in _SIDE_MOBILE if t in low)
+    desk = sum(1 for t in _SIDE_DESKTOP if t in low)
+    # URL / 路径形态的端侧标记（工单常只贴一个移动端地址，正文不提"移动端"）
+    if re.search(r"(?:^|[/#?_.\-])mobile(?:[/#?_.\-]|$)", low):
+        mob += 1
+    if re.search(r"(?:^|[/#?_.\-])(?:pc|desktop)(?:[/#?_.\-]|$)", low):
+        desk += 1
+    if mob == desk:
+        return ""
+    return "mobile" if mob > desk else "desktop"
+
+
+def _side_of_path(low_path: str) -> str:
+    """路径属于哪一端：'mobile' / 'desktop' / ''（没有端侧标记）。"""
+    segs = {s for s in re.split(r"[-_/.]", low_path or "") if s}
+    if segs & _MOBILE_SEGS:
+        return "mobile"
+    if segs & _DESKTOP_SEGS:
+        return "desktop"
+    return ""
+
 
 def _dedupe(seq) -> List[str]:
     """保序去重。重复项曾把 hard[:22] 的名额吃光（本案 startTime 在 idents 里
@@ -175,6 +242,12 @@ def _is_noise_path(p: str) -> bool:
     return any(_is_noise_segment(s) for s in segs)
 
 
+# 路由里常见、但**指不到具体目录**的段：当成目录线索只会给一大批同名文件白加
+# 权重（`xxx-detail.vue` 遍地都是），把真正的改动点淹掉。只列长度 ≥6 的
+# （更短的已被长度门槛挡掉）。
+_ROUTE_GENERIC_SEGS = {"detail", "details", "logout", "search-result", "preview"}
+
+
 def _route_to_dir_tokens(text: str) -> List[str]:
     """把前端路由串反解成疑似目录名，供 tier-0 目录判定使用。
 
@@ -196,9 +269,20 @@ def _route_to_dir_tokens(text: str) -> List[str]:
     # hash 路由：admin/#/demo-skill-log  或  /#/demo-skill-log
     for m in re.finditer(r"#/([\w\-/]{3,80})", text):
         route = m.group(1).strip("/").split("?")[0]
-        for seg in route.split("/"):
+        segs = [s for s in route.split("/") if s]
+        for seg in segs:
             words = [w for w in seg.split("-") if w]
             if len(words) < 2:
+                # ⭐ 单词段也要留：真实目录名常常就是一个词——工单 215890 的路由是
+                # `#/agent-workspace/schedule`，真凶就在 `…/lui/mobile/pages/schedule/`
+                # 下。旧实现要求「≥2 个 kebab 词」，于是**唯一的真目录线索被整条
+                # 丢掉**，窗口里塞满了别的 mobile 组件，模型只能拒出补丁。
+                # 用「够长 + 不是通用词 + 不是模板噪音」兜底，避免 login/list 之类
+                # 的泛段把目录判定带偏。
+                if (len(seg) >= 6 and seg.lower() not in _GENERIC_SEGMENTS
+                        and seg.lower() not in _ROUTE_GENERIC_SEGS
+                        and not _is_noise_segment(seg) and seg not in out):
+                    out.append(seg)
                 continue
             # 完整段本身（demo-skill-log）——尾缀匹配的真目录钥匙
             full = "-".join(words)
@@ -209,6 +293,13 @@ def _route_to_dir_tokens(text: str) -> List[str]:
                 cand = f"{words[i]}-{words[i + 1]}"
                 if len(cand) >= 8 and cand not in out:
                     out.append(cand)
+        # 整条路由再留一份**带斜杠**的形态（agent-workspace/schedule）：下游
+        # `_target_dirs` 的「末段 + 次末段」兜底只认含 '/' 的 token，不含斜杠的
+        # 路由段永远进不了 tier-0 —— 于是路由里的 `schedule` 拿不到目录级加权。
+        if len(segs) >= 2:
+            joined = "/".join(segs)
+            if joined not in out:
+                out.append(joined)
     return out[:5]
 
 
@@ -362,6 +453,8 @@ class DefectAnalyzer:
         self.precedent_dir = precedent_dir or ""
         self._precedent_files: List[str] = []
         self._repo_total = 0
+        self._side_hint = ""  # 端侧语境（mobile/desktop），analyze() 每轮重算
+        self._grep_dropped: List[str] = []  # 本机 grep 超时/失败而没真正搜过的词
 
     # ------------------------------------------------------------------ public
     def analyze(self, defect: Dict, on_delta=None) -> Dict:
@@ -375,10 +468,14 @@ class DefectAnalyzer:
 
         # 历史先例：本项目近期人工采纳过的补丁文件，是同一模块再次出缺陷时
         # 最可信的修改点信号。每次 analyze 现读（服务长驻时提案状态会变化）。
+        # ⚠ 先例记的是**落盘当时**的路径，上游挪过目录就会整条失效 —— 必须
+        # 先映射回仓库里的真实路径，否则这套信号会静默消失（见 _resolve_precedent）。
         if self.precedent_dir:
-            self._precedent_files = load_precedent_files(self.precedent_dir)
+            self._precedent_files = self._resolve_precedent(
+                load_precedent_files(self.precedent_dir))
 
         keywords, path_tokens = self._extract_keywords(text)
+        self._grep_dropped = []
         # 超高频关键词（分支名/账号/技术栈）几乎命中整个仓库，只会把噪音文件
         # 抬进候选池，真正的小众标识符（startTime）反被挤掉。按「命中文件数」
         # 做一次频次闸门：命中 >8% 仓库文件的关键词直接出局。
@@ -387,6 +484,8 @@ class DefectAnalyzer:
         # "应必填/未校验"类缺陷的改动点在表单组件，把这个语境传给排序阶段
         self._wants_validation = any(
             t in text.lower() for t in ("必填", "校验", "required", "validate", "validator"))
+        # 端侧语境：移动端/桌面端两份实现里偏工单说的那一份（见 _side_hint_of）
+        self._side_hint = _side_hint_of(text)
         suspect_files = self._scan_repo(keywords, path_tokens)
 
         # ── 文案短语的内容级命中 ───────────────────────────────────────
@@ -434,6 +533,16 @@ class DefectAnalyzer:
             suspect_files = stack + suspect_files
         snippets, meta = self._read_contexts(suspect_files, keywords)
         meta = phrase_meta + meta
+        # 本机 grep 超时/失败而**没真正搜过**的关键词必须明说：静默丢弃正是
+        # 「工具骗模型」—— 模型会以为「全仓都搜遍了没有」，据此下错误结论
+        # 或者干脆认输（工单 215890 的 `schedule` 就是这么被丢掉的）。
+        missed = _dedupe(self._grep_dropped)
+        if missed:
+            meta = [
+                "⚠ 以下关键词本机 git grep 超时/失败，**并没有真正搜过**，"
+                "不要据此认定「全仓都没有」："
+                + "、".join(str(m) for m in missed[:8])
+            ] + meta
 
         prompt = self._build_prompt(defect, snippets, meta)
         # reasoning 模型（deepseek-flash 等）的隐藏推理 token 与正式回答共享
@@ -821,30 +930,73 @@ class DefectAnalyzer:
             return keywords, []
         budget = max(floor, int(total * ratio))
         ident_kws = getattr(self, "_ident_kws", set()) or set()
+        # ⭐ 一次 grep 拿到所有关键词的命中文件数：逐词调用在大仓上是
+        # 「一个词一遍全树扫描」，20 个词就把 grep 预算烧光，还会静默丢词。
+        hits, dropped_kws = self._grep_hits(keywords)
+        if dropped_kws:
+            self._grep_dropped = list(getattr(self, "_grep_dropped", []) or []) + dropped_kws
         kept: List[str] = []
         dropped: List[str] = []
         for kw in keywords:
             if kw in ident_kws or "/" in kw:
                 kept.append(kw)
                 continue
-            if self._grep_file_count(kw) > budget:
+            # 搜不到（超时/失败）时**不拦截**：宁可多留一个泛词，也不能因为
+            # 一次 grep 失败就把真凶需要的关键词丢掉。
+            if len(hits.get(kw) or ()) > budget:
                 dropped.append(kw)
                 continue
             kept.append(kw)
         return kept, dropped
 
-    def _grep_file_count(self, kw: str) -> int:
-        """git grep -l 的文件数（带超时保护，失败返回 0 表示不拦截）。"""
+    def _grep_hits(self, keywords: List[str], pathspec: Optional[List[str]] = None,
+                   timeout: int = 120) -> Tuple[Dict[str, set], List[str]]:
+        """一次 `git grep` 拿到「每个关键词命中了哪些文件」。
+
+        ⭐ 为什么要批量 + 排除 vendor（2026-10-16 实测）：目标仓里 vendor 进来的
+        monaco 打包文件（9MB）让**每个**关键词的 grep 都要多花 7~10s；20 个关键词
+        串行就是两三分钟，而 `schedule` / `超时时间` 这种词直接撞 10s 超时被静默
+        丢弃 —— 命中分没了，真凶目录就进不了读取窗口（locate_miss 的主因之一）。
+        改成「一个 `-e` 一个关键词、一次扫完」并排除 `**/public/**` 等产物目录后，
+        实测从 ≈160s 降到 ≈7s，且**一个词都不会丢**。
+
+        用 `-o` 只输出命中片段（而不是整行）返查是哪个关键词命中的；模式按长度
+        降序传入，避免「read」抢在「readOnly」前面把长词的命中吃掉。
+
+        返回 (关键词 → 命中文件集合, 被丢掉的关键词)。"""
+        kws = _dedupe([k for k in (keywords or [])
+                       if k and len(k) >= 2 and not k.startswith("-")])
+        if not kws:
+            return {}, []
+        cmd = ["git", "grep", "-o", "-nI", "-i", "-F", "--untracked"]
+        for kw in sorted(kws, key=len, reverse=True):
+            cmd += ["-e", kw]
+        cmd += ["--", *(pathspec or ["."]), *_GREP_EXCLUDES]
         try:
             result = subprocess.run(
-                ["git", "grep", "-l", "-i", "--untracked", "--", kw],
-                cwd=str(self.repo_path), capture_output=True, text=True,
-                encoding="utf-8", errors="replace", timeout=10)
-        except (subprocess.TimeoutExpired, FileNotFoundError):
-            return 0
-        if result.returncode != 0 or not result.stdout:
-            return 0
-        return len([ln for ln in result.stdout.splitlines() if ln.strip()])
+                cmd, cwd=str(self.repo_path), capture_output=True, text=True,
+                encoding="utf-8", errors="replace", timeout=timeout)
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+            return {}, list(kws)
+        if result.returncode not in (0, 1):
+            return {}, list(kws)
+        by_lower = {k.lower(): k for k in kws}
+        got: Dict[str, set] = {k: set() for k in kws}
+        for line in (result.stdout or "").splitlines():
+            rel, _sep, rest = line.partition(":")
+            _ln, _sep2, matched = rest.partition(":")
+            if not matched:
+                continue
+            key = by_lower.get(matched.strip().lower())
+            if key is None:
+                continue
+            got[key].add(rel.replace("\\", "/"))
+        return got, []
+
+    def _grep_file_count(self, kw: str) -> int:
+        """git grep -l 的文件数（失败返回 0 → 不拦截，见 `_grep_hits`）。"""
+        hits, _dropped = self._grep_hits([kw])
+        return len(hits.get(kw) or ())
 
     def _repo_file_count(self) -> int:
         """仓库受版本管理的文件总数（git ls-files），带缓存。"""
@@ -885,17 +1037,116 @@ class DefectAnalyzer:
 
         模型常只给裸文件名（repeat-form.vue）或带 ./ 前缀的路径；
         先按原样认，再按「路径以 /{hint} 结尾」在 ls-files 里匹配——
-        解析失败等于二次定位白做（强制开窗窗口根本打不开）。"""
+        解析失败等于二次定位白做（强制开窗窗口根本打不开）。
+        ⭐ 尾部也匹配不上时退到 `_resolve_stale_file`：上游把目录挪了一层
+        （`packages/x/lui/…` → `packages/x/runtime/lui/…`）之后，模型点名的
+        整条旧路径 is_file() 为假、尾缀也不再相等，只能靠「文件名 + 祖先目录
+        重叠」找回真身。"""
         hint = (hint or "").lstrip("./").replace("\\", "/")
         if not hint:
             return ""
         if (self.repo_path / hint).is_file():
             return hint
-        tail = "/" + hint.lower()
-        for f in self._ls_files():
-            if f.lower().endswith(tail):
-                return f
-        return ""
+        # 尾缀命中的可能不止一个（同一页面的桌面端/移动端两份实现）：必须按
+        # 「像不想 hint」排序裁决，**不能拿 ls-files 的字母序碰运气**——
+        # `runtime/lui/mobile/…` 恰好排在 `runtime/lui/pages/…` 前面，于是
+        # 任何桌面缺陷都会被解析到移动端那份同名文件上。
+        exact = [f for f in self._ls_files() if f.lower().endswith("/" + hint.lower())]
+        if exact:
+            return self._rank_like(hint, exact)[0]
+        # 尾缀也不相等（上游把模块挪进了 runtime/ 之类）：退到「文件名 + 祖先
+        # 目录重叠」找回真身。**头名必须在「祖先重叠 / 端侧」上严格胜出**
+        # 才敢用：平手的两份同名实现（桌面端/移动端）宁可不猜——挑错同名实现
+        # 比报「找不到」更坏，模型会照着无关实现写补丁。
+        ranked = self._rank_like(hint, self._resolve_stale_file(hint, limit=3))
+        if not ranked:
+            return ""
+        if len(ranked) == 1:
+            return ranked[0]
+        top_key = self._rank_key(hint, ranked[0], str(getattr(self, "_side_hint", "") or ""))
+        second_key = self._rank_key(hint, ranked[1], str(getattr(self, "_side_hint", "") or ""))
+        return ranked[0] if top_key[:3] < second_key[:3] else ""
+
+    @staticmethod
+    def _rank_key(rel: str, cand: str, side: str = "") -> tuple:
+        """「像不想 rel」的排序键（越小越像）。见 `_rank_like`。"""
+        parts = [p for p in (rel or "").lstrip("./").replace("\\", "/").strip("/").split("/") if p]
+        muts = [p.lower() for p in parts[:-1]]
+        low = (cand or "").lower()
+        segs = low.split("/")[:-1]
+        overlap = sum(1 for m in muts if m in segs)
+        hint_side = _side_of_path(rel)
+        cand_side = _side_of_path(low)
+        # 工单的端侧偏好排在前（它讲的是**缺陷在哪一端**）
+        t_pref = 0 if (side and cand_side == side) else 1
+        # 旧路径自己的端侧标记排在其后（上游挪目录不会换端）：工单端侧为空时
+        # （桌面端实现往往**没有任何**标记）就靠它把「不带 mobile 段的旧路径」
+        # 钉到「不带 mobile 段的真身」上，而不是撞到移动端那份同名实现。
+        if hint_side:
+            h_pref = 0 if cand_side == hint_side else 1
+        else:
+            h_pref = 0 if not cand_side else 1
+        return (-overlap, t_pref, h_pref, len(cand or ""), cand or "")
+
+    def _rank_like(self, rel: str, cands: List[str]) -> List[str]:
+        """按「像不想 rel」给候选真实路径排序。
+
+        判据（与 chat 侧 `RepoReader.suggest_paths` 同一套）：祖先目录名重叠数
+        → 工单端侧是否一致 → 旧路径自己的端侧标记 → 路径更短者更近 → 字典序。"""
+        side = str(getattr(self, "_side_hint", "") or "")
+        return sorted(set(cands), key=lambda f: self._rank_key(rel, f, side))
+
+    def _resolve_precedent(self, raw: List[str]) -> List[str]:
+        """先把历史先例路径映射成仓库里的真实路径。
+
+        ⭐ 先例是按提案落盘**当时**的仓库结构记下来的；上游随后把模块挪了一层
+        （`…/lui/…` → `…/runtime/lui/…`）之后，`f in precedent` 永远为假 ——
+        这套「最可信的修改点信号」（+30 分、并能进读取窗口）会**静默失效**：
+        日志里先例文件数照样非零，却一笔加分都没生效。
+
+        ⚠ 只做「明确的」映射：`_resolve_file_hint` 在两端同名实现上平手时返回
+        空串，宁可少一个先例，也不能把先例指到另一端的同名文件上去。"""
+        out: List[str] = []
+        for fp in raw or []:
+            fp = str(fp or "").replace("\\", "/")
+            if not fp:
+                continue
+            real = fp if (self.repo_path / fp).is_file() else self._resolve_file_hint(fp)
+            # 解析不出来就保留原样（不影响其它候选，只是这一条约不到分）
+            for cand in ([real] if real else [fp]):
+                if cand not in out:
+                    out.append(cand)
+        return out
+
+    def _resolve_stale_file(self, rel: str, limit: int = 3) -> List[str]:
+        """路径不存在时，按「文件名 + 祖先目录重叠」在仓库里找回真实路径。
+
+        ⭐ 工单、历史先例卡片、模型回复里的路径都会过时：上游把模块挪进
+        `runtime/` 之后，旧路径整条不再存在（`is_file()` 为假），尾缀精确
+        匹配也救不了（真实路径尾部多出一层 `runtime`）。旧行为只回一句
+        「文件不存在」，模型于是拿着一个死路径反复试、耗尽轮次认输
+        （215890 烧掉 4 轮就是这么来的）。
+
+        返回按「像原路径」排序的候选（排序规则见 `_rank_like`）。
+        """
+        rel = (rel or "").lstrip("./").replace("\\", "/").strip("/")
+        parts = [p for p in rel.split("/") if p]
+        if not parts:
+            return []
+        files = self._ls_files()
+        if not files:
+            return []
+        want = parts[-1].lower()
+        cands = [f for f in files if f.rsplit("/", 1)[-1].lower() == want]
+        if not cands:
+            # 裸名也匹配不上时（少写了 .vue 之类）退到「词干包含」
+            stem = want.rsplit(".", 1)[0]
+            if len(stem) < 4:
+                return []
+            cands = [f for f in files if stem in f.rsplit("/", 1)[-1].lower()]
+        if not cands:
+            return []
+        return self._rank_like(rel, cands)[:limit]
 
     def _resolve_dir_hint(self, hint: str) -> str:
         """把模型点名的目录提示解析成仓库内真实目录（以 / 结尾）。
@@ -942,26 +1193,17 @@ class DefectAnalyzer:
                     and not _DOC_RE.search(f)]
         if not children:
             return []
-        # 目录内关键词命中分：一次 git grep 一个词，pathspec 限定该目录
+        # 目录内关键词命中分：一次 grep 限定在该目录内（同样排除 vendor 产物）
         base = dir_rel.rstrip("/")
         scores: Dict[str, float] = {f: 0.0 for f in children}
         ident_kws = getattr(self, "_ident_kws", set()) or set()
-        for kw in [k for k in keywords[:20] if len(k) >= 2][:12]:
-            try:
-                result = subprocess.run(
-                    ["git", "grep", "-lI", "-i", "--untracked", "-e", kw,
-                     "--", base],
-                    cwd=str(self.repo_path), capture_output=True, text=True,
-                    encoding="utf-8", errors="replace", timeout=10)
-            except (subprocess.TimeoutExpired, FileNotFoundError):
-                continue
-            if result.returncode != 0 or not result.stdout:
-                continue
+        kws = [k for k in keywords[:20] if len(k) >= 2][:12]
+        by_kw, _dropped = self._grep_hits(kws, pathspec=[base], timeout=60)
+        for kw, files_hit in by_kw.items():
             weight = 8.0 if kw in ident_kws else 1.0
-            for ln in result.stdout.splitlines():
-                ln = ln.strip()
-                if ln in scores:
-                    scores[ln] += weight
+            for rel in files_hit:
+                if rel in scores:
+                    scores[rel] += weight
         base_name = base.rsplit("/", 1)[-1]
 
         def _rank(f: str) -> tuple:
@@ -982,29 +1224,16 @@ class DefectAnalyzer:
             + [w for tok in path_tokens for s in tok.split("/")
                for w in re.split(r"[-_]", s) if len(w) >= 4])
         ident_kws = getattr(self, "_ident_kws", set()) or set()
+        by_kw, dropped_kws = self._grep_hits(keywords[:20])
+        if dropped_kws:
+            self._grep_dropped = list(getattr(self, "_grep_dropped", []) or []) + dropped_kws
         hits: Dict[str, float] = {}
-        for kw in keywords[:20]:
-            if len(kw) < 2 or kw.startswith("-"):
-                continue
-            try:
-                result = subprocess.run(
-                    ["git", "grep", "-nI", "-i", "--untracked", "--", kw],
-                    cwd=str(self.repo_path),
-                    capture_output=True,
-                    text=True,
-                    encoding="utf-8",
-                    errors="replace",
-                    timeout=10,
-                )
-            except (subprocess.TimeoutExpired, FileNotFoundError):
-                continue
-            if result.returncode != 0 or not result.stdout:
+        for kw, files_hit in by_kw.items():
+            if not files_hit:
                 continue
             # 计「该关键词命中了哪些文件」（去重），不按命中行数累加：
             # 否则一个含 200 行 task/warn 的大文件会碾压只命中 1 次
             # getFinalContent 的真正修改点。
-            files_hit = {line.split(":", 1)[0] for line in result.stdout.splitlines()
-                         if line.split(":", 1)[0]}
             # 标识符/字面量是高精度信号：命中一次就强于多个泛词命中。
             # 且精度随命中面收窄而放大：只命中个位数文件的标识符（工单 214646
             # 的 ADD_UPDATE 全仓仅 7 个文件，其中就含真正改动点 import-input.vue）
@@ -1048,7 +1277,11 @@ class DefectAnalyzer:
             low = f.lower()
             return any(d in low for d in target_dirs)
 
-        precedent = set(getattr(self, "_precedent_files", []) or [])
+        # 先例路径可能是「落盘当时」的旧形态（上游挪过目录就整条失效）——
+        # 在这里再兜一次，免得任何绕过 analyze() 的调用方（回放脚本、用例）
+        # 拿到一份一分都不生效的先例。幂等，重复解析无副作用。
+        precedent = set(self._resolve_precedent(
+            list(getattr(self, "_precedent_files", []) or [])))
         prec_dirs = {p.rsplit("/", 1)[0] for p in precedent if "/" in p}
 
         def _boost(f: str) -> int:
@@ -1070,6 +1303,15 @@ class DefectAnalyzer:
             # 裸子串曾让 "plat-form"/vue."config" 白拿 +5，压过真正的修改点
             if wants_validation and _hint_hit(basename):
                 score += 5
+            # 端侧偏好：同一页面的移动端/桌面端两份实现里，选工单说的那一份。
+            # 只加 8 分（约等于一个路径段命中），拿不准的工单压根不会有信号，
+            # 所以它只在「两份同名实现」这种真正需要裁决的场合起作用。
+            if side:
+                f_side = _side_of_path(low)
+                if f_side == side:
+                    score += 8
+                elif f_side:
+                    score -= 4
             # 纯容器/入口文件通常是路由壳子，几乎不承载校验逻辑
             if basename in _CONTAINER_FILES:
                 score -= 2
@@ -1078,6 +1320,7 @@ class DefectAnalyzer:
         # 缺陷文本里出现"必填/校验/required"时，提升承载校验文件的优先级。
         # 判定词由 analyze() 从原始标题+描述提取后透传，避免这里重复解析。
         wants_validation = bool(getattr(self, "_wants_validation", False))
+        side = str(getattr(self, "_side_hint", "") or "")
 
         def _val_rank(f: str) -> int:
             if not wants_validation:
@@ -1242,7 +1485,8 @@ class DefectAnalyzer:
             try:
                 r = subprocess.run(
                     ["git", "-C", str(self.repo_path), "-c", "core.quotePath=false",
-                     "grep", "-nIF", "--untracked", "-e", ph, "--", *pathspecs],
+                     "grep", "-nIF", "--untracked", "-e", ph, "--",
+                     *pathspecs, *_GREP_EXCLUDES],
                     capture_output=True, timeout=40)
             except Exception:
                 continue
@@ -1314,7 +1558,8 @@ class DefectAnalyzer:
             try:
                 r = subprocess.run(
                     ["git", "-C", str(self.repo_path), "-c", "core.quotePath=false",
-                     "grep", "-nIF", "--untracked", "-e", key, "--", *pathspecs],
+                     "grep", "-nIF", "--untracked", "-e", key, "--",
+                     *pathspecs, *_GREP_EXCLUDES],
                     capture_output=True, timeout=40)
             except Exception:
                 continue
@@ -1405,8 +1650,12 @@ class DefectAnalyzer:
         if len(window) > self.file_cap_bytes:  # very long lines
             window = window[: self.file_cap_bytes]
             end = start + len(window.split("\n"))
+        # ⚠ note 里可能带着「原路径已过时，实际读的是 X」——大文件分支**必须**
+        # 把它一起带上（曾在这里被整段丢掉）：模型看不到这句就会照旧路径交
+        # SEARCH 块，闸门/采纳阶段对不上文件，整单白跑。
         return window, (
-            f"{rel}: 文件 {len(lines)} 行，仅提供第 {start + 1}-{end} 行"
+            (f"{note} " if note else "")
+            + f"{rel}: 文件 {len(lines)} 行，仅提供第 {start + 1}-{end} 行"
             f"（{len(hits)} 处关键词命中已纳入）；SEARCH 块只能引用这段窗口内的原文"
         )
 
@@ -1449,15 +1698,27 @@ class DefectAnalyzer:
         return sorted(out)
 
     def _read_full(self, rel: str):
-        try:
-            full = self.repo_path / rel
-            if not full.is_file():
+        full = self.repo_path / rel
+        moved = ""
+        if not full.is_file():
+            # ⭐ 路径过时（上游把模块挪走了一层目录）时不该直接判定「读不到」：
+            # 按文件名 + 祖先目录重叠找回真身，并在 note 里点名。模型看到的
+            # 窗口必须能被 SEARCH 块逐字引用，而 SEARCH 块要写**真实**路径，
+            # 所以路径变了这件事必须明说，否则模型会照着旧路径交补丁
+            # （闸门/采纳阶段对不上文件 → 整单被打回，白跑一轮）。
+            alt = self._resolve_stale_file(rel, limit=1)
+            if not alt:
                 return None, f"{rel}: 文件不存在（git grep 结果已过期）"
+            moved = (f"⚠ 原路径 {rel} 在仓库里已不存在，按同名文件的真实路径 "
+                     f"{alt[0]} 读取（路径可能被上游挪过目录）——"
+                     f"SEARCH/REPLACE 块必须写这个真实路径。")
+            rel, full = alt[0], self.repo_path / alt[0]
+        try:
             raw = full.read_bytes()
             if len(raw) > 400_000:
                 return None, f"{rel}: 文件过大（{len(raw)} 字节），未纳入上下文"
             text = raw.decode("utf-8")
-            return text, ""
+            return text, moved
         except UnicodeDecodeError:
             return None, f"{rel}: 非 UTF-8 文本，已跳过"
         except Exception as e:

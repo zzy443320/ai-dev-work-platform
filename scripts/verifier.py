@@ -24,10 +24,21 @@ from typing import Dict, List, Optional, Tuple
 from .analyzer import strip_html
 
 _ROUTE_RE = re.compile(r"(?<![\w:/])(/[A-Za-z0-9_\-./]{2,60})")
-# strip_html 把 URL 的协议+域名剥掉后只留无前导斜杠的 path（demo-workspace/schedule），
-# 工单正文里的路径提示也常是这个形态 —— 单段 /xxx 误报太多，裸路径要求至少两段。
+# 工单正文里的路径提示常是「无前导斜杠的裸路径」（demo-workspace/schedule）——
+# 单段 /xxx 误报太多，裸路径要求至少两段。
 _BARE_PATH_RE = re.compile(r"(?<![\w@:/.])([A-Za-z0-9_\-]+(?:/[A-Za-z0-9_\-]+)+)")
 _SKIP_ROUTES = ("/api/", "/static/", "/node_modules/", "/src/", "/dist/")
+
+# 完整 URL（strip_html 现在是**保留**协议+域名的，所以 URL 路径得单独取）。
+_URL_RE = re.compile(r"[\w.-]+://[^\s<>\"')\]]+")
+
+# 「入口段 + hash 路由」：真实页面是 `/mobile#/agent-workspace/schedule` 这种形态。
+# 入口段（mobile / desktop / pc / app-web）决定这套前端加载哪一份页面壳。
+# ⚠ `_ROUTE_RE` / `_BARE_PATH_RE` 都只认 `#/` 之后的部分，入口段会被整个丢掉。
+_URL_HASH_RE = re.compile(
+    r"[\w.-]+://[^\s<>\"')\]]*?((?:/[A-Za-z0-9_\-]+)*)/?#/([A-Za-z0-9_\-/]{2,80})")
+_BARE_HASH_RE = re.compile(
+    r"(?:^|[\s（(【\"'：:])([A-Za-z0-9_\-/]{0,40})#/([A-Za-z0-9_\-/]{2,80})")
 
 _PLAN_SYSTEM = "你是前端 E2E 测试工程师，把缺陷复现步骤转成可执行的 Playwright 动作序列。只输出 JSON。"
 
@@ -100,8 +111,49 @@ class ScreenshotVerifier:
         return False
 
     @staticmethod
+    def _clean_route(cand: str) -> str:
+        """去查询串/锚点残留、补前导斜杠——存进提案的 route 必须是可 goto 的。"""
+        cand = str(cand or "").strip()
+        cand = cand.split("?", 1)[0].split("#", 1)[0]
+        if not cand:
+            return ""
+        if not cand.startswith("/"):
+            cand = "/" + cand
+        return cand.rstrip("/") or "/"
+
+    @staticmethod
+    def _hash_route(text: str) -> str:
+        """抽「入口段 + hash 路由」的完整路由；没有这种形态时返回空串。
+
+        ⭐ 工单 215890（【迭代106】移动端定时任务编辑时，选不了模型）的复现地址是
+        `https://…/mobile#/agent-workspace/schedule`。旧实现只认 `#/` 之后的部分，
+        于是复现与验收打开的是**桌面端**的 `/agent-workspace/schedule` —— 那一页
+        根本没有这个缺陷：before/after 截图必然一模一样，验收结论永远是
+        「看不出来 / 现象未变」，**哪怕补丁是对的也会被判成没修好**，白烧一轮返工。
+        入口段必须一起带上。
+        """
+        for rx in (_URL_HASH_RE, _BARE_HASH_RE):
+            m = rx.search(text)
+            if not m:
+                continue
+            entry, tail = m.group(1).strip("/"), m.group(2).strip("/")
+            if not tail:
+                continue
+            route = f"/{entry}/#/{tail}" if entry else f"/#/{tail}"
+            if not ScreenshotVerifier._bad_route(route):
+                return route
+        return ""
+
+    @staticmethod
     def route_for(defect: Dict) -> str:
-        """工单 → 页面路由。必须先剥 HTML：`</strong>` 在原文上会被抽成 /strong。"""
+        """工单 → 页面路由。必须先剥 HTML：`</strong>` 在原文上会被抽成 /strong。
+
+        取路由的优先级（越靠前越具体，越不容易验错页）：
+          ① 显式 `route` 字段；
+          ② 「入口段 + hash 路由」（/mobile#/agent-workspace/schedule）；
+          ③ 完整 URL 的 path 段（https://host/app/task）；
+          ④ 正文里的裸路由（/app/task、app/task）。
+        """
         explicit = str(defect.get("route") or "").strip()
         if explicit:
             return explicit
@@ -109,14 +161,31 @@ class ScreenshotVerifier:
             str(defect.get(k, "") or "") for k in ("url", "path", "title", "description", "desc")
         )
         text = strip_html(text)
+        # ② 入口段 + hash 路由：最具体，先取
+        hashed = ScreenshotVerifier._hash_route(text)
+        if hashed:
+            return hashed
+        # ③ 完整 URL 的 path 段。⚠ strip_html 保留协议+域名后，URL 里的
+        # `/app/task` 会被 `_ROUTE_RE` 的 `(?<![\w:/])` 挡掉（`/` 前面是域名
+        # 尾字），`_BARE_PATH_RE` 又只肯从无斜杠处起match —— 只给完整 URL 的
+        # 工单以前会抽出**空路由**，直接退化成拍首页。
+        for m in _URL_RE.finditer(text):
+            raw = m.group(0)
+            body = raw.split("://", 1)[-1]
+            if "/" not in body:
+                continue
+            cand = ScreenshotVerifier._clean_route("/" + body.split("/", 1)[1])
+            if cand and cand != "/" and not ScreenshotVerifier._bad_route(cand):
+                return cand
+        # ④ 正文里的裸路由
         for m in _ROUTE_RE.finditer(text):
             cand = m.group(1)
             if not ScreenshotVerifier._bad_route(cand):
-                return cand
+                return ScreenshotVerifier._clean_route(cand)
         for m in _BARE_PATH_RE.finditer(text):
             cand = "/" + m.group(1)
             if not ScreenshotVerifier._bad_route(cand):
-                return cand
+                return ScreenshotVerifier._clean_route(cand)
         return ""
 
     @staticmethod
