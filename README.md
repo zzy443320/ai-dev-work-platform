@@ -162,6 +162,38 @@ pytest 只当收编器：`tests/suite_pytest.py` 用子进程跑筛过的安全�
 .venv/Scripts/python.exe tests/check_vue_all.py       # 界面总入口（见下方前置条件）
 ```
 
+### 失败收敛层（跑新工单前先跑这一组）
+
+跑新工单总会撞上"这种或那种问题"，但把落盘的提案归一遍会发现**失败只有几类**。这一层就是
+把"每次人肉排查"换成机制：跑一遍跑道，红一条就是"这一类问题会再犯"。
+
+```bash
+.venv/Scripts/python.exe -m pytest -k convergence   # 或者直接跑下面几条
+.venv/Scripts/python.exe tests/ticket_battery.py     # 合成工单跑道：一条假工单一类失败
+.venv/Scripts/python.exe tests/check_postmortem.py   # 归类判据（只有新类才该打扰人）
+.venv/Scripts/python.exe tests/check_gate_baseline.py  # 基线本来就红的检查不许拦人
+.venv/Scripts/python.exe tests/check_path_suggest.py   # 路径不存在时必须给出真实候选
+.venv/Scripts/python.exe tests/check_route_tokens.py   # 路由里的单词段是目录钥匙；全仓 grep 要批量+排 vendor
+.venv/Scripts/python.exe tests/check_side_stale.py     # 端侧（移动端/桌面端）抉择；过时路径必须自愈
+.venv/Scripts/python.exe tests/check_route_entry.py    # 复现/验收路由不许丢掉「入口段」
+```
+
+**为什么「全仓 grep」那一条值得单列**：真实目标仓里 vendor 进来的
+`packages/admin/public/monaco-editor-*/` 有 9MB 打包文件，**每个关键词**的 `git grep` 都要把它们
+整份读一遍（实测单次 7~10s）。逐词搜 20 次就是两三分钟，而且 `schedule` 这种关键高频词会直接
+撞上超时被**静默**当成「没命中」—— 真凶所在目录一分都拿不到，读取窗口里自然没有真凶。
+现在统一走 `analyzer._grep_hits()`：一次 grep 带多个 `-e`，并在扫描阶段用 `:(exclude,glob)`
+排掉 `public/`、`node_modules`、`dist`、`*.min.js`、monaco 等产物目录，实测 ≈160s → ≈7s 且一个词
+都不丢；真被丢掉的词也会写进提示词明说「这些词并没有真正搜过」，不再蒙混。
+**新增任何全仓 grep 都必须走这个入口。**
+
+看落盘提案到底卡在哪一类、下一步该做什么：
+
+```bash
+.venv/Scripts/python.exe run.py --postmortem              # 汇总：直方图 + 新类 + 需投入的类
+.venv/Scripts/python.exe run.py --postmortem <提案ID>      # 单条：证据 + 下一步
+```
+
 **`pytest` 子集不含界面用例**：`check_vue_*.py` / `test_browser_*.py` 需要 Playwright 与
 真实浏览器，整套 5–10 分钟，所以没并进去。跑它们的前置条件是三条：
 `playwright install chromium`、先 `npm run build`（否则 `GET /` 返回 503）、
