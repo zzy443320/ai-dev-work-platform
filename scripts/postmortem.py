@@ -140,6 +140,38 @@ CLASSES: Dict[str, Dict] = {
         "mechanism": "内容级命中置顶 + 词条 key 二级跳转（2026-10-15）",
         "case": "tests/check_grep_glob.py（[5][6] 节）",
     },
+    "replies_ignored": {
+        "label": "模型回复里的动作没被接住（空转烧轮次）",
+        "why": "模型把工具调用写在说明文字里（正文在前、动作在后），或一轮给了两个动作；"
+               "旧解析只认「整条回复就是一个 JSON」，于是那一轮一个动作都没执行，还回它一句"
+               "「你这条回复既没有调用工具」——轮次被白烧，最后以「轮次已用尽」认输转人工"
+               "（215890 二次重放实测：7 轮里 2 轮是这么没的，而工单真正的改动点早已在窗口里）。",
+        "next": ["看那几个 noop 轮次的 reply.preview：只要里面确实有 `\"action\":\"call\"`，"
+                 "就说明动作被解析漏掉了（不是模型没干活）；",
+                 "机制已就位：fix_agent.parse_embedded_actions 把正文夹带的动作按顺序全捞出"
+                 "（一轮最多执行 MAX_ACTIONS_PER_REPLY=3 个），空转提示也改成如实措辞；"
+                 "重现 → 先跑 tests/check_fix_agent.py [14]；",
+                 "若那几轮 reply 里根本没有 action（真的只写了散文）→ 是模型行为问题，"
+                 "收紧提示词措辞即可，别动解析。"],
+        "mechanism": "parse_embedded_actions + 空转提示如实措辞（2026-10-16）",
+        "case": "tests/check_fix_agent.py（[14] 正文夹带动作）",
+    },
+    "rounds_starved": {
+        "label": "轮次预算耗尽：模型一直在查代码，还没轮到交补丁",
+        "why": "不是模型不会修，也不是没定位到——**轮次用完了**。关键机制：**每一次模型回复都"
+               "算一轮**，所以「一轮只读一个文件」这种查法会直接把预算吃光。215890 二次重放"
+               "（2026-10-16）实测：7 轮里 5 轮各只读一个文件，模型自己交代「真凶文件的脚本段"
+               "（281-718 行）在轮次用尽前没读到」，而最后一轮被规则禁止调用工具 → 只能 give_up。",
+        "next": ["先看 agent.trace：全是 tool 轮、attempts 为空、rounds 顶到 max_rounds，"
+                 "三条同时成立就是这个类（有真补丁、或 stall_counts 已到上限的不算）；",
+                 "机制已就位：提示词改成「一轮可给 1~3 个动作」「确定是案发现场的文件一次读到尾」，"
+                 "并在倒数第二轮明确告知「下一轮不能再调用工具」；",
+                 "还嫌不够就把配置→修复策略→轮次预算（agent.max_rounds）调大：一次模型调用 = "
+                 "一轮，deepseek-flash 单轮 20~240s，5 轮通常不够「查 6 个文件 + 交补丁 + 验证」；",
+                 "重现 → tests/check_fix_agent.py [16]。"],
+        "mechanism": "一轮多动作 + 倒数第二轮提醒（2026-10-16）",
+        "case": "tests/check_fix_agent.py（[16] 轮次预算耗尽）",
+    },
     "stall_or_budget": {
         "label": "轮次/时间预算耗尽",
         "why": "模型在同一个失败上打转，或每轮验证太慢把预算吃掉。",
@@ -274,6 +306,84 @@ def _detect_locate_miss(record: Dict) -> Optional[List[str]]:
            [f"窗口/上下文相关措辞：{'、'.join(hit[:3])}"]
 
 
+def _detect_replies_ignored(record: Dict) -> Optional[List[str]]:
+    """模型写了动作、那一轮却被记成 noop —— 解析没接住（不是模型没干活）。
+
+    判据只看两个显式字段：trace 里的 `kind == "noop"`，以及同一轮 `reply.preview`
+    里有没有 `"action"` / `"tool"`。不靠措辞猜，所以不会把「模型真的只写了散文」
+    误判成解析问题（那种情况 preview 里不会有 action JSON）。
+    """
+    if _has_patch(record):
+        return None
+    agent = record.get("agent") or {}
+    trace = agent.get("trace") or []
+    if not isinstance(trace, list):
+        return None
+    reply_by_round: Dict[object, str] = {}
+    lost: List[int] = []
+    noop_total = 0
+    for ev in trace:
+        if not isinstance(ev, dict):
+            continue
+        if ev.get("kind") == "reply":
+            reply_by_round[ev.get("round")] = str(ev.get("preview") or "")
+        elif ev.get("kind") == "noop":
+            noop_total += 1
+            prev = reply_by_round.get(ev.get("round"), "")
+            if '"action"' in prev or '"tool"' in prev:
+                lost.append(int(ev.get("round") or 0))
+    if not lost:
+        return None
+    return [
+        f"第 {'、'.join(str(r) for r in sorted(set(lost)))} 轮的回复里有 action JSON，"
+        f"但那一轮被记成 noop（动作没被执行）",
+        f"noop 共 {noop_total} 轮 / 总 {agent.get('rounds', '?')} 轮，"
+        f"结论 {agent.get('conclusion') or '?'}",
+    ]
+
+
+def _detect_rounds_starved(record: Dict) -> Optional[List[str]]:
+    """轮次顶格用尽 + 一直在查代码 + 一次补丁都没交 —— 缺的是**预算**，不是能力。
+
+    ⭐ 与 `stall_or_budget` 的分界线：那边是「停了，不知道卡在哪」，这边是「一直在干活、
+    但活还没干到能交补丁的地步就被时间/轮次切断」。判据全部用**显式字段**，不猜措辞：
+
+      * conclusion 属于「没收口」三类（budget_exhausted / not_converged / stalled）
+      * attempts 为空（交过补丁就不算「没轮到」）
+      * rounds >= max_rounds（真的顶格了，而不是自己认输早退）
+      * trace 里至少 3 次真实工具执行（证明它在查代码，不是呆着）
+      * stall_counts 没有达到上限的重复签名（有就是在原地打转 → 让给 stall_or_budget）
+    """
+    if _has_patch(record):
+        return None
+    agent = record.get("agent") or {}
+    if str(agent.get("conclusion") or "") not in ("budget_exhausted", "not_converged",
+                                                  "stalled"):
+        return None
+    if agent.get("attempts"):
+        return None
+    rounds, mx = agent.get("rounds"), agent.get("max_rounds")
+    if not (isinstance(rounds, int) and isinstance(mx, int) and mx > 0 and rounds >= mx):
+        return None
+    trace = agent.get("trace") or []
+    tools = [e for e in trace if isinstance(e, dict) and e.get("kind") == "tool"]
+    if len(tools) < 3:
+        return None
+    stall = agent.get("stall_counts") or {}
+    if stall and max(stall.values()) >= 2:
+        return None
+    counts: Dict[str, int] = {}
+    for e in tools:
+        k = str(e.get("tool") or "?")
+        counts[k] = counts.get(k, 0) + 1
+    top = sorted(counts.items(), key=lambda kv: -kv[1])[:3]
+    return [
+        f"轮次顶格：{rounds}/{mx} 轮用尽，补丁尝试 0 次",
+        f"这些轮次都花在查代码上：{len(tools)} 次工具执行（"
+        + "、".join(f"{k}×{v}" for k, v in top) + "）",
+    ]
+
+
 def _detect_stall_or_budget(record: Dict) -> Optional[List[str]]:
     agent = record.get("agent") or {}
     concl = str(agent.get("conclusion") or "")
@@ -317,6 +427,8 @@ _ORDER = [
     "gate_red",
     "ai_unavailable",
     "locate_miss",
+    "replies_ignored",
+    "rounds_starved",
     "stall_or_budget",
     "search_miss",
     "model_no_patch",
@@ -358,6 +470,8 @@ def classify(record: Dict) -> Dict:
             ("tool_misled", _detect_tool_misled),
             ("ai_unavailable", _detect_ai_unavailable),
             ("locate_miss", _detect_locate_miss),
+            ("replies_ignored", _detect_replies_ignored),
+            ("rounds_starved", _detect_rounds_starved),
             ("stall_or_budget", _detect_stall_or_budget),
             ("search_miss", _detect_search_miss),
         ]

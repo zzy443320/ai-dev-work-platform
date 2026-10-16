@@ -176,16 +176,34 @@ pytest 只当收编器：`tests/suite_pytest.py` 用子进程跑筛过的安全�
 .venv/Scripts/python.exe tests/check_route_tokens.py   # 路由里的单词段是目录钥匙；全仓 grep 要批量+排 vendor
 .venv/Scripts/python.exe tests/check_side_stale.py     # 端侧（移动端/桌面端）抉择；过时路径必须自愈
 .venv/Scripts/python.exe tests/check_route_entry.py    # 复现/验收路由不许丢掉「入口段」
+.venv/Scripts/python.exe tests/check_locate_regression3.py  # 二次定位的「文件提示」不许被名额截掉
 ```
 
-**为什么「全仓 grep」那一条值得单列**：真实目标仓里 vendor 进来的
-`packages/admin/public/monaco-editor-*/` 有 9MB 打包文件，**每个关键词**的 `git grep` 都要把它们
-整份读一遍（实测单次 7~10s）。逐词搜 20 次就是两三分钟，而且 `schedule` 这种关键高频词会直接
-撞上超时被**静默**当成「没命中」—— 真凶所在目录一分都拿不到，读取窗口里自然没有真凶。
-现在统一走 `analyzer._grep_hits()`：一次 grep 带多个 `-e`，并在扫描阶段用 `:(exclude,glob)`
-排掉 `public/`、`node_modules`、`dist`、`*.min.js`、monaco 等产物目录，实测 ≈160s → ≈7s 且一个词
-都不丢；真被丢掉的词也会写进提示词明说「这些词并没有真正搜过」，不再蒙混。
+**为什么「全仓 grep」那一条值得单列**：目标仓**单次**全树 `git grep` 就要 8~13s
+（8797 个文件 / 100MB，D 盘裸读只有 3.4MB/s —— 开销在**逐文件 open/read**，不在文件大小）。
+逐词搜 20 次就是两三分钟，而且 `schedule` 这种关键高频词会直接撞上超时被**静默**当成
+「没命中」—— 真凶所在目录一分都拿不到，读取窗口里自然没有真凶。
+现在统一走 `analyzer._grep_hits()`：一次 grep 带多个 `-e`（并顺手用 `:(exclude,glob)`
+排掉 `public/`、`node_modules`、`dist`、`*.min.js`、monaco 等产物目录，只为结果里不要再出现
+产物噪音），实测 ≈160s → ≈7s 且一个词都不丢；真被丢掉的词也会写进提示词明说「这些词并没有
+真正搜过」，不再蒙混。
+⚠ **别把「排除 vendor」当成提速手段**（本仓库 2026-10-16 曾这么写过，是错的）：同日交替 A/B
+实测，排掉 21MB 的 `packages/admin/public/` 后耗时**没有任何可测变化**（10760ms vs 10725ms），
+因为 monaco 只有两个文件；`packages/admin` 整个包单跑只要 1.1s。提速 100% 来自「N 次扫描 →
+1 次」，与排除无关。
 **新增任何全仓 grep 都必须走这个入口。**
+
+**「模型点名的文件」比任何打分都准 —— 所以它一条都不许被名额截掉**（2026-10-16 工单 215890）：
+定位阶段的模型按「宁缺勿猜」护栏拒出补丁时，会在说明里直接点名要去哪个文件。这条提示走
+**强制开窗**（不参与得分排序，排到窗口外也照样进），是整条定位链里精度最高的一档信号。
+但 `_model_hints` 原先把「去扩展名的路径」（正则 1，如 `…/composer/mobile/index`）整体串在
+「带扩展名的完整路径」（正则 2，如 `…/composer/mobile/index.vue`）**之前**，末尾又是 `[:8]`
+截断 —— 只要不带扩展名的候选攒够 8 条，带扩展名的完整路径就**一条都留不下**。实测后果：
+模型写全了 `cloudpivot-ai/chat/chat-kit/components/composer/mobile/index.vue`（真实落点
+`packages/…/composer/mobile/index.vue`，718 行），抽出来却是「点名文件 -」，窗口里只剩一堆
+`lui/**/schedule/*.vue`；修复 agent 只能靠 grep 重新找，读到 280 行时轮次耗尽，认输转人工
+（记录 `proposals/L4Zo7p9zlZYhlDQY-*155758.json`）。现在**文件提示排最前**，同路径的
+「去扩展名孪生」让位给别的目录线索。用例 `tests/check_locate_regression3.py`（已并入 convergence）。
 
 看落盘提案到底卡在哪一类、下一步该做什么：
 
@@ -262,3 +280,4 @@ npm run dev          # 开发模式（接口自动转发到 127.0.0.1:8765）
 - 沙箱副本按跟踪文件 + 工作区改动构建，被 `.gitignore` 排除的产物（如已构建的 `dist/`）不在其中；依赖靠链接 `node_modules`，链接失败的机器（Windows 未开开发者模式且 junction 失败）会看到"缺依赖"型假失败，提案说明里会点出来。
 - 沙箱里的 dev server 只解决「页面能不能渲染」，不解决「后端数据从哪来」：内网应用普遍要登录与接口，起得来但拿不到数据时页面复验会标 `unusable` 而不是 `gone`。这类缺陷的最终确认仍然只能在你们联调环境里做，采纳后的「修复后截图」那一路（打真实工作区 + 配置好的 base_url）才是它的对照位置。
 - 先例检索走的是文本相关度（目录段 / 关键词 / 标题），不是语义检索：改过名、挪过目录的同类缺陷可能挑不中；注入条数与字符数都有硬上限，宁少不淹没当前代码的上下文。
+- **修复循环的瓶颈是「轮次」**：**每一次模型回复都算一轮**（查代码也算），所以一次模型调用慢（20~240s）就意味着几轮就吃满墙钟预算。因此提示词明确要求「一轮给 1~3 个动作」「确定是案发现场的文件一次读到尾」，并在倒数第二轮预告「下一轮不能再调工具」。若提案归类成 `rounds_starved`（顶格用尽、只查代码、0 次补丁尝试），把配置 → 修复策略 → **轮次预算**调大即可，不用改代码。

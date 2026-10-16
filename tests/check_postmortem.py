@@ -64,6 +64,24 @@ SAMPLES = [
                          "patch": {"ok": False, "errors": []}}),
     ("search_miss", {"status": "invalid",
                      "patch": {"ok": False, "errors": ["SEARCH 段未能匹配到原文"]}}),
+    ("replies_ignored", {"status": "invalid",
+                         "patch": {"ok": False, "errors": []},
+                         "agent": {"conclusion": "not_converged", "rounds": 7,
+                                   "max_rounds": 7,
+                                   "trace": [
+                                       {"round": 1, "kind": "reply", "chars": 200,
+                                        "preview": "先读关键嫌疑文件。\n"
+                                                   '{"action":"call","tool":"repo_read",'
+                                                   '"arguments":{"path":"a.vue"}}'},
+                                       {"round": 1, "kind": "noop"}]}}),
+    ("rounds_starved", {"status": "invalid",
+                        "patch": {"ok": False, "errors": []},
+                        "agent": {"conclusion": "not_converged", "rounds": 7,
+                                  "max_rounds": 7, "attempts": [],
+                                  "trace": [{"round": 1, "kind": "tool", "tool": "repo_grep"},
+                                            {"round": 2, "kind": "tool", "tool": "repo_read"},
+                                            {"round": 3, "kind": "tool", "tool": "repo_read"},
+                                            {"round": 4, "kind": "tool", "tool": "repo_read"}]}}),
     ("model_no_patch", {"status": "invalid", "agent": {"conclusion": "no_patch"},
                         "analysis": {"parse_errors": ["模型返回了分析但未给出 SEARCH/REPLACE 补丁块"]},
                         "patch": {"ok": False, "errors": []}}),
@@ -155,6 +173,100 @@ def t_real_records():
     ok(sum(summary["counts"].values()) == len(recs), "计数与记录数一致")
 
 
+def t_replies_ignored():
+    """「动作没被接住」与「模型真的只写了散文」必须分开：前者是工具 bug，后者是模型行为。
+
+    判据只认显式字段：trace 里有 `kind == "noop"`，**且**同一轮 `reply.preview` 里含
+    `"action"`/`"tool"`。所以这里给一个只差一个字段的反例：同样是 noop，但回复里没有
+    action JSON → 主类必须落回 stall_or_budget，不能被误报成解析问题。
+    """
+    print("\n[7] 空转轮次的判据：夹带动作 vs 真的只写了散文")
+    got = classify({
+        "status": "invalid", "patch": {"ok": False, "errors": []},
+        "agent": {"conclusion": "not_converged", "rounds": 7, "max_rounds": 7,
+                  "trace": [
+                      {"round": 1, "kind": "reply", "preview": "查一下。\n"
+                       '{"action":"call","tool":"repo_grep"}'},
+                      {"round": 1, "kind": "tool", "tool": "repo_grep"},
+                      # 第 2 轮：正文在前、动作在后 —— 就是这种被整轮漏掉
+                      {"round": 2, "kind": "reply", "chars": 210,
+                       "preview": "先读关键嫌疑文件。\n"
+                                  '{"action":"call","tool":"repo_read",'
+                                  '"arguments":{"path":"a.vue"}}'},
+                      {"round": 2, "kind": "noop"}]}})
+    ok(got["class"] == "replies_ignored", "夹带动作的空转轮 → 主类是「动作没被接住」",
+       got["class"])
+    ok(any("第 2 轮" in str(e) for e in got["evidence"]),
+       "证据只点名真正被漏掉的那一轮（第 1 轮执行过了，不该报）",
+       str(got["evidence"])[:160])
+    ok("stall_or_budget" in got["also"], "同时保留「预算被烧」这个次要信号",
+       str(got["also"]))
+    plain = classify({
+        "status": "invalid", "patch": {"ok": False, "errors": []},
+        "agent": {"conclusion": "not_converged", "rounds": 7, "max_rounds": 7,
+                  "trace": [{"round": 1, "kind": "reply", "preview": "我想想。"},
+                            {"round": 1, "kind": "noop"}]}})
+    ok(plain["class"] == "stall_or_budget",
+       "纯散文的空转轮不许误报成解析问题（反例）", plain["class"])
+    out = classify({"status": "invalid",
+                    "patch": {"ok": True, "errors": [], "files": ["a.ts"],
+                              "blocks": [{"file_path": "a.ts", "search": "x",
+                                          "replace": "y"}]},
+                    "gate": {"ok": True, "level": "sandbox"},
+                    "agent": {"conclusion": "no_patch", "trace": [
+                        {"round": 1, "kind": "reply", "preview": '{"action":"call"}'},
+                        {"round": 1, "kind": "noop"}]}})
+    ok(out["class"] != "replies_ignored", "已经有补丁时不报这个类（它只解释「没补丁」）",
+       out["class"])
+
+
+def t_rounds_starved():
+    """「预算不够」要和「模型不会修 / 原地打转」分开：前者调个轮次预算就好。
+
+    判据全用显式字段（conclusion / attempts / rounds vs max_rounds / trace 里的 tool
+    条数 / stall_counts），不猜措辞。所以这里逐条给反例：只要有一个字段不满足，就必须
+    退回 stall_or_budget —— 宁可少报，也不能把「模型认输」误诊成「加预算就能好」。
+    """
+    print("\n[8] 轮次预算耗尽：缺预算 vs 不收敛")
+    base = {"status": "invalid", "patch": {"ok": False, "errors": []},
+            "agent": {"conclusion": "not_converged", "rounds": 7, "max_rounds": 7,
+                      "attempts": [],
+                      "trace": [{"round": i, "kind": "tool", "tool": "repo_read"}
+                                for i in range(1, 5)]}}
+    got = classify(base)
+    ok(got["class"] == "rounds_starved", "顶格用尽 + 只查代码 + 0 补丁 → rounds_starved",
+       got["class"])
+    ev = " ".join(str(e) for e in got["evidence"])
+    ok("7/7" in ev, "证据里带上轮次实况（rounds/max_rounds）", ev[:120])
+    ok("4 次工具执行" in ev, "证据里说明轮次都花在哪（工具执行次数）", ev[:120])
+    ok("stall_or_budget" in got["also"], "次要信号仍保留", str(got["also"]))
+
+    import copy
+    def variant(**patch):
+        r = copy.deepcopy(base)
+        r["agent"].update(patch)
+        return r
+
+    ok(classify(variant(attempts=[{"conclusion": "x"}]))["class"] != "rounds_starved",
+       "交过补丁的不算（那叫不收敛，不叫没轮到）")
+    ok(classify(variant(rounds=3))["class"] != "rounds_starved",
+       "没顶格就收工的不算（自己早退，不是预算不够）")
+    ok(classify(variant(trace=[{"round": 1, "kind": "tool", "tool": "repo_read"}]))["class"]
+       != "rounds_starved", "没在查代码的不算（给加预算也没用）")
+    stall = variant(stall_counts={"unbuilt:x": 3})
+    ok(classify(stall)["class"] == "stall_or_budget",
+       "已在原地打转的归 stall_or_budget（有重复签名就让位）",
+       classify(stall)["class"])
+    withpatch = {"status": "invalid",
+                 "patch": {"ok": True, "errors": [], "files": ["a.ts"],
+                           "blocks": [{"file_path": "a.ts", "search": "x",
+                                       "replace": "y"}]},
+                 "gate": {"ok": True, "level": "sandbox"},
+                 "agent": base["agent"]}
+    ok(classify(withpatch)["class"] != "rounds_starved",
+       "已经有补丁的不报这个类（它只解释「没产出补丁」）")
+
+
 def main():
     t_classes()
     t_classify()
@@ -162,6 +274,8 @@ def main():
     t_robust()
     t_ledger()
     t_real_records()
+    t_replies_ignored()
+    t_rounds_starved()
     print(f"\n通过 {_PASS} 项，失败 {_FAIL} 项")
     sys.exit(1 if _FAIL else 0)
 

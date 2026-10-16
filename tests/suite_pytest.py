@@ -59,8 +59,10 @@ CONVERGENCE = [
     "check_route_entry.py",       # 复现/验收路由不许丢掉入口段（/mobile#/...）
     "check_route_tokens.py",      # 路由里的单词段是目录钥匙；grep 要批量 + 排除 vendor
     "check_side_stale.py",        # 端侧加权 + 过时路径自愈（不许只回「文件不存在」）
+    "check_locate_regression3.py",  # 二次定位的文件提示预算：带扩展名的完整路径不许被截掉
     "check_gate_baseline.py",     # 基线本来就红的检查不许拦人；新弄红的一律拦
     "check_postmortem.py",        # 失败归类：判据要准，只有新类才打扰人
+    "check_ai_call_cap.py",       # 单次模型调用总时长上限（推理模型不许拖十几分钟）
     "ticket_battery.py",          # 合成工单跑道：每条假工单一类失败，且都不得零交付
 ]
 

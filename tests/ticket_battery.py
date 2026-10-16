@@ -190,7 +190,14 @@ def ticket_stale_path():
 
 
 def ticket_embedded_action():
-    """215890 第 4 轮：空补丁块 + 夹带 tool call → 那一轮必须去查代码，不能白烧。"""
+    """215890 第 4 轮 + 二次重放：夹带的 tool call 必须执行，不能白烧一轮。
+
+    形态①（第 4 轮）：空补丁块 + 夹带 tool call。
+    形态②（2026-10-16 二次重放新抓到的，更常见）：**正文在前**、一个补丁块都没有、
+    而且一轮给两个动作。旧解析只认「整条回复就是一个 JSON」，且只在「有空补丁块」时
+    才去捞 —— 形态②于是整轮被记成 noop，模型还收到一句不实的「你这条回复既没有调用
+    工具」；7 轮里这么烧掉 2 轮，最后以「轮次已用尽」认输转人工。
+    """
     repo = make_repo()
     mixed = (f"<<<<<<< SEARCH {STALE_EDITOR}\n=======\n>>>>>>> REPLACE\n\n"
              "Wait — 我不能这样空提交。先查仓库。\n\n"
@@ -204,6 +211,23 @@ def ticket_embedded_action():
     ok(len(res["attempts"]) == 1, "那一轮没有被当成补丁交上去",
        f"attempts={len(res['attempts'])}")
     ok(res["conclusion"] in GREEN, "最终仍能产出补丁", res["conclusion"])
+
+    # 形态②：正文在前、没有补丁块、一轮两个动作
+    repo2 = make_repo()
+    prose_first = ("先看两处。\n"
+                   + call_tool("repo_grep", pattern="MODEL_LABEL", glob="**/*.vue") + "\n"
+                   + call_tool("repo_read", path=REAL_EDITOR))
+    ai2 = FakeAI([prose_first, patch_reply()])
+    res2 = agent_for(repo2, ai2).run({"id": "B2b", "title": "移动端编辑页选不了模型"})
+    tools2 = [r.get("tool") for r in res2["trace"] if r.get("kind") == "tool"]
+    ok(tools2[:2] == ["repo_grep", "repo_read"],
+       "正文在前、一轮两个动作：两个都被执行", str(tools2))
+    noops = [r for r in res2["trace"] if r.get("kind") == "noop"]
+    ok(not noops, "没有把真实动作记成空转", str(noops))
+    saw2 = ai2.prompts[1] if len(ai2.prompts) > 1 else ""
+    ok("### 工具 repo_grep" in saw2 and "### 工具 repo_read" in saw2,
+       "两个工具的结果都回喂给了模型", saw2[-200:][:120])
+    ok(res2["conclusion"] in GREEN, "最终仍能产出补丁", res2["conclusion"])
 
 
 def ticket_brace_glob():
@@ -307,6 +331,8 @@ COVERS = {
     "gate_baseline_red": "check_gate_baseline",
     "patch_broken_syntax": "ticket_half_written_patch",
     "locate_miss": "check_locate_regression*",
+    "replies_ignored": "ticket_embedded_action / check_fix_agent（[14]）",
+    "rounds_starved": "check_fix_agent（[16] 提示词效率）/ check_locate_regression3",
     "stall_or_budget": "check_fix_agent（不收敛/预算）",
     "ai_unavailable": "check_fix_agent（推理截断签名）",
     "model_no_patch": "ticket_stale_path 等（不得零交付）",
