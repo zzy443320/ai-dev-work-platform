@@ -73,6 +73,8 @@ SELF_CONTAINED = [
     "check_vue_team_ui.py",
     "check_vue_tasks_ui.py",
     "check_vue_extensions_ui.py",
+    # 资源汇总（不接 AI 的便签板）：点开新页签 / 失焦回存 / 协议白名单
+    "check_vue_resources_ui.py",
     "check_vue_settings_ui.py",
     "check_chat.py",
     "check_usage.py",

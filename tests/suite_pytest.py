@@ -63,6 +63,8 @@ CONVERGENCE = [
     "check_gate_baseline.py",     # 基线本来就红的检查不许拦人；新弄红的一律拦
     "check_postmortem.py",        # 失败归类：判据要准，只有新类才打扰人
     "check_ai_call_cap.py",       # 单次模型调用总时长上限（推理模型不许拖十几分钟）
+    "check_req_pipeline.py",      # 需求开发四阶段流水线：重试/gaps/已存在新文件/只出方案
+    "check_req_attachments.py",   # 需求文档附件：PDF 文字层抽取 / 假 PDF 与扫描件拒绝 / 合并口径
     "ticket_battery.py",          # 合成工单跑道：每条假工单一类失败，且都不得零交付
 ]
 

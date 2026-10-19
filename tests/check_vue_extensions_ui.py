@@ -108,7 +108,8 @@ def start_server(tmp: Path):
 
 SKILL_IDS = ["skill-count", "btn-skill-add", "skill-form",
              "ext-skill-name", "ext-skill-desc", "ext-skill-content",
-             "ext-skill-scope-all", "ext-skill-scope-reqdev", "ext-skill-scope-apidebug",
+             "ext-skill-scope-all", "ext-skill-scope-req", "ext-skill-scope-reqdev",
+             "ext-skill-scope-apidebug",
              "ext-skill-scope-codetest", "ext-skill-enabled", "skill-list"]
 MCP_IDS = ["mcp-count", "btn-mcp-add", "mcp-form", "ext-mcp-transport",
            "ext-mcp-timeout", "ext-mcp-enabled", "ext-mcp-stdio-fields", "ext-mcp-command",
@@ -174,7 +175,7 @@ def run(base: str, *, errors: list, consoles: list) -> None:
         cards = page.query_selector_all("#skill-list .ext-card")
         check(f"技能卡片已渲染", len(cards) == 1, f"{len(cards)} 张")
         check(f"卡片显示技能名", "团队前端规范" in page.inner_text("#skill-list"))
-        check(f"卡片有范围徽标（需求开发）", "需求开发" in page.inner_text("#skill-list"))
+        check(f"卡片有范围徽标（Figma 转代码）", "Figma 转代码" in page.inner_text("#skill-list"))
         check(f"技能角标 1 启用 / 1",
               page.inner_text("#skill-count").strip() == "1 启用 / 1", repr(page.inner_text("#skill-count")))
         check(f"后端技能列表已落数",

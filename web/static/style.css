@@ -526,10 +526,16 @@ body {
    常见宽度上白出滚动条（脚本算的阈值 = 视口 1431px）。 */
 .tt-tab {
   flex: 1 1 0;
-  min-width: 84px;
+  /* 2026-10-19：9 → 10 个页签。新增的「需求开发」与「Figma 转代码」都偏长，
+     84px + 6px 内边距在 1200 视口下把「Figma 转代码」挤出按钮（标签 78 > 84-12）。
+     改成 92 / 4px：1440 时 10×93 仍装得下，1200 时 78 ≤ 92-8 也放得开。
+     同日又 +1（资源汇总）：11×92 = 1012 > 1440 的可用 933，所以 1440 起会出箭头、
+     窗口 ≥ 约 1520 才重新装得下 —— 箭头本来就是为这种情况存在的，不要为此再压
+     min-width（再压就会把「Figma 转代码」挤出按钮）。 */
+  min-width: 92px;
   position: relative;
   display: inline-flex; align-items: stretch; justify-content: center;
-  padding: 0 6px;
+  padding: 0 4px;
   border: 0; background: transparent;
   font: inherit; font-size: 13px; color: var(--text-dim);
   white-space: nowrap; cursor: pointer;
@@ -2945,14 +2951,17 @@ details.adv .adv-body .field:first-child { padding-top: 10px; }
    规则：相邻子块统一 12px；紧跟标题的不加（标题自带下边距）；紧跟 .run-form 的不加
    （.run-form 自带 12px 下边距，再加就双重间隔）。 */
 #pane-team > .panel > * + *,
+#pane-req > .panel > * + *,
 #pane-reqdev > .panel > * + *,
 #pane-apidebug > .panel > * + *,
 #pane-codetest > .panel > * + * { margin-top: 12px; }
 #pane-team > .panel > .panel-head + *,
+#pane-req > .panel > .panel-head + *,
 #pane-reqdev > .panel > .panel-head + *,
 #pane-apidebug > .panel > .panel-head + *,
 #pane-codetest > .panel > .panel-head + *,
 #pane-team > .panel > .run-form + *,
+#pane-req > .panel > .run-form + *,
 #pane-reqdev > .panel > .run-form + *,
 #pane-apidebug > .panel > .run-form + *,
 #pane-codetest > .panel > .run-form + * { margin-top: 0; }
@@ -2970,15 +2979,15 @@ details.adv .adv-body .field:first-child { padding-top: 10px; }
 /* 只读过程视窗（#figma-tree 设计稿结构 / #test-preview 目标文件内容）：
    按 id 选，不再挂在已经消失的 .mod-main / .req-src 结构上。
    min-height 200px 是必须的：.log 没有内容时只剩一行占位字撑出的 40px 深色细条。 */
-#figma-tree, #test-preview { min-height: 200px; max-height: none; }
+#figma-tree, #test-preview, #rq-doc-echo { min-height: 200px; max-height: none; }
 .req-src { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 
 /* 只读预览区的空态：跟 #run-log 一样把占位提示居中。否则一个几百像素高的
    深色框里顶着左上角一行小字，看着像渲染坏了。 */
-#figma-tree:empty, #test-preview:empty {
+#figma-tree:empty, #test-preview:empty, #rq-doc-echo:empty {
   display: flex; align-items: center; justify-content: center;
 }
-#figma-tree:empty::before, #test-preview:empty::before {
+#figma-tree:empty::before, #test-preview:empty::before, #rq-doc-echo:empty::before {
   color: var(--muted); font-size: 12.5px; line-height: 1.8;
   text-align: center; white-space: normal; max-width: 30em;
 }
@@ -2986,13 +2995,14 @@ details.adv .adv-body .field:first-child { padding-top: 10px; }
 /* 主区里的说明条：从「带框的小卡片」降级成左侧引线式脚注 —— 抽屉里再套卡片
    会让人分不清哪块是输入区。同时把 --muted 换成 --text-dim：这几段承载的是
    「要不要填、填了会怎样」的真实信息，浅色主题下 --muted 对白底只有约 2.5:1。 */
+#pane-req .info-note,
 #pane-reqdev .info-note,
 #pane-apidebug .info-note,
 #pane-codetest .info-note {
   background: transparent; border: 0; border-left: 2px solid var(--border-strong);
   border-radius: 0; padding: 2px 0 2px 11px; margin-bottom: 0; color: var(--text-dim);
 }
-#pane-reqdev .info-note strong, #pane-apidebug .info-note strong,
+#pane-req .info-note strong, #pane-reqdev .info-note strong, #pane-apidebug .info-note strong,
 #pane-codetest .info-note strong { color: var(--text); }
 
 /* 抽屉里的扩展表单：.ext-form 自带虚线框 + 内边距，那是「内联展开在列表上方」时
@@ -3033,6 +3043,7 @@ details.adv .adv-body .field:first-child { padding-top: 10px; }
 /* 空态：36px 内边距在面板里就是一块 100px 高的死白，收一收 */
 #pane-team .empty,
 #pane-extensions .empty,
+#pane-req .empty,
 #pane-reqdev .empty,
 #pane-apidebug .empty,
 #pane-codetest .empty { padding: 24px 18px; }

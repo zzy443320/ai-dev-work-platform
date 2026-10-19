@@ -3,7 +3,7 @@
  *
  * 覆盖两种形态的观感：
  *   .pstrip  就地控件条 —— 参数 ≤6 且无长文本的模块（缺陷修复 / 代码测试）
- *   .prail   常驻参数轨 —— 参数 >6 或含长文本的模块（长任务 / 需求开发 / 接口联调）
+ *   .prail   常驻参数轨 —— 参数 >6 或含长文本的模块（长任务 / 需求开发 / Figma 转代码 / 接口联调）
  * 两者都取代原来的「摘要 chip + 右侧浮层抽屉」，所以这里**不出现任何 fixed 浮层、
  * 遮罩、主列让位**：参数是布局的一部分，不是盖在内容上的一张窗。
  *
@@ -169,6 +169,7 @@ input.pf-ctl { width: 210px; }
 /* 窄屏：轨不再挤成一列 —— 降到主区下方，仍然是布局的一部分（不是浮层） */
 @media (max-width: 1180px) {
   #pane-team.active:has(> .pcol),
+  #pane-req.active:has(> .pcol),
   #pane-reqdev.active:has(> .pcol),
   #pane-apidebug.active:has(> .pcol) { grid-template-columns: minmax(0, 1fr); }
   .pcol { position: static; max-height: none; grid-column: 1 / -1; grid-row: auto; }
@@ -191,6 +192,7 @@ input.pf-ctl { width: 210px; }
 .pcol { grid-column: -2 / -1; grid-row: 1 / -1; min-width: 0; align-self: start; }
 
 #pane-team.active:has(> .pcol),
+#pane-req.active:has(> .pcol),
 #pane-reqdev.active:has(> .pcol),
 #pane-apidebug.active:has(> .pcol) {
   /* 这里原来还带一句 align-items:start —— 那是为了躲「轨撑高行 + 默认 stretch
@@ -205,11 +207,132 @@ input.pf-ctl { width: 210px; }
    设计稿结构 / 联调方案本来就是越大越好读的东西。
    （1440 实拍：reqdev 空洞 425px、apidebug 673px → 现在都是 0px。）
    上面那条 align-self:stretch 在 pane 级 stretch 回来之后是冗余的，留着当显式声明。 */
+#pane-req.active:has(> .pcol) > section,
 #pane-reqdev.active:has(> .pcol) > section,
 #pane-apidebug.active:has(> .pcol) > section { align-self: stretch; }
-#req-panel, #api-panel { display: flex; flex-direction: column; min-height: 0; }
-#req-panel .req-src, #api-panel .api-stage { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-#figma-tree, #api-stage { flex: 1; min-height: 0; overflow: auto; scrollbar-width: thin; }
+#req-panel, #api-panel, #rq-panel { display: flex; flex-direction: column; min-height: 0; }
+#req-panel .req-src, #api-panel .api-stage,
+#rq-panel .rq-stage { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+#figma-tree, #api-stage, #rq-doc-echo { flex: 1; min-height: 0; overflow: auto; scrollbar-width: thin; }
+
+/* ── 需求开发（2026-10-19）：分诊结论卡 ────────────────────────────────
+   变更类型 / 是否要设计稿 / 影响面 / 下一步挤在一张卡里：它们回答的是同一个问题
+   「这次要干嘛」，拆成多张卡会让人以为要分别处理。
+   颜色只用令牌：类型标签走 Element 的 tag，影响面用等宽路径 + 三档淡色底。 */
+.rq-verdict { display: flex; flex-direction: column; gap: 10px; min-width: 0;
+  border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px;
+  background: var(--surf2, var(--panel-solid)); }
+.rq-v-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.rq-v-label { font-size: 11px; font-weight: 700; letter-spacing: .04em; color: var(--muted); }
+.rq-v-meta { margin-left: auto; font-size: 11px; color: var(--text-dim); }
+.rq-v-summary { margin: 0; font-size: 13px; line-height: 1.7; color: var(--text); }
+.rq-brief { border-left: 2px solid var(--primary-soft); padding-left: 10px; }
+.rq-brief-title { font-size: 11px; font-weight: 700; color: var(--primary); margin-bottom: 4px; }
+.rq-brief-text { margin: 0; white-space: pre-wrap; font-size: 12.5px; line-height: 1.7;
+  color: var(--text-dim); font-family: inherit; }
+.rq-impacts { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.rq-impact { display: flex; align-items: baseline; gap: 8px; min-width: 0; font-size: 12px; }
+.rq-change { flex: none; width: 18px; text-align: center; border-radius: 4px;
+  font-size: 10.5px; line-height: 18px; color: var(--muted); background: var(--code-bg); }
+.rq-change.is-create { color: #1a7f37; background: rgba(26, 127, 55, .12); }
+.rq-change.is-delete { color: #c0392b; background: rgba(192, 57, 43, .12); }
+.rq-path { flex: none; max-width: 46%; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; font-size: 11.5px; color: var(--text); }
+.rq-reason { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; color: var(--text-dim); font-size: 11.5px; }
+.rq-missing, .rq-fixed { flex: none; font-size: 10.5px; padding: 0 6px; border-radius: 4px; }
+.rq-missing { color: #c0392b; background: rgba(192, 57, 43, .1); }
+.rq-fixed { color: var(--muted); background: var(--code-bg); }
+.rq-next { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding-top: 2px; }
+.rq-next-note { font-size: 11.5px; color: var(--text-dim); }
+
+/* ── 需求文档附件（md / txt / pdf）─────────────────────────────────
+   上传入口放在「需求原文」标题行右端（离内容最近），清单紧贴回显区上方。
+   用常驻 DOM + v-if 只切列表：空态不占位，视觉上不空出一块。 */
+.rq-att-add { flex: none; font: inherit; font-size: 11.5px; padding: 3px 10px;
+  border-radius: 6px; border: 1px dashed var(--border-strong); background: transparent;
+  color: var(--text-dim); cursor: pointer; }
+.rq-att-add:hover:not(:disabled) { color: var(--primary); border-color: var(--primary);
+  background: var(--primary-soft); }
+.rq-att-add:disabled { opacity: .5; cursor: not-allowed; }
+/* 原生 file input 只做「被点击」，不参与布局 */
+.rq-att-input { position: absolute; left: -9999px; width: 1px; height: 1px; opacity: 0; }
+
+.rq-atts { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
+.rq-att { display: flex; align-items: center; gap: 8px; min-width: 0;
+  padding: 5px 9px; border-radius: 7px; border: 1px solid var(--border);
+  background: var(--code-bg); font-size: 12px; }
+.rq-att-kind { flex: none; font-size: 9.5px; font-weight: 700; letter-spacing: .04em;
+  padding: 1px 5px; border-radius: 4px; color: var(--muted); background: var(--border); }
+.rq-att-kind.is-pdf { color: #c0392b; background: rgba(192, 57, 43, .12); }
+.rq-att-kind.is-md { color: var(--primary); background: var(--primary-soft); }
+.rq-att-name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; color: var(--text); }
+.rq-att-meta { flex: none; font-size: 11px; color: var(--text-dim); }
+.rq-att-view { flex: none; margin-left: auto; font: inherit; font-size: 11px;
+  padding: 0; border: 0; background: transparent; color: var(--text-dim); cursor: pointer; }
+.rq-att-view:hover { color: var(--primary); text-decoration: underline; }
+.rq-att-del { flex: none; width: 18px; height: 18px; line-height: 1; border-radius: 4px;
+  border: 0; background: transparent; color: var(--text-dim); cursor: pointer; font-size: 14px; }
+.rq-att-del:hover:not(:disabled) { color: #c0392b; background: rgba(192, 57, 43, .1); }
+.rq-att-del:disabled { opacity: .4; cursor: not-allowed; }
+.rq-att-preview { margin: 2px 0 0; max-height: 220px; overflow: auto; white-space: pre-wrap;
+  word-break: break-word; font-size: 12px; line-height: 1.65; color: var(--text-dim);
+  padding: 8px 10px; border-radius: 7px; background: var(--code-bg);
+  border-left: 2px solid var(--border-strong); }
+
+/* ── 需求开发流水线（2026-10-19 晚）：阶段条 / 改动清单 / 自检 ───────────
+   一屏要装下「跑到哪一步 + 改了什么 + 还有什么没做」，所以：
+   * 需求原文回显不再吃满剩余高度（之前是 flex:1，内容一多就把结论挤出视口）；
+   * 面板自己滚动，阶段条与结论保持正常文档流。 */
+#rq-panel { overflow: auto; }
+#rq-panel .rq-stage { flex: 0 0 auto; }
+#rq-doc-echo { flex: 0 1 auto; max-height: 190px; }
+
+.rq-stages { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+.rq-stage-step { display: flex; align-items: center; gap: 6px; min-width: 0;
+  padding: 6px 8px; border-radius: 8px; border: 1px solid var(--border);
+  background: var(--code-bg); font-size: 11.5px; color: var(--text-dim); }
+.rq-step-no { flex: none; width: 16px; height: 16px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 10px; background: var(--border); color: var(--text-dim); }
+.rq-step-label { flex: none; font-weight: 600; color: var(--text); }
+.rq-step-detail { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; }
+.rq-stage-step.is-running { border-color: var(--primary); background: var(--primary-soft); }
+.rq-stage-step.is-running .rq-step-no { background: var(--primary); color: #fff; }
+.rq-stage-step.is-done .rq-step-no { background: rgba(26, 127, 55, .15); color: #1a7f37; }
+.rq-stage-step.is-skipped { opacity: .55; }
+.rq-stage-step.is-failed { border-color: rgba(192, 57, 43, .4); }
+.rq-stage-step.is-failed .rq-step-no { background: rgba(192, 57, 43, .15); color: #c0392b; }
+
+.rq-result { display: flex; flex-direction: column; gap: 4px; min-width: 0;
+  border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px;
+  background: var(--surf2, var(--panel-solid)); }
+.rq-result-head { display: flex; align-items: center; gap: 8px; }
+.rq-result-head .rq-v-meta { margin-left: auto; }
+.rq-file { display: flex; align-items: baseline; gap: 8px; min-width: 0; font-size: 12px; }
+.rq-file .rq-path { max-width: 52%; }
+.rq-file.is-failed .rq-path, .rq-file.is-failed .rq-reason { color: #c0392b; }
+.rq-delta { flex: none; display: inline-flex; gap: 5px; font-size: 11px; }
+.rq-delta .add { color: #1a7f37; font-weight: 600; }
+.rq-delta .del { color: #c0392b; font-weight: 600; }
+.rq-change.is-modify { color: var(--muted); }
+
+.rq-check { display: flex; flex-direction: column; gap: 8px; min-width: 0;
+  border-left: 2px solid var(--border-strong); padding: 2px 0 2px 11px; }
+.rq-check-head { display: flex; align-items: center; gap: 8px; }
+.rq-check-badge { font-size: 11px; padding: 1px 7px; border-radius: 4px;
+  background: var(--code-bg); color: var(--text-dim); }
+.rq-check-badge.is-done { color: #1a7f37; background: rgba(26, 127, 55, .12); }
+.rq-check-badge.is-partial { color: #b7791f; background: rgba(183, 121, 31, .12); }
+.rq-check-badge.is-blocked { color: #c0392b; background: rgba(192, 57, 43, .12); }
+.rq-check-list { margin: 0; padding-left: 16px; font-size: 12px; line-height: 1.7;
+  color: var(--text-dim); }
+.rq-check-list.is-mono { font-family: var(--mono, ui-monospace, monospace); font-size: 11.5px; }
+.rq-check-sub { display: flex; flex-direction: column; gap: 2px; }
+.rq-check-sub-title { font-size: 10.5px; font-weight: 700; letter-spacing: .04em;
+  color: var(--muted); }
 
 /* 长任务在宽容器下本来就是「战场 | 控制塔」两列（desk.css 第 13 节的 areas）。
    有轨时只**再加第三轨**：轨靠 grid-column: -2/-1 自动落在最后一轨，

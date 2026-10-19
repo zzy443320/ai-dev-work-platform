@@ -27,6 +27,7 @@ from scripts.chat_attachments import (  # noqa: E402
 from scripts import mcp_client  # noqa: E402
 from scripts.pipeline import AIDefectFixerPipeline  # noqa: E402
 from scripts.proposal import ProposalStore  # noqa: E402
+from scripts.resource_board import ResourceBoard  # noqa: E402
 from scripts.team_store import TeamRunStore  # noqa: E402
 from scripts.textutil import mask_secret
 
@@ -62,6 +63,10 @@ CHANGELOG_FILE = PROJECT_ROOT / "CHANGELOG.md"
 # 设置文件同样可由环境变量覆盖：自检用例起临时实例时指向临时设置，
 # 从而**根本不会读到/写到你的真实配置**（此前的测试事故就是临时实例误改了真设置）。
 SETTINGS_FILE = Path(os.environ.get("SETTINGS_FILE") or (PROJECT_ROOT / "ui_settings.json"))
+# 资源汇总板（需求文档链接 / 各环境地址）：单文件便签板，与 SETTINGS_FILE 分开。
+# 分开的理由见 scripts/resource_board.py 头部：便签会随手改，而 settings 整份会被
+# /api/settings 读改写回，混在一起迟早互相覆盖。同样允许环境变量改到临时目录。
+RESOURCE_FILE = Path(os.environ.get("RESOURCE_FILE") or (PROJECT_ROOT / "resources.json"))
 
 DEFAULT_REPO = os.environ.get("REPO_PATH") or str(PROJECT_ROOT.parent / "test-mock-repo")
 
@@ -436,6 +441,11 @@ def _astore_att() -> ChatAttachmentStore:
     return ChatAttachmentStore(str(ATTACH_DIR))
 
 
+def _rboard() -> ResourceBoard:
+    """资源汇总板（一次性整份读写，不参与任何 AI 流程）。"""
+    return ResourceBoard(RESOURCE_FILE)
+
+
 def _applier() -> ArtifactApplier:
     s = _load_settings()
     return ArtifactApplier(s["repo"]["path"], _pipeline_config(s)["gate"])
@@ -456,7 +466,8 @@ def _clean_skill(raw: dict) -> dict:
     scope = raw.get("scope") or ["all"]
     if not isinstance(scope, list):
         scope = [scope]
-    valid = {k for k in ("all", "reqdev", "apidebug", "codetest", "team") if k in scope}
+    valid = {k for k in ("all", "req", "reqdev", "apidebug", "codetest", "team")
+             if k in scope}
     return {
         "id": str(raw.get("id") or re.sub(r"[^a-zA-Z0-9_-]", "", f"sk-{os.urandom(4).hex()}") or "sk"),
         "name": name,
@@ -566,7 +577,7 @@ def _pipeline_preflight() -> dict:
 RUN_KIND_LABELS = {
     "run": "缺陷流水线",
     "probe": "试运行（拉取 + AI 定位）",
-    "tasks": "任务（需求开发 / 联调 / 测试）",
+    "tasks": "任务（需求开发 / Figma 转代码 / 联调 / 测试）",
     "team": "长任务作业",
     "chat": "问答",
 }

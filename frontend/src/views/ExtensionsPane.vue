@@ -149,7 +149,7 @@ onMounted(loadExtensions)
     </div>
     <!-- 表单同样搬进右侧参数抽屉（#mcp-form 的 id 与全部字段 id 原样保留在抽屉里） -->
     <div id="mcp-list" class="ext-list">
-      <div v-if="!mcp.length" class="empty">还没有 MCP 服务。添加并启用后，它的工具会出现在「需求开发 / 接口联调 / 代码测试」的 AI 可调用工具列表里。</div>
+      <div v-if="!mcp.length" class="empty">还没有 MCP 服务。添加并启用后，它的工具会出现在「需求开发 / Figma 转代码 / 接口联调 / 代码测试」的 AI 可调用工具列表里。</div>
       <div v-for="s in mcp" :key="s.id" class="ext-card" :class="{ 'ext-off': !s.enabled }">
         <div class="ext-head">
           <span class="st" :class="s.enabled ? 'st-applied' : 'st-rejected'">{{ s.enabled ? '启用' : '停用' }}</span>

@@ -25,9 +25,13 @@ import StatsPane from './views/StatsPane.vue'
 import ChatPane from './views/ChatPane.vue'
 import DefectPane from './views/DefectPane.vue'
 import TeamPane from './views/TeamPane.vue'
+// 需求开发（2026-10-19）：需求分诊 + 影响面，是「Figma 转代码」的上游
+import ReqPane from './views/ReqPane.vue'
 import ReqdevPane from './views/ReqdevPane.vue'
 import ApiDebugPane from './views/ApiDebugPane.vue'
 import CodeTestPane from './views/CodeTestPane.vue'
+// 资源汇总（2026-10-19）：唯一不接 AI 的模块 —— 需求文档链接 + 各环境地址的便签板
+import ResourcesPane from './views/ResourcesPane.vue'
 import ExtensionsPane from './views/ExtensionsPane.vue'
 // 配置：2026-09-30 独立成「配置」页签（ConfigPane）；SettingsPanel 只剩只读摘要 + 入口
 import ConfigPane from './views/ConfigPane.vue'
@@ -133,7 +137,7 @@ window.toggleTheme = toggleTheme
 window.setThemeStyle = setStyle
 
 // ── 顶部导航布局（top）的页签条 ────────────────────────────────────
-// 9 个页签在 1440 及以下视口装不下，所以容器横向滚动、两端各浮一枚箭头。
+// 10 个页签在 1440 及以下视口装不下，所以容器横向滚动、两端各浮一枚箭头。
 // 尺寸测量与滚动逻辑在 composables/useTabStrip.js（那里写了三条「改之前先读」的
 // 实现约束：箭头为什麼做浮层、显隐条件、活动页签为何要按箭头宽度内缩）。
 // 这里只留模板要用的那几个名字。
@@ -146,8 +150,9 @@ const { tabStripEl, tabScrollable, tabAtStart, tabAtEnd, scrollTabs, syncTabScro
 const NAV_GROUPS = [
   { label: '总览', items: ['stats'] },
   { label: '协作', items: ['chat'] },
-  { label: '交付', items: ['defect', 'team'] },
-  { label: '工具箱', items: ['reqdev', 'apidebug', 'codetest', 'extensions'] },
+  // 需求开发是交付链的起点（判要不要设计稿/改哪个文件），排在缺陷与长任务前
+  { label: '交付', items: ['req', 'defect', 'team'] },
+  { label: '工具箱', items: ['reqdev', 'apidebug', 'codetest', 'resources', 'extensions'] },
   { label: '系统', items: ['config'] },
 ]
 const tabBy = Object.fromEntries(TABS.map((t) => [t.name, t]))
@@ -534,9 +539,12 @@ const healthText = computed(() => {
               </template>
             </DefectPane>
             <TeamPane v-else-if="t.name === 'team'" />
+            <ReqPane v-else-if="t.name === 'req'" />
             <ReqdevPane v-else-if="t.name === 'reqdev'" />
             <ApiDebugPane v-else-if="t.name === 'apidebug'" />
             <CodeTestPane v-else-if="t.name === 'codetest'" />
+            <!-- 资源汇总：不产出、不挂参数抽屉、也不进产出物面板（ARTIFACT_TAB_LABEL 里没有它） -->
+            <ResourcesPane v-else-if="t.name === 'resources'" />
             <ExtensionsPane v-else-if="t.name === 'extensions'" />
             <ConfigPane v-else-if="t.name === 'config'" />
             <el-empty v-else description="内容迁移中" />

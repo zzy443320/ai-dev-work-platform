@@ -1,5 +1,8 @@
 <script setup>
-// 需求开发页签（#pane-reqdev）：Figma 设计稿 → 代码。
+// Figma 转代码页签（#pane-reqdev）：Figma 设计稿 → 代码。
+// 2026-10-19 改名：原「需求开发」其实只做设计稿还原，需求分诊/接口数据类改动
+// 已挪到新的「需求开发」（#pane-req）。**内部 name 仍是 reqdev**：产出物 type、
+// 技能范围、界面用例与 #req-* 控件 id 都绑着它，改标识会牵动历史数据。
 // 旧版 index.html:535-591 + app.js:1873-1921（setFigmaMode / fetchFigma）的等价迁移。
 //
 // ⚠️ 必须解构 useTasks()：<script setup> 只对顶层绑定做模板自动解包，
@@ -17,10 +20,11 @@
 // 控件 id 一律沿用改版前契约（#req-figma-url / #req-figma-mode /
 // #req-figma-token-field / #req-desc / #req-context / #req-notes / #req-framework），
 // 分段按钮保持原生 .seg-btn[data-mode]：界面用例直接点它。
-import { nextTick, ref } from 'vue'
+import { nextTick, ref, watch } from 'vue'
 import { useTasks } from '../composables/useTasks.js'
 import { useParamModel } from '../composables/useParamModel.js'
 import { useToast } from '../composables/useToast.js'
+import { useReqHandoff } from '../composables/useReqHandoff.js'
 import ParamLayout from '../components/ParamLayout.vue'
 import LiveBrowserPanel from '../components/LiveBrowserPanel.vue'
 
@@ -30,6 +34,16 @@ const {
   running, runTask,
 } = useTasks()
 const { toast } = useToast()
+
+// 需求开发页判出「需要设计稿」时会把需求原文交接过来（见 useReqHandoff）。
+// 只覆盖需求描述，不动用户已经填好的 Figma 链接与代码参考；用掉即清。
+const { draft: handoff } = useReqHandoff()
+watch(handoff, (d) => {
+  if (!d) return
+  if (d.requirement) reqDesc.value = d.requirement
+  if (d.notes) reqNotes.value = d.notes
+  handoff.value = null
+}, { immediate: true })
 
 const params = useParamModel(
   { figmaUrl, figmaMode, figmaToken, reqDesc, reqContext, reqFramework, reqNotes })
@@ -81,7 +95,7 @@ function onInspected(r) {
       <div class="panel-head">
         <h2>
           <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="8.5" cy="8.5" r="1.5" /><path d="M21 15l-5-5L5 21" /></svg>
-          需求开发 · Figma 设计稿转代码
+          Figma 转代码 · 设计稿还原实现
         </h2>
       </div>
 

@@ -45,12 +45,13 @@ def main() -> int:
                   page.eval_on_selector("#app", "el => el.children.length") > 0)
             # 页签栏已换成 Element 的 el-tabs：选项节点是 .el-tabs__item（文案在内部）。
             # 页签**容器**的契约没变：每个 pane 仍是 #pane-<name> 且活动页带 active 类。
-            # 9 个：2026-09-30 配置独立成模块（末尾新增「配置」页签）
+            # 11 个：2026-09-30 配置独立成模块；2026-10-19 需求开发与 Figma 转代码拆开，
+            # 同一天新增「资源汇总」（不接 AI 的便签板模块）
             # ⚠️ 用 textContent 而不是 innerText：两种布局（侧边工作台 / 顶部导航）都把
             # .el-tabs__header 用 CSS 藏了（导航在左侧或顶栏），而 innerText 只给**渲染后**
             # 的文本 —— 藏起来的页签头会读成空串，断言就变成「拿文案去匹配空」永远失败。
-            check("页签渲染出 9 个",
-                  page.eval_on_selector_all("#tabs .el-tabs__item", "els => els.length") == 9,
+            check("页签渲染出 11 个",
+                  page.eval_on_selector_all("#tabs .el-tabs__item", "els => els.length") == 11,
                   str(page.eval_on_selector_all(
                       "#tabs .el-tabs__item", "els => els.map(e => e.textContent.trim())")))
             check("默认停在 stats",

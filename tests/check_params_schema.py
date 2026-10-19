@@ -37,8 +37,8 @@ def check(name, cond, extra=""):
 problems = ps.validate()
 check("schema.validate() 无问题", not problems, "; ".join(problems[:4]))
 
-MODULE_NAMES = ("defect", "codetest", "apidebug", "reqdev", "team")
-check("五个任务模块齐", all(m in ps.MODULES for m in MODULE_NAMES), str(list(ps.MODULES)))
+MODULE_NAMES = ("req", "defect", "codetest", "apidebug", "reqdev", "team")
+check("六个任务模块齐", all(m in ps.MODULES for m in MODULE_NAMES), str(list(ps.MODULES)))
 
 all_ids, missing_default = [], []
 for m in MODULE_NAMES:
@@ -53,11 +53,11 @@ check("每条参数都有 default（角标与重置要用）", not missing_defau
 dup = {i for i in all_ids if all_ids.count(i) > 1}
 check("DOM id 全局唯一（用例按 id 点填）", not dup, str(sorted(dup)))
 check("id 沿用改版前契约", {"opt-limit", "team-title", "req-figma-mode",
-                            "api-doc", "test-file"} <= set(all_ids))
+                            "api-doc", "test-file", "rq-doc"} <= set(all_ids))
 
 # ---------------------------------------------------------------- 2. 分档规则
 expect = {"defect": "strip", "codetest": "strip",
-          "apidebug": "rail", "reqdev": "rail", "team": "rail"}
+          "apidebug": "rail", "req": "rail", "reqdev": "rail", "team": "rail"}
 got = {m: ps.layout_of(m) for m in MODULE_NAMES}
 check("分档结果符合预期", got == expect, str(got))
 

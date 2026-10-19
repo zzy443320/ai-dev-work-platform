@@ -32,8 +32,10 @@ def check(name, cond, detail=""):
 
 
 # 2026-09-30：配置独立成模块，末尾新增 config 页签（原有 8 个顺序不变）
-EXPECTED_TABS = ['stats', 'chat', 'defect', 'team', 'reqdev', 'apidebug', 'codetest',
-                 'extensions', 'config']
+# 2026-10-19：需求开发与 Figma 转代码拆开，req 插在 reqdev 之前（reqdev 只是改名）
+# 2026-10-19：资源汇总（resources）插在工具箱组里，codetest 之后、extensions 之前
+EXPECTED_TABS = ['stats', 'chat', 'defect', 'team', 'req', 'reqdev', 'apidebug',
+                 'codetest', 'resources', 'extensions', 'config']
 
 
 def main() -> int:
@@ -71,6 +73,8 @@ def main() -> int:
                    ("USAGE_DIR", "usage"), ("SCREENSHOT_DIR", "shots")]:
         os.environ[k] = str(tmp / sub)
     os.environ["SETTINGS_FILE"] = str(tmp / "ui_settings.json")
+    # 资源汇总板：不指走就会读写到你真实的那份 resources.json
+    os.environ["RESOURCE_FILE"] = str(tmp / "resources.json")
 
     from web import server
     from web import state  # 目录常量与 settings 助手随模块化拆分搬到了 web/state.py
@@ -146,6 +150,7 @@ def main() -> int:
         "/api/patterns", "/api/artifacts", "/api/team/runs", "/api/tasks/run",
         "/api/usage/report", "/api/chat/sessions", "/api/extensions", "/api/settings",
         "/api/health", "/api/changelog", "/api/repo/file", "/api/figma/fetch",
+        "/api/resources",
     }
     missed = sorted(p for p in required if p not in covered)
     check("关键接口在新前端的 api 层都有入口",

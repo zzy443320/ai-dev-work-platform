@@ -6,10 +6,14 @@ Then: http://127.0.0.1:8765
 Five modules share one safety contract:
 - 问答       /api/chat/stream       → 只读仓库；附带的改动提案落成 artifacts
 - 缺陷修复   /api/run + /api/probe  → proposals
-- 需求开发   /api/tasks/run reqdev  → artifacts
+- 需求开发   /api/tasks/run req     → artifacts（分诊：变更类型 / 影响面 / 是否要设计稿）
+- Figma 转代码 /api/tasks/run reqdev → artifacts
 - 接口联调   /api/tasks/run apidebug→ artifacts
 - 代码测试   /api/tasks/run codetest→ artifacts
 （长任务作业 /api/team/stream 同样产出 artifacts）
+
+资源汇总（/api/resources）是唯一一个**不碰仓库、不调模型**的模块：它只是把
+需求文档链接与各环境地址存在 resources.json 里，读出来给人点开。
 
 Four endpoints touch the target repository -- approve and undo, on both
 /api/proposals/{id}/* and /api/artifacts/{id}/*. None of them ever commits; they
@@ -27,7 +31,8 @@ and run flags live in `web/state.py`.
 from fastapi import FastAPI
 
 from web import urls
-from web.routers import chat, config, live, observe, params, pipeline, review, tasks, team
+from web.routers import (chat, config, live, observe, params, pipeline, resources,
+                         review, tasks, team)
 
 app = FastAPI(title="ONES 前端研发助手 UI (Frontend Dev Copilot)")
 
@@ -46,6 +51,8 @@ app.include_router(review.router)
 app.include_router(live.router)
 # 参数元数据（前端表单渲染器的唯一来源）：只读，放最后，与业务端点无耦合
 app.include_router(params.router)
+# 资源汇总板（需求文档链接 / 各环境地址）：纯读写一份本地 JSON，与流水线、AI 全无耦合
+app.include_router(resources.router)
 
 
 if __name__ == "__main__":

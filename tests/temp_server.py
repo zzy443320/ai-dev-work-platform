@@ -3,7 +3,8 @@
 
 `web/server.py` 的每个数据目录都能被环境变量覆盖（`KB_DIR` / `PROPOSAL_DIR` /
 `ARTIFACT_DIR` / `TEAM_DIR` / `CHAT_DIR` / `SCREENSHOT_DIR`，账本在 scripts/usage.py
-里读 `USAGE_DIR`），设置文件用 `SETTINGS_FILE`、目标仓库用 `REPO_PATH`。这里把它们
+里读 `USAGE_DIR`），设置文件用 `SETTINGS_FILE`、资源汇总板用 `RESOURCE_FILE`、
+目标仓库用 `REPO_PATH`。这里把它们
 **一次性全指到同一个临时目录**，于是用例既读不到你的真实配置，也写不进你的真实数据，
 更不需要你先手工准备一份带数据的知识库。
 
@@ -90,6 +91,8 @@ def serve(*, kb=None, settings: dict | None = None, keep: bool = False,
         "SCREENSHOT_DIR": str(dirs["screenshots"]),
         "USAGE_DIR": str(dirs["usage"]),
         "REPO_PATH": str(dirs["repo"]),
+        # 资源汇总板：不指走的话用例会读到/写到你真实的那份 resources.json
+        "RESOURCE_FILE": str(root / "resources.json"),
         "PYTHONIOENCODING": "utf-8",
     })
     env.update(extra_env or {})

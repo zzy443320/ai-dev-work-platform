@@ -141,6 +141,10 @@ export const api = {
   extensionSkills: (payload) => http.post('/api/extensions/skills', payload),
   mcpTest: (payload) => http.post('/api/extensions/mcp/test', payload),
   mcpSave: (payload) => http.post('/api/extensions/mcp', payload),
+
+  // 资源汇总板（需求文档链接 / 各环境地址）：整板读写，见 web/routers/resources.py
+  resources: () => http.get('/api/resources'),
+  saveResources: (payload) => http.post('/api/resources', payload),
 }
 
 // ------------------------------------------------------------------ 流式接口
@@ -159,6 +163,19 @@ export async function uploadAttachment(file, filename) {
   const fd = new FormData()
   fd.append('file', file, filename)
   const r = await fetch('/api/chat/attachments', { method: 'POST', body: fd })
+  let j = null
+  try {
+    j = await r.json()
+  } catch (e) { /* 空体 */ }
+  if (!r.ok) throw new ApiError(extractError(j, r.status), r.status, j)
+  return j
+}
+
+/** 需求开发的需求文档上传（md / txt / pdf）：服务端会把 PDF 抽成正文一并返回。 */
+export async function uploadReqAttachment(file, filename) {
+  const fd = new FormData()
+  fd.append('file', file, filename)
+  const r = await fetch('/api/req/attachments', { method: 'POST', body: fd })
   let j = null
   try {
     j = await r.json()

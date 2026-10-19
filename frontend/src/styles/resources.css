@@ -1,0 +1,155 @@
+/* ===========================================================================
+   resources.css —— 资源汇总页签（#pane-resources）
+   需求文档链接 / 各环境地址的便签板：分组卡片 + 可点条目 + 就地编辑。
+
+   只动本模块自己的类（.res-*）与 #pane-resources 的列宽，不碰任何既有契约
+   （#tabs / .tabpane / .panel / .stage-flow 都不在这里改）。
+
+   颜色一律走 style.css 的令牌（--surf/--line/--txt/--ac/--danger），
+   所以明暗主题与皮肤层（skin-clay.css 在 main.js 里最后加载）都能覆盖到，
+   这里不写死任何色值。
+   =========================================================================== */
+
+/* 单列：这一页是「一屏入口」，不需要侧栏，也不需要产出物面板让位 */
+#pane-resources.active { grid-template-columns: minmax(0, 1fr); }
+
+/* ── 头部：标题 + 过滤 / 编辑 / 新增分组 ── */
+.res-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 14px; flex-wrap: wrap;
+}
+.res-tools { display: flex; align-items: center; gap: 8px; }
+.res-filter { width: 216px; }
+
+/* ── 计数 / 保存状态一行 ── */
+.res-meta {
+  display: flex; align-items: center; gap: 10px;
+  margin: -2px 0 12px; font-size: 11.5px; color: var(--txt3);
+}
+.res-count-text { font-variant-numeric: tabular-nums; }
+.res-state { color: var(--txt4); }
+.res-state.bad { color: var(--danger); }
+.res-tip { margin-left: auto; color: var(--txt4); }
+
+/* ── 分组卡片网格：按可用宽度自动分列，窄屏自然回落成一列 ── */
+.res-grid {
+  display: grid; gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  align-items: start;
+}
+.res-group {
+  display: flex; flex-direction: column; gap: 8px; min-width: 0;
+  padding: 10px 12px 12px;
+  background: var(--surf2); border: 1px solid var(--line); border-radius: var(--r-m);
+}
+.res-group-head { display: flex; align-items: center; gap: 8px; min-height: 24px; }
+.res-group-title {
+  margin: 0; font-size: 12.5px; font-weight: 600; color: var(--txt);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.res-group-input { flex: 1; min-width: 0; }
+.res-group-count {
+  flex: none; padding: 1px 7px; border-radius: 999px;
+  background: var(--surf3); color: var(--txt3);
+  font-size: 10.5px; font-variant-numeric: tabular-nums;
+}
+.res-group-head .res-del { margin-left: auto; }
+
+/* ── 条目列表 ── */
+.res-list { display: flex; flex-direction: column; gap: 2px; margin: 0; padding: 0; list-style: none; }
+.res-item { min-width: 0; }
+.res-row { display: flex; align-items: stretch; gap: 6px; }
+
+/* 浏览态的一行：名称 + 「新页签」提示在一行，地址与备注各占一整行 */
+.res-link {
+  flex: 1; min-width: 0; display: grid;
+  grid-template-columns: minmax(0, 1fr) auto; align-items: baseline;
+  gap: 1px 8px; padding: 7px 10px;
+  border: 1px solid transparent; border-radius: var(--r-s);
+  text-decoration: none; color: inherit;
+  transition: background-color .16s, border-color .16s;
+}
+.res-link:hover, .res-link:focus-visible { background: var(--surf3); border-color: var(--line); }
+.res-label {
+  font-size: 12.5px; font-weight: 500; color: var(--txt);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.res-link:hover .res-label { color: var(--ac); }
+.res-open {
+  font-size: 10.5px; color: var(--ac); white-space: nowrap;
+  opacity: 0; transition: opacity .16s;
+}
+.res-row:hover .res-open, .res-link:focus-visible .res-open { opacity: 1; }
+.res-url {
+  grid-column: 1 / -1; font-size: 11px; color: var(--txt3);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.res-note {
+  grid-column: 1 / -1; font-size: 11px; color: var(--txt4);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* 没填地址的条目：不可点，但仍然是列表里的一个真条目（不是占位符） */
+.res-link.is-blank { cursor: default; }
+.res-link.is-blank:hover { background: transparent; border-color: transparent; }
+.res-link.is-blank .res-label { color: var(--txt2); }
+.res-link.is-blank .res-open { color: var(--warn); opacity: 1; }
+
+/* 复制链接：只在悬停 / 聚焦时出现，平时不抢链接本身的点击热区 */
+.res-copy {
+  flex: none; align-self: center; padding: 3px 8px;
+  font-size: 11px; color: var(--txt3); cursor: pointer;
+  background: transparent; border: 1px solid var(--line); border-radius: 6px;
+  opacity: 0; transition: opacity .15s, color .15s, border-color .15s;
+}
+.res-row:hover .res-copy, .res-copy:focus-visible, .res-copy.done { opacity: 1; }
+.res-copy:hover:not(:disabled) { color: var(--txt); border-color: var(--line2); }
+.res-copy.done { color: var(--success); border-color: var(--success); }
+.res-copy:disabled { cursor: default; }
+
+/* ── 编辑态：三格输入 + 一行脚注 ── */
+.res-edit {
+  display: grid; gap: 6px; padding: 8px;
+  border: 1px dashed var(--line2); border-radius: var(--r-s);
+}
+.res-edit.bad { border-color: var(--danger); background: var(--danger-soft); }
+.res-url-input .el-input__inner { font-family: var(--mono); font-size: 11.5px; }
+.res-edit-foot { display: flex; align-items: center; gap: 8px; min-height: 16px; }
+.res-bad { font-size: 11px; color: var(--danger); }
+.res-edit-foot .res-del { margin-left: auto; }
+
+/* 删除类文字按钮：默认极淡，悬停才变红 —— 它是破坏性操作，不该在视线中心 */
+.res-del {
+  padding: 2px 4px; font-size: 11px; color: var(--txt4); cursor: pointer;
+  background: transparent; border: 0; border-radius: 5px;
+}
+.res-del:hover { color: var(--danger); background: var(--danger-soft); }
+
+/* 「+ 添加链接」：虚线按钮，视觉上明确「这行是可以长出来的」 */
+.res-add {
+  padding: 6px; font-size: 11.5px; color: var(--txt3); cursor: pointer;
+  background: transparent; border: 1px dashed var(--line2); border-radius: var(--r-s);
+}
+.res-add:hover { color: var(--ac); border-color: var(--ac-ln); background: var(--ac-bg); }
+
+.res-blank-group { margin: 0; padding: 6px 2px 2px; font-size: 11px; color: var(--txt4); }
+
+/* ── 空板引导 ── */
+.res-empty {
+  padding: 26px 20px; text-align: center;
+  border: 1px dashed var(--line2); border-radius: var(--r-m);
+}
+.res-empty-title { margin: 0 0 6px; font-size: 13px; font-weight: 600; color: var(--txt2); }
+.res-empty-hint {
+  margin: 0 auto; max-width: 520px;
+  font-size: 11.5px; line-height: 1.7; color: var(--txt3);
+}
+.res-chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 14px; }
+.res-chip {
+  padding: 4px 11px; font-size: 11.5px; color: var(--txt2); cursor: pointer;
+  background: var(--surf3); border: 1px solid var(--line); border-radius: 999px;
+  transition: color .16s, border-color .16s, background-color .16s;
+}
+.res-chip:hover { color: var(--ac); border-color: var(--ac-ln); background: var(--ac-bg); }
+
+.res-nomatch { margin: 10px 0 0; font-size: 11.5px; color: var(--txt4); }

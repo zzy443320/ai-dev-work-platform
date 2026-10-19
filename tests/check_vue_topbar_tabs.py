@@ -8,7 +8,10 @@
 
 这里锁的是几何与交互契约（不碰仓库、不调模型）：
   ① 页签条真的落在顶栏内、紧贴品牌右侧，且没把顶栏撑高（高度按 --topbar-h 声明值比）；
-  ② 装得下：9 项等宽、正好铺满整条；活动项下划线落在顶栏底边上；
+  ② 装得下（1600 视口）：11 项等宽、正好铺满整条；活动项下划线落在顶栏底边上；
+     2026-10-19 新增「资源汇总」后，11×92px 的等宽下限在 1440 下已放不下
+     （可用宽度 933px），门槛上移到约 1520 —— 所以这一段改用 1600 视口测；
+     1440 下的表现由 ③ 的「装不下」分支覆盖（箭头 + 滚动）。
   ③ 装不下：等宽不减、每项都不小于 min-width、文字没被挤出按钮，并浮出箭头
      （箭头只在「还能往那个方向滚」时出现，切页签后活动项自己滚进可视区）；
   ④ 切到侧边工作台时顶栏恢复原样（页签条不占位、左导航接管），再切回来还得对。
@@ -29,8 +32,8 @@ SHOTS = TESTS_DIR.parent / ".workbuddy" / "shots"
 
 # 页签的 min-width（与 style.css 的 .tt-tab 对齐）：低于它文字会被挤出按钮，
 # 所以这是「等宽」在窄屏下的下限，也是「装不下就滚动」的触发点。
-TAB_MIN_W = 84
-TAB_PAD_X = 6          # .tt-tab 的左右内边距
+TAB_MIN_W = 92
+TAB_PAD_X = 4          # .tt-tab 的左右内边距
 
 # 一次量齐所有几何：写成一个表达式，避免多次 evaluate 之间界面变化
 GEO = """() => {
@@ -114,7 +117,7 @@ def main() -> int:
     with serve(kb="fixture") as srv:
         with sync_playwright() as p:
             browser = p.chromium.launch()
-            page = browser.new_page(viewport={"width": 1440, "height": 900})
+            page = browser.new_page(viewport={"width": 1600, "height": 900})
             page.on("pageerror", lambda e: errors.append(f"pageerror: {e}"))
             page.on("console", lambda m: errors.append(f"console.{m.type}: {m.text}")
                     if m.type == "error" else None)
@@ -142,18 +145,18 @@ def main() -> int:
             check("顶部导航：主列里的页签头已让位（display:none）",
                   g["headDisplay"] == "none" and g["headH"] == 0,
                   f"display={g['headDisplay']} h={g['headH']}")
-            check("页签条里 9 个页签齐全", g["tabCount"] == 9, str(g["tabCount"]))
+            check("页签条里 11 个页签齐全", g["tabCount"] == 11, str(g["tabCount"]))
             check("顶部导航下页面没有横向溢出", g["docOverflowX"] <= 0, str(g["docOverflowX"]))
 
             # ── ② 装得下：等宽 + 铺满整条 + 下划线压在顶栏底边上 ──
-            check("1440 装得下（没有滚动余量）", g["maxScroll"] <= 0, str(g["maxScroll"]))
-            check("1440 装得下时两端都不出箭头",
+            check("1600 装得下（没有滚动余量）", g["maxScroll"] <= 0, str(g["maxScroll"]))
+            check("1600 装得下时两端都不出箭头",
                   g["prevVisible"] is False and g["nextVisible"] is False,
                   f"prev={g['prevVisible']} next={g['nextVisible']}")
-            check("9 项等宽（最宽−最窄 ≤ 2px）",
+            check("11 项等宽（最宽−最窄 ≤ 2px）",
                   g["tabMaxW"] - g["tabMinW"] <= 2,
                   f"{[i['w'] for i in g['items']]}")
-            check("等宽的 9 项正好铺满整条（首项贴左端、末项贴右端）",
+            check("等宽的 11 项正好铺满整条（首项贴左端、末项贴右端）",
                   abs(g["items"][0]["left"] - g["strip"]["left"]) <= 2
                   and abs(g["items"][-1]["right"] - g["strip"]["right"]) <= 2,
                   f"首 {g['items'][0]['left']} vs 条左 {g['strip']['left']}；"
@@ -165,7 +168,7 @@ def main() -> int:
                   f"标签 {g['items'][0]['labelW']} < 格宽 {g['items'][0]['w']}")
             check("右侧图标按钮之间不再是 22px（顶栏内统一 10px 间距）",
                   max(g["gaps"]) <= 12, str(g["gaps"]))
-            page.screenshot(path=str(SHOTS / "topbar_tabs_1440.png"))
+            page.screenshot(path=str(SHOTS / "topbar_tabs_1600.png"))
 
             # ── ③ 装不下：等宽不减、每项不小于 min-width、文字没被挤出按钮 ──
             page.set_viewport_size({"width": 1200, "height": 900})
@@ -200,7 +203,10 @@ def main() -> int:
             # 切页签：内容切换 + 活动页签自动滚进可视区、不被箭头压住
             page.evaluate("() => document.querySelector('.tt-strip').scrollTo({left: 0})")
             page.wait_for_timeout(400)
-            page.evaluate("() => document.querySelectorAll('.tt-tab')[8].click()")   # 配置（最右）
+            # 按文案找，不按序号：页签数量会变（2026-10-19 由 9 增到 10，当天又增到 11），
+            # 写死 [8] 会在新增页签后点到别人身上。
+            page.evaluate("() => [...document.querySelectorAll('.tt-tab')]"
+                          ".find(b => b.textContent.includes('配置')).click()")   # 最右
             page.wait_for_timeout(900)
             g4 = page.evaluate(GEO)
             check("点顶栏页签能切换内容（配置）", g4["activeLabel"] == "配置", str(g4["activeLabel"]))
@@ -237,7 +243,7 @@ def main() -> int:
                   and g7["tabMaxW"] - g7["tabMinW"] <= 2
                   and abs(g7["items"][-1]["right"] - g7["strip"]["right"]) <= 2
                   and g7["tabMinW"] > g["tabMinW"],
-                  f"每项 {g7['tabMinW']}~{g7['tabMaxW']}（1440 时 {g['tabMinW']}）")
+                  f"每项 {g7['tabMinW']}~{g7['tabMaxW']}（1600 时 {g['tabMinW']}）")
             check("1920 宽：顶栏高度仍等于声明值、下划线仍压在底边",
                   g7["barH"] == g7["barHDeclared"]
                   and abs(g7["underlineBottom"] - g7["bar"]["bottom"]) <= 1,
@@ -261,16 +267,20 @@ def main() -> int:
             #   两种布局都由自己的导航承担切页签，.el-tabs__header 恒为 display:none。）
             page.set_viewport_size({"width": 1440, "height": 900})
             page.wait_for_timeout(300)
+            # 换布局前的基线：上面几段量的是 1600/1920/1100，操作组的绝对位置随视口变，
+            # 拿它们比「换布局后有没有被推走」会误判（1600 的基线在 1440 下本来就靠右）。
+            gbase = page.evaluate(GEO)
             page.locator(".layout-switch .ls-btn").nth(0).click()     # 侧边工作台
             page.wait_for_timeout(700)
             g9 = page.evaluate(GEO)
             check("切到侧边工作台：顶栏页签条隐藏、不再占位（操作组没被推走）",
-                  g9["tabsHidden"] is True and g9["actions"]["left"] >= g["actions"]["left"] - 2,
-                  f"hidden={g9['tabsHidden']} actionsLeft={g9['actions']['left']}")
+                  g9["tabsHidden"] is True and g9["actions"]["left"] >= gbase["actions"]["left"] - 2,
+                  f"hidden={g9['tabsHidden']} actionsLeft={g9['actions']['left']} "
+                  f"基线={gbase['actions']['left']}")
             check("切到侧边工作台：主列页签头同样隐藏（只剩左侧分组导航一套导航）",
                   g9["headDisplay"] == "none", f"display={g9['headDisplay']}")
-            check("切到侧边工作台：左侧分组导航有全部 9 个入口",
-                  page.locator(".side-nav .nav-item").count() == 9
+            check("切到侧边工作台：左侧分组导航有全部 11 个入口",
+                  page.locator(".side-nav .nav-item").count() == 11
                   and page.locator(".side-nav").is_visible(),
                   str(page.locator(".side-nav .nav-item").count()))
             check("切到侧边工作台：顶栏高度不变、图标间距同样收紧",

@@ -10,8 +10,8 @@ import { useToast } from './useToast.js'
 import { escapeHtml } from '../utils/format.js'
 
 /** 作用范围徽标文案。旧版 EXT_SCOPE_TEXT（app.js:2329） */
-export const EXT_SCOPE_TEXT = { all: '全部任务', reqdev: '需求开发', apidebug: '接口联调', codetest: '代码测试' }
-export const EXT_SCOPE_KEYS = ['all', 'reqdev', 'apidebug', 'codetest']
+export const EXT_SCOPE_TEXT = { all: '全部任务', req: '需求开发', reqdev: 'Figma 转代码', apidebug: '接口联调', codetest: '代码测试' }
+export const EXT_SCOPE_KEYS = ['all', 'req', 'reqdev', 'apidebug', 'codetest']
 
 export function useExtensions() {
   const { toast } = useToast()
@@ -26,7 +26,10 @@ export function useExtensions() {
   const skillName = ref('')
   const skillDesc = ref('')
   const skillContent = ref('')
-  const skillScope = ref({ all: true, reqdev: false, apidebug: false, codetest: false })
+  // 由 EXT_SCOPE_KEYS 生成初始值：以前这里手写一份字面量，新增作用范围（req）
+  // 时忘了改，表单上勾了「需求开发」却找不到对应 key。
+  const _scopeInit = (on) => Object.fromEntries(EXT_SCOPE_KEYS.map((k) => [k, !!on && k === 'all']))
+  const skillScope = ref(_scopeInit(true))
   const skillEnabled = ref(true)
 
   function showSkillForm(id) {
@@ -36,7 +39,7 @@ export function useExtensions() {
     skillDesc.value = s ? (s.description || '') : ''
     skillContent.value = s ? (s.content || '') : ''
     const scope = (s ? s.scope : ['all']) || ['all']
-    skillScope.value = { all: false, reqdev: false, apidebug: false, codetest: false }
+    skillScope.value = _scopeInit(false)
     EXT_SCOPE_KEYS.forEach((k) => { skillScope.value[k] = scope.includes(k) })
     skillEnabled.value = s ? !!s.enabled : true
     skillFormVisible.value = true

@@ -302,7 +302,7 @@ onBeforeUnmount(() => {
               <div class="chat-attach-bar">
                 <!-- 保留原生 file input：Element 的 el-upload 事件模型与原生差别大，硬套会丢 paste/drop 链路 -->
                 <input type="file" id="chat-file" ref="fileEl" multiple class="hidden"
-                       accept="image/*,.txt,.log,.md,.csv,.json,.xml,.yml,.yaml,.ts,.tsx,.js,.jsx,.vue,.css,.scss,.py,.java,.go,.sh,.sql,.ini,.conf,.patch,.diff"
+                       accept="image/*,.pdf,.txt,.log,.md,.csv,.json,.xml,.yml,.yaml,.ts,.tsx,.js,.jsx,.vue,.css,.scss,.py,.java,.go,.sh,.sql,.ini,.conf,.patch,.diff"
                        @change="onFileChange">
                 <el-button id="btn-chat-upload" size="small" title="选择图片或文本文件（日志、代码、配置等）"
                            @click="pickFile">

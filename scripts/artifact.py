@@ -25,7 +25,11 @@ TERMINAL_STATUSES = (STATUS_APPLIED, STATUS_REJECTED)
 
 TYPE_LABELS = {
     "chat": "问答",
-    "reqdev": "需求开发",
+    # 需求开发（2026-10-19）：需求原文 → 变更类型判定 + 影响面 + 方案
+    "req": "需求开发",
+    # Figma 设计稿 → 代码（原「需求开发」页签，改名后 type 仍沿用 reqdev：
+    # 历史产出物的 type 是 reqdev，改值会让旧记录从列表里消失）
+    "reqdev": "Figma 转代码",
     "apidebug": "接口联调",
     "codetest": "代码测试",
     # 缺陷修复循环在沙箱里跑红→绿的复现用例，见 scripts/repro.py 与 pipeline._repro_artifact
@@ -75,6 +79,26 @@ class ArtifactStore(JsonRecordStore):
                 "mock_data": payload.get("mock_data", ""),
                 "cases": payload.get("cases", []),
                 "files": payload.get("files", []),
+                # 需求开发的分诊结论（其它类型为空）：界面「分诊卡」与下一步按钮
+                # 直接读这几个字段，不要每次再让 AI 复述一遍。
+                "change_type": payload.get("change_type", ""),
+                "change_type_label": payload.get("change_type_label", ""),
+                "needs_design": payload.get("needs_design", False),
+                "design_brief": payload.get("design_brief", ""),
+                "impacts": payload.get("impacts", []),
+                # 需求开发是四阶段流水线：阶段状态、自检结论、未完成的文件都要
+                # 跟着产出物一起存 —— 否则刷新页面后只剩一个「分诊结论」，
+                # 用户没法判断这次到底做到哪一步。
+                "stages": payload.get("stages", []),
+                "selfcheck": payload.get("selfcheck") or {},
+                "verify": payload.get("verify", []),
+                "gaps": payload.get("gaps", []),
+                "unresolved": payload.get("unresolved", []),
+                "changed": bool(payload.get("changed")),
+                "deliver": payload.get("deliver", ""),
+                # 需求开发读过的附件清单（名称 / 类型 / 抽取字符数）：回看产出物时
+                # 要说得清「AI 当时读的是哪一版需求文档」。
+                "attachments": payload.get("attachments", []),
                 "error": payload.get("error", ""),
                 "raw": payload.get("raw", ""),
                 # 长任务作业的协作上下文（角色卡、工作项、复核结论）；其他类型为空

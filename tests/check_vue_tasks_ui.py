@@ -31,6 +31,10 @@ sys.path.insert(0, str(ROOT))
 
 from playwright.sync_api import sync_playwright      # noqa: E402
 
+# 手搓的合法 PDF（与 tests/check_req_attachments.py 共用一份实现）：
+# 附件上传要覆盖「PDF 在上传时被抽成正文」这条路径，造一个空白 PDF 测不到。
+from check_req_attachments import make_pdf          # noqa: E402
+
 OK, BAD = [], []
 
 
@@ -102,8 +106,14 @@ def start_server(tmp: Path):
     raise RuntimeError("临时服务 30s 内未就绪")
 
 
-# 一个页面里三个任务页签的关键控件（id 与旧版一致）
+# 一个页面里四个任务页签的关键控件（id 与旧版一致；req 是 2026-10-19 新增）
 PANES = {
+    # 需求开发（新建）：需求原文 → 四阶段流水线（分诊/定位/改动/自检）
+    "req": ["pane-req", "rq-doc", "rq-deliver", "rq-source", "rq-scope", "rq-stack",
+            "rq-context", "rq-notes", "btn-req", "rq-doc-echo", "rq-stages",
+            "rq-verdict", "rq-type", "rq-design", "rq-files", "rq-check",
+            "btn-rq-att", "rq-att-input"],
+    # Figma 转代码（原「需求开发」改名，内部 name 仍是 reqdev）
     "reqdev": ["pane-reqdev", "req-figma-url", "req-figma-mode", "req-figma-token-field",
                "req-framework", "btn-figma", "req-figma-hint", "figma-tree",
                "req-desc", "req-context", "req-notes", "btn-reqdev"],
@@ -141,15 +151,15 @@ def run(base: str, *, errors: list, consoles: list) -> None:
             missing = page.evaluate("""ids => ids.filter(id => !document.getElementById(id))""", ids)
             check(f"{tab} 页控件齐全（{len(ids)} 个）", not missing, str(missing))
 
-        # ── 2. #figma-tree / #test-preview 空态占位（:empty 契约）──
-        for pid in ("figma-tree", "test-preview"):
+        # ── 2. #figma-tree / #test-preview / #rq-doc-echo 空态占位（:empty 契约）──
+        for pid in ("figma-tree", "test-preview", "rq-doc-echo"):
             ph = page.eval_on_selector(f"#{pid}", "el => getComputedStyle(el, '::before').content")
             check(f"#{pid} 空态占位提示存在",
                   bool(ph) and ph not in ("none", "normal"), str(ph)[:50])
             kids = page.eval_on_selector(f"#{pid}", "el => el.children.length")
             check(f"#{pid} 空态无子节点（:empty 生效）", kids == 0, f"{kids} 子节点")
 
-        # ── 3. 需求开发：Figma 取稿通道切换落 localStorage ──
+        # ── 3. Figma 转代码：取稿通道切换落 localStorage ──
         page.evaluate("() => switchTab('reqdev')")
         page.wait_for_timeout(300)
         # 参数形态改版（2026-10-13）：reqdev 七条参数含长文本 → **常驻参数轨**。
@@ -189,7 +199,108 @@ def run(base: str, *, errors: list, consoles: list) -> None:
         preview = page.inner_text("#test-preview")
         check("预览文件读到内容", "Hello" in preview, repr(preview[:80]))
 
-        # ── 5. 跑一次 Mock 任务：接口联调（表单最简，只要求粘贴文档）──
+        # ── 5. 需求开发：四阶段流水线 + 可采纳改动 + 自检 + 交接 ──
+        # 这一节锁的是 2026-10-19 的完整链路：需求原文 → 分诊 → 定位 → 改动 → 自检，
+        # 以及「需要设计稿时仍把非视觉部分先落地」——只做分诊是这一版要修掉的毛病。
+        page.evaluate("() => switchTab('req')")
+        page.wait_for_timeout(300)
+
+        # ── 4.5 需求文档附件：md / pdf 上传后当场解析、可核对、可移除 ──
+        # 需求文档在真实工作里多半是文件而不是可粘贴的文字。这一节锁三件事：
+        # ① PDF 在**上传时**就被抽成正文（不是等跑任务才失败）；
+        # ② 用户能看到「AI 读到了什么」（解析预览），而不是只能相信；
+        # ③ 移除后运行不再引用它。
+        src = Path(tempfile.mkdtemp(prefix="req-att-src-"))
+        att_md = src / "需求说明.md"
+        att_md.write_text("# 订单筛选\n\n列表页新增按交付日期筛选。\n", encoding="utf-8")
+        att_pdf = src / "prd.pdf"
+        att_pdf.write_bytes(make_pdf("Order list: add delivery date filter"))
+        page.set_input_files("#rq-att-input", [str(att_md), str(att_pdf)])
+        try:
+            page.wait_for_function(
+                "() => document.querySelectorAll('#rq-atts .rq-att').length === 2",
+                timeout=30000)
+        except Exception:
+            check("上传 md + pdf 后出现两条附件", False, page.inner_text("#rq-atts")[:160])
+        atts_text = page.inner_text("#rq-atts")
+        check("附件清单显示文件名", "需求说明.md" in atts_text and "prd.pdf" in atts_text,
+              repr(atts_text[:160]))
+        check("PDF 显示了抽出的字符数", "抽出" in atts_text, repr(atts_text[:160]))
+        check("PDF 与 md 的类型徽标不同",
+              page.eval_on_selector_all("#rq-atts .rq-att-kind",
+                                        "els => els.map(e => e.textContent.trim())")
+              == ["MD", "PDF"],
+              str(page.eval_on_selector_all("#rq-atts .rq-att-kind",
+                                            "els => els.map(e => e.textContent.trim())")))
+        # 点 PDF 的「看解析结果」：预览里必须是 PDF 里的原话
+        page.evaluate("""() => {
+            const rows = [...document.querySelectorAll('#rq-atts .rq-att')];
+            const row = rows.find(r => r.textContent.includes('prd.pdf'));
+            row.querySelector('.rq-att-view').click();
+        }""")
+        page.wait_for_timeout(150)
+        preview = page.inner_text("#rq-att-preview")
+        check("解析预览里是 PDF 的真实正文", "add delivery date filter" in preview, repr(preview[:120]))
+        # 移除 md：只剩 PDF，且运行时不带已移除的那份
+        page.evaluate("""() => {
+            const rows = [...document.querySelectorAll('#rq-atts .rq-att')];
+            const row = rows.find(r => r.textContent.includes('需求说明.md'));
+            row.querySelector('.rq-att-del').click();
+        }""")
+        page.wait_for_timeout(150)
+        check("移除一份后只剩 1 条",
+              page.eval_on_selector_all("#rq-atts .rq-att", "els => els.length") == 1,
+              str(page.eval_on_selector_all("#rq-atts .rq-att", "els => els.length")))
+
+        page.fill("#rq-doc", "订单列表页新增「按交付日期筛选」，并支持导出当前筛选结果。")
+        # 附件是独立输入：运行时以 id 引用，正文由服务端拼进需求（PDF 已在上传时抽好）。
+        # 断言请求体里只剩未移除的那一份，锁住「移除即生效」。
+        try:
+            with page.expect_request("**/api/tasks/run") as req_info:
+                page.click("#btn-req")
+            sent = json.loads((req_info.value.post_data or "") or "{}")
+            check("运行时带上了未移除的附件",
+                  len(sent.get("attachment_ids") or []) == 1,
+                  str(sent.get("attachment_ids")))
+        except Exception as e:
+            check("运行时带上了未移除的附件", False, f"没抓到请求: {e}")
+        try:
+            page.wait_for_function(
+                "() => !document.getElementById('rq-verdict').classList.contains('hidden')",
+                timeout=60000)
+        except Exception:
+            check("分诊结论卡在 60s 内出现", False, "仍是空态")
+        check("分诊结论：变更类型",
+              "新增页面" in page.inner_text("#rq-type"), repr(page.inner_text("#rq-type")))
+        check("分诊结论：需要设计稿",
+              "需要设计稿" in page.inner_text("#rq-design"), repr(page.inner_text("#rq-design")))
+        check("分诊结论：给了影响面",
+              page.eval_on_selector_all("#rq-impacts .rq-impact", "els => els.length") > 0)
+        check("阶段条有四个阶段",
+              page.eval_on_selector_all("#rq-stages .rq-stage-step", "els => els.length") == 4)
+        check("四个阶段都跑完（不是只做分诊）",
+              page.eval_on_selector_all("#rq-stages .is-done", "els => els.length") == 4,
+              str(page.eval_on_selector_all("#rq-stages .rq-stage-step",
+                                            "els => els.map(e => e.dataset.stage + ':' + e.className)")))
+        check("改动清单里有可采纳文件",
+              page.eval_on_selector_all("#rq-files .rq-file", "els => els.length") >= 1,
+              page.inner_text("#rq-files")[:120])
+        check("改动清单显示了真实路径",
+              "src/api/order.ts" in page.inner_text("#rq-files"),
+              page.inner_text("#rq-files")[:120])
+        check("自检结论已展示",
+              "部分完成" in page.inner_text("#rq-check"), page.inner_text("#rq-check")[:120])
+        check("「审阅改动并采纳」可点",
+              page.eval_on_selector("#btn-rq-artifact", "el => !el.disabled"))
+        page.click("#btn-goto-reqdev")
+        page.wait_for_timeout(400)
+        check("交接后切到 Figma 转代码页",
+              page.eval_on_selector("#pane-reqdev", "el => el.classList.contains('active')"))
+        check("需求原文已预填到生成参数的需求描述",
+              "交付日期" in (page.input_value("#req-desc") or ""),
+              repr(page.input_value("#req-desc")))
+
+        # ── 6. 跑一次 Mock 任务：接口联调（表单最简，只要求粘贴文档）──
         page.evaluate("() => switchTab('apidebug')")
         page.wait_for_timeout(300)
         # 参数形态改版：apidebug 的接口文档是 rows=10 长文本 → 走常驻参数轨，

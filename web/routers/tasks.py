@@ -5,18 +5,20 @@
 """
 
 from pathlib import Path
+from typing import Dict, List
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 
-from web.state import (SCREENSHOT_DIR, _acquire_run, _as_bool, _astore,
+from web.state import (SCREENSHOT_DIR, _acquire_run, _as_bool, _astore, _astore_att,
                        _body_json, _busy_detail, _extensions, _load_settings,
                        _mcp_toolkit, _pipeline_config, _release_run,
-                       _run_snapshot, _skills_text)
+                       _run_progress, _run_snapshot, _skills_text)
 from scripts import usage  # noqa: E402
 from scripts.ai_model import AIModel  # noqa: E402
 from scripts.artifact import ArtifactStore  # noqa: E402
+from scripts.chat_attachments import AttachmentError, text_block  # noqa: E402
 from scripts.figma_fetcher import FigmaClient, FigmaError, parse_figma_url  # noqa: E402
 from scripts.task_modules import TASK_LABELS, TaskError, mock_task_result, run_task  # noqa: E402
 
@@ -183,12 +185,73 @@ async def figma_fetch(req: Request):
         raise HTTPException(502, f"Figma 浏览器通道失败: {e}")
 
 
-_TASK_KINDS = ("reqdev", "apidebug", "codetest")
+_TASK_KINDS = ("req", "reqdev", "apidebug", "codetest")
+
+# 一次需求最多带几份文档。超过的部分静默丢弃会让用户以为 AI 读到了，
+# 所以接口层显式拦（提示「最多 6 份，请分次」）。
+REQ_ATT_MAX = 6
+# 拼进提示词的需求正文总上限：单份 PDF 已按 3 万字符裁剪，多份叠起来仍可能
+# 把上下文吃光。超出时保留尾部（验收标准常在文末），并在开头如实说明。
+REQ_DOC_MAX_CHARS = 60000
+
+
+def _req_doc_with_attachments(doc: str, atts: List[Dict], store) -> str:
+    """把「手写/粘贴的需求原文」与「附件抽取的正文」拼成一份完整需求。
+
+    顺序是刻意的：用户亲手写的几句通常是最关键的约束（改哪个模块、别动什么），
+    放在最前面模型才不会淹没在 PRD 的模板话里；附件正文在后，各带来源标题。
+    """
+    parts: List[str] = []
+    head = (doc or "").strip()
+    if head:
+        parts.append(head)
+    block = text_block(store, atts)
+    if block:
+        parts.append(block)
+    full = "\n\n".join(parts)
+    if len(full) > REQ_DOC_MAX_CHARS:
+        full = ("…（需求正文超过 %d 字符，已截断；原始文档仍保留在附件里）…\n\n"
+                % REQ_DOC_MAX_CHARS) + full[-REQ_DOC_MAX_CHARS:]
+    return full
+
+
+@router.post("/api/req/attachments")
+async def req_upload_attachment(req: Request):
+    """需求开发：上传需求文档（md / txt / pdf），服务端抽成文本后返回元数据。
+
+    为什么不复用问答的上传接口：两者的落盘目录与用途不同（问答附件是排障素材，
+    需求文档是任务输入），混在一起会让「附件」这个概念在两个模块里语义打架。
+    但落盘与解析实现是同一套（ChatAttachmentStore），PDF 的文字层抽取只写一份。
+    """
+    try:
+        form = await req.form()
+    except Exception as e:
+        raise HTTPException(400, f"读取上传内容失败: {e}")
+    upload = form.get("file")
+    if upload is None:
+        raise HTTPException(400, "没有收到文件（字段名应为 file）")
+    if isinstance(upload, str):
+        raise HTTPException(400, "file 字段必须是文件内容")
+    try:
+        data = await upload.read()
+    except Exception as e:
+        raise HTTPException(400, f"读取文件内容失败: {e}")
+    name = str(getattr(upload, "filename", "") or "")
+    ctype = str(getattr(upload, "content_type", "") or "")
+    store = _astore_att()
+    try:
+        # PDF 解析是 CPU 活（几十页要几百毫秒到几秒），不能占住事件循环。
+        info = await run_in_threadpool(store.save, name, data, ctype)
+    except AttachmentError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(500, f"保存附件失败: {e}")
+    return {"attachment": store.public(info), "preview": store.preview(info)}
 
 
 @router.post("/api/tasks/run")
 async def tasks_run(req: Request):
-    """需求开发 / 接口联调 / 代码测试：AI 产出「产出物」（文件+方案），只存 JSON 不写仓库。"""
+    """需求开发 / Figma 转代码 / 接口联调 / 代码测试：AI 产出「产出物」，只存 JSON 不写仓库。"""
     # 先窥一眼占用只为把 409 说得清（是谁、跑了多久）；真正的原子占用在下面
     # `_acquire_run` 那一步完成。中间的 MCP 握手可能耗时，两者之间被抢先是允许的，
     # 届时 acquire 返回 None 同样回 409。
@@ -201,6 +264,13 @@ async def tasks_run(req: Request):
 
     s = _load_settings()
     ctx = {
+        # 需求开发（req）：需求原文是主输入，与 reqdev 的「需求描述」分开存 ——
+        # 一个是分诊依据，一个是生成代码时的补充说明，混用会让提示词互相污染。
+        "requirement_doc": str(body.get("requirement_doc") or ""),
+        # auto=能改就改（默认，把需求做完）；triage=只出方案；code=缺设计稿也先出代码
+        "deliver": str(body.get("deliver") or "auto"),
+        "source": str(body.get("source") or ""),
+        "scope": str(body.get("scope") or ""),
         "requirement": str(body.get("requirement") or ""),
         "framework": str(body.get("framework") or "React + TypeScript"),
         "design": str(body.get("design") or ""),
@@ -212,6 +282,27 @@ async def tasks_run(req: Request):
         "requirements": str(body.get("requirements") or ""),
     }
     title = str(body.get("title") or "").strip()
+
+    # 需求开发：把仓库根交给任务层，由它自己生成「目录索引」并校验影响面路径。
+    # （目录索引只发目录 + 文件数，不是全部路径；见 task_modules._repo_index）
+    if kind == "req":
+        repo_root = str((s.get("repo") or {}).get("path") or "").strip()
+        if repo_root and Path(repo_root).exists():
+            ctx["repo_root"] = repo_root
+        # 需求附件：md / txt 直接读，PDF 用上传时抽好的正文。附件是**独立输入**
+        # 而不是「预填进需求原文的文本」—— 用户改天重新打开页面，手写内容还在，
+        # 附件也还在（id 存在同一个 composable 里），不会因为换行/覆盖而丢。
+        raw_ids = body.get("attachment_ids")
+        if not isinstance(raw_ids, list):
+            raw_ids = []
+        ids = [str(i).strip() for i in raw_ids if str(i or "").strip()][:REQ_ATT_MAX]
+        if ids:
+            store = _astore_att()
+            atts = store.many(ids)   # 认不出的 id 静默丢弃（与问答同一套宽容口径）
+            if atts:
+                ctx["requirement_doc"] = _req_doc_with_attachments(
+                    ctx["requirement_doc"], atts, store)
+                ctx["attachments"] = [store.public(a) for a in atts]
 
     # 代码测试：从仓库读目标文件内容
     if kind == "codetest":
@@ -260,10 +351,17 @@ async def tasks_run(req: Request):
             # AI 调用是同步长请求，丢进线程池避免卡死其它接口。
             # 用量归属放进线程内部设置（run_in_threadpool 不保证上下文跨线程可见）。
             def _job():
+                # 需求开发是四阶段流水线（分诊 → 定位 → 改动 → 自检），
+                # 单个请求可能要跑几分钟。把阶段写进运行租约，界面才能显示
+                # 「现在卡在哪一步」，而不是一个转圈转到结束。
+                def _progress(label, detail=""):
+                    _run_progress(cancel, stage=str(label), stage_detail=str(detail)[:200])
+
                 with usage.task(kind, title=title or TASK_LABELS.get(kind, kind),
                                 step=kind):
                     return run_task(kind, ai, ctx, skills_text=skills_text,
-                                    tool_specs=tool_specs, tool_executor=tool_executor)
+                                    tool_specs=tool_specs, tool_executor=tool_executor,
+                                    progress=_progress)
 
             payload = await run_in_threadpool(_job)
         if not title:
@@ -276,6 +374,36 @@ async def tasks_run(req: Request):
     finally:
         _release_run(cancel)
 
+    # 附件清单随产出物落库：过几天回看这次需求时，才说得清「AI 当时读的是哪一版
+    # 文档」。放在 create 之前赋值，mock 与真实链路都覆盖到。
+    payload["attachments"] = ctx.get("attachments") or []
     artifact = _astore().create(kind, title, payload, ctx)
     return {"ok": not payload.get("error"), "artifact": ArtifactStore.summary(artifact),
-            "ai_mode": payload.get("ai_mode", "")}
+            "ai_mode": payload.get("ai_mode", ""),
+            # 分诊结论 + 流水线结果直接回给前端：界面的「变更类型 / 是否需要设计稿 /
+            # 影响面 / 四个阶段跑到哪 / 自检结论」不该再多一次详情请求才能看到；
+            # 其余类型这些字段是空值，前端按同一份结构读。
+            "result": {
+                "change_type": payload.get("change_type", ""),
+                "change_type_label": payload.get("change_type_label", ""),
+                "needs_design": bool(payload.get("needs_design")),
+                "design_brief": payload.get("design_brief", ""),
+                "impacts": payload.get("impacts", []),
+                "impacts_corrected": payload.get("impacts_corrected", 0),
+                "repo_file_count": payload.get("repo_file_count", 0),
+                "endpoints": payload.get("endpoints", []),
+                "files": [{"path": f.get("path", ""), "action": f.get("action", ""),
+                           "description": f.get("description", ""),
+                           "stats": f.get("stats") or {},
+                           "edits": len(f.get("edits") or [])}
+                          for f in payload.get("files") or []],
+                "stages": payload.get("stages", []),
+                "changed": bool(payload.get("changed")),
+                "selfcheck": payload.get("selfcheck") or {},
+                "gaps": payload.get("gaps", []),
+                "verify": payload.get("verify", []),
+                "unresolved": payload.get("unresolved", []),
+                "deliver": payload.get("deliver", ""),
+                "summary": payload.get("summary", ""),
+                "attachments": payload.get("attachments") or [],
+            }}

@@ -1,5 +1,5 @@
-// 三个任务页签（reqdev 需求开发 / apidebug 接口联调 / codetest 代码测试）的
-// 表单状态与副作用。旧版 app.js:1826/1873-2001 的等价迁移。
+// 三个任务页签（req 需求开发 / reqdev Figma 转代码 / apidebug 接口联调 /
+// codetest 代码测试）的表单状态与副作用。旧版 app.js:1826/1873-2001 的等价迁移。
 //
 // 三个页签共用一条「/api/tasks/run → 产出物 → 人工采纳」链路，差异只在表单
 // 字段与校验提示。figmaDesign（拉回来的设计稿）是 reqdev 的隐藏输入，
@@ -12,7 +12,7 @@
 // 站点）和目标仓库里的任意文件，一个 `<img src=x onerror=...>` 就是执行脚本。
 // 其余拼 HTML 的地方（useDefect / proposalRender / useSettings）都是这么做的。
 import { ref, watch } from 'vue'
-import { api } from '../api/client.js'
+import { api, uploadReqAttachment } from '../api/client.js'
 import { escapeHtml } from '../utils/format.js'
 import { useToast } from './useToast.js'
 import { setRunStatus } from './useRunStatus.js'
@@ -23,9 +23,13 @@ import { schemaDefault } from './useParamSchema.js'
 /** Figma 取稿通道的 localStorage 键（与旧版同源：figma-fetch-mode） */
 const FIGMA_MODE_KEY = 'figma-fetch-mode'
 
+/** 需求开发的分诊结论。**模块级单例**：切到别的页签再回来还在，
+ *  「Figma 转代码」页也能读到它做上下文预填（见 useReqHandoff）。 */
+const planResult = ref(null)
+
 export function useTasks() {
   const { toast } = useToast()
-  const { loadArtifacts } = useArtifacts()
+  const { loadArtifacts, items, type } = useArtifacts()
   const { loadHealth } = useHealth()
 
   // ---- Figma 取稿通道（reqdev）----
@@ -97,6 +101,72 @@ export function useTasks() {
   const reqContext = ref('')
   const reqNotes = ref('')
 
+  // ---- req 需求开发表单 ----
+  // 字段 key 与 web/params_schema.py 的 "req" 模块一一对应；reqNotes 在这个模块里
+  // 叫 reqPlanNotes，避免和上面的 reqdev.reqNotes（生成参数-其他约定）撞名。
+  const reqDoc = ref('')
+  const reqSource = ref('')
+  const reqScope = ref('')
+  const reqStack = ref(schemaDefault('req', 'reqStack', 'React + TypeScript'))
+  const reqCodeContext = ref('')
+  const reqPlanNotes = ref('')
+  /** 交付方式：auto=能改就改（默认，把需求做完）；triage=只出方案；code=缺设计稿也出代码 */
+  const reqDeliver = ref(String(schemaDefault('req', 'reqDeliver', 'auto')))
+
+  // ---- 需求附件（md / txt / pdf）----
+  // 需求文档在真实工作里常常是一份文件而不是一段可粘贴的文字：PRD 是 md、评审稿
+  // 是 pdf、产品发来的是 txt。这里只保存**元数据 + 预览**，正文由服务端在运行时
+  // 从附件读取并拼进 requirement_doc —— 单一数据源，不会出现「前端预填的文本」
+  // 与「后端的附件正文」两份互相漂移。
+  const reqAtts = ref([])
+  const reqAttUploading = ref(false)
+  /** 与后端 REQ_ATT_MAX 同值：一次最多 6 份，超出部分前端先拦，避免传完才报错 */
+  const REQ_ATT_MAX = 6
+  /** 与后端 classify() 的白名单对齐：md / txt / pdf（其它扩展名服务端会拒） */
+  const REQ_ATT_ACCEPT = '.md,.markdown,.txt,.pdf,text/markdown,text/plain,application/pdf'
+
+  async function uploadReqAttachments(files) {
+    const list = Array.from(files || [])
+    if (!list.length) return
+    const room = REQ_ATT_MAX - reqAtts.value.length
+    if (room <= 0) {
+      toast(`一次最多带 ${REQ_ATT_MAX} 份需求文档，请先移除已上传的`, 'err')
+      return
+    }
+    reqAttUploading.value = true
+    try {
+      for (const file of list.slice(0, room)) {
+        try {
+          const data = await uploadReqAttachment(file, file.name)
+          const att = data.attachment || {}
+          reqAtts.value.push({ ...att, preview: data.preview || '' })
+          const chars = att.chars ? `，抽出 ${att.chars} 字符` : ''
+          toast(`已读取「${att.name}」（${formatSize(att.size)}${chars}）`, 'ok')
+        } catch (e) {
+          // 单份失败不拖累其余文件：用户常一次选三四份，不该因为一份扫描版 PDF
+          // 就整批丢掉。失败原因（比如「没有文字层」）原样透出。
+          toast(`「${file.name}」未能读取: ${(e && e.message) || e}`, 'err')
+        }
+      }
+      if (list.length > room) {
+        toast(`一次最多 ${REQ_ATT_MAX} 份，另有 ${list.length - room} 份未上传`, 'warn')
+      }
+    } finally {
+      reqAttUploading.value = false
+    }
+  }
+
+  function removeReqAttachment(id) {
+    reqAtts.value = reqAtts.value.filter((a) => a.id !== id)
+  }
+
+  function formatSize(n) {
+    const v = Number(n) || 0
+    if (v >= 1048576) return `${(v / 1048576).toFixed(1)}MB`
+    if (v >= 1024) return `${Math.round(v / 1024)}KB`
+    return `${v}B`
+  }
+
   // ---- apidebug 表单（同上）----
   const apiDoc = ref('')
   const apiBase = ref('')
@@ -139,7 +209,28 @@ export function useTasks() {
 
   async function runTask(kind) {
     let body
-    if (kind === 'reqdev') {
+    if (kind === 'req') {
+      const doc = reqDoc.value.trim()
+      body = {
+        task: kind,
+        requirement_doc: doc,
+        // 附件正文由服务端拼进需求（PDF 在上传时就抽好了），这里只传引用；
+        // 认不出的 id 服务端会静默丢弃，不会因为一个过期附件拦住整单。
+        attachment_ids: reqAtts.value.map((a) => a.id),
+        source: reqSource.value.trim(),
+        scope: reqScope.value.trim(),
+        framework: reqStack.value,
+        repo_context: reqCodeContext.value,
+        notes: reqPlanNotes.value.trim(),
+        deliver: reqDeliver.value,
+        title: (doc || (reqAtts.value[0] && reqAtts.value[0].name) || '')
+          .replace(/\s+/g, ' ').slice(0, 60),
+      }
+      if (!doc && !reqAtts.value.length) {
+        toast('请先粘贴需求描述，或上传需求文档（md / txt / pdf）', 'err')
+        return
+      }
+    } else if (kind === 'reqdev') {
       const req = reqDesc.value.trim()
       body = {
         task: kind,
@@ -172,6 +263,12 @@ export function useTasks() {
     setRunStatus('AI 生成中…', 'running')
     try {
       const data = await api.taskRun(body)
+      // 需求开发的分诊结论留在本页展示（切页签回来还在）；
+      // 其余模块没有这几项，保持 null。带上产出物 id，「查看产出物」才有目标。
+      if (kind === 'req') {
+        planResult.value = { ...(data.result || {}),
+                             id: (data.artifact && data.artifact.id) || '' }
+      }
       setRunStatus(`产出物已生成 · AI:${data.ai_mode || '?'}`, 'ok')
       if (data.artifact && data.artifact.error) {
         toast(`产出物已保存，但 AI 输出不完整：${data.artifact.error}`, 'warn')
@@ -187,12 +284,57 @@ export function useTasks() {
     }
   }
 
+  /** 页面重载后把最近一次分诊结论拉回来 —— 否则「分诊卡」是空的，而产出物列表里
+   *  明明躺着一条记录。只读详情，不改任何东西。 */
+  async function restorePlan() {
+    if (planResult.value) return
+    if (type.value !== 'req' || !(items.value || []).length) await loadArtifacts('req')
+    const first = (items.value || []).find((a) => a.type === 'req')
+    if (!first) return
+    try {
+      const d = await api.artifact(first.id)
+      if (!d || d.type !== 'req') return
+      planResult.value = {
+        id: d.id || '',
+        change_type: d.change_type || '',
+        change_type_label: d.change_type_label || '',
+        needs_design: !!d.needs_design,
+        design_brief: d.design_brief || '',
+        impacts: d.impacts || [],
+        impacts_corrected: 0,
+        repo_file_count: 0,
+        endpoints: d.endpoints || [],
+        files: (d.files || []).map((f) => ({
+          path: f.path, action: f.action || '',
+          description: f.description || '',
+          stats: f.stats || {},
+          edits: (f.edits || []).length,
+        })),
+        stages: d.stages || [],
+        changed: !!d.changed,
+        selfcheck: d.selfcheck || {},
+        gaps: d.gaps || [],
+        verify: d.verify || [],
+        unresolved: d.unresolved || [],
+        deliver: d.deliver || '',
+        summary: d.summary || '',
+      }
+    } catch (e) {
+      // 列表已经在，详情失败不阻塞页面；下次跑一次就会覆盖这份结论
+    }
+  }
+
   return {
     // Figma（reqdev）
     figmaMode, setFigmaMode, figmaDesign, fetching, figmaTree, figmaError, fetchFigma,
     appendFigmaInspection,
     // reqdev
     figmaUrl, figmaToken, reqFramework, reqDesc, reqContext, reqNotes,
+    // req 需求开发
+    reqDoc, reqSource, reqScope, reqStack, reqCodeContext, reqPlanNotes, reqDeliver,
+    planResult, restorePlan,
+    reqAtts, reqAttUploading, uploadReqAttachments, removeReqAttachment,
+    REQ_ATT_ACCEPT, REQ_ATT_MAX,
     // apidebug
     apiDoc, apiBase, apiFramework, apiContext, apiNotes,
     // codetest

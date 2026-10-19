@@ -1,5 +1,7 @@
 # ── 本地凭据与私有配置（绝不入库）──
 ui_settings.json
+# 资源汇总板（需求文档链接 / 内网环境地址）：只有你自己的入口，不进仓库
+/resources.json
 config.yaml
 config.*.local.yaml
 *.local.json

@@ -11,13 +11,21 @@
 2. `image_payload()`  图片 → 多模态消息里的 image 片段（base64 data URI）；
 3. `text_payload()`   文本 → 直接拼进提示词的一段文字（带来源标注与截断）。
 
+PDF 单独算一类（`kind="doc"`）：它是二进制，不能像 txt/md 那样直接读，需要在
+**上传那一刻**就把文字抽出来（pypdf）并存成 `.extracted.txt` 缓存 —— 理由有两个：
+① 上传时就失败，用户立刻知道「这是扫描件、没有文字层」，而不是把整条需求流水线
+跑完才发现需求正文是空的；② 一次需求要跑 4+ 次模型调用，重复解析同一份 200 页
+PDF 是纯浪费。
+
 安全契约与其它模块一致：**本模块只写自己的数据目录**，不碰目标仓库。
 路径安全靠两道锁：文件名由服务端生成（`att-<uuid>.<ext>`），扩展名走白名单。
 """
 from __future__ import annotations
 
 import base64
+import io
 import json
+import logging
 import mimetypes
 import os
 import re
@@ -25,6 +33,10 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
+
+# 用户传错文件（不是 PDF / 加密 / 空文字层）时，错误已经由 AttachmentError 翻成
+# 中文提示；pypdf 自己打的英文 warning 只会让服务端日志更难读，压到 ERROR。
+logging.getLogger("pypdf").setLevel(logging.ERROR)
 
 # 允许的图片类型 → 落盘扩展名（白名单，不做任何嗅探式猜测）
 IMAGE_TYPES = {
@@ -58,10 +70,15 @@ TEXT_TYPES = {
     "application/octet-stream": "",   # 交给扩展名兜底
     "": "",
 }
+# 二进制文档：不是「图片」，也不能直接当文本读 —— 必须先抽取文字。
+# 目前只认 PDF（md / txt / 各类代码本身就是文本，走 TEXT_TYPES 那条路）。
+DOC_TYPES = {
+    "application/pdf": "pdf",
+}
 # 扩展名兜底：浏览器给不出 type 时按后缀认（值 = 归一后的后缀）
 EXT_TYPES = {
     ".png": "png", ".jpg": "jpg", ".jpeg": "jpg", ".gif": "gif", ".webp": "webp",
-    ".bmp": "bmp", ".svg": "svg",
+    ".bmp": "bmp", ".svg": "svg", ".pdf": "pdf",
     ".txt": "txt", ".log": "log", ".md": "md", ".markdown": "md", ".csv": "csv",
     ".tsv": "tsv", ".json": "json", ".jsonc": "json", ".xml": "xml", ".yml": "yaml",
     ".yaml": "yaml", ".html": "html", ".htm": "html", ".css": "css", ".scss": "scss",
@@ -76,9 +93,14 @@ EXT_TYPES = {
 # 单个附件上限。图片按字节卡（太大模型侧也吃不下），文本另按字符截断。
 MAX_IMAGE_BYTES = 8 * 1024 * 1024
 MAX_TEXT_BYTES = 2 * 1024 * 1024
+# PDF 放宽到 20MB：需求文档里夹几十张截图很常见，卡 2MB 会把正常 PRD 挡在门外。
+MAX_DOC_BYTES = 20 * 1024 * 1024
 # 送进模型时单个文本附件最多留多少字符：贴一整份日志进来也只会留头尾，
 # 不然一次提问就能把上下文预算烧光（与 chat.py 的历史预算同一考虑）。
 MAX_TEXT_CHARS = 20000
+# PDF 抽出来的正文按头尾保留：需求文档的「背景/目标」在开头，「验收标准」常在结尾，
+# 掐中间比只留开头有用。
+MAX_DOC_CHARS = 30000
 MAX_COUNT_PER_MESSAGE = 12
 
 # Windows 保留名：用户真拿这些名字当文件名时不许直接建目录项
@@ -131,10 +153,14 @@ def classify(content_type: str, name: str) -> Optional[str]:
     ext = Path(safe_name(name)).suffix.lower()
     if ct in IMAGE_TYPES:
         return "image"
+    if ct in DOC_TYPES:
+        return "doc"
     if ct in TEXT_TYPES and ct not in ("", "application/octet-stream"):
         return "text"
     if ext in EXT_TYPES:
-        return "image" if EXT_TYPES[ext] in IMAGE_TYPES.values() else "text"
+        if EXT_TYPES[ext] in IMAGE_TYPES.values():
+            return "image"
+        return "doc" if EXT_TYPES[ext] in DOC_TYPES.values() else "text"
     # 最后按 MIME 大类兜底（text/* 一律当文本）
     if ct.startswith("text/"):
         return "text"
@@ -152,6 +178,12 @@ def ext_for(content_type: str, name: str, kind: str) -> str:
         if ext in EXT_TYPES:
             return EXT_TYPES[ext]
         return "png"
+    if kind == "doc":
+        if ct in DOC_TYPES:
+            return DOC_TYPES[ct]
+        if ext in EXT_TYPES and EXT_TYPES[ext] in DOC_TYPES.values():
+            return EXT_TYPES[ext]
+        return "pdf"
     if ct in TEXT_TYPES and TEXT_TYPES[ct]:
         return TEXT_TYPES[ct]
     if ext in EXT_TYPES:
@@ -162,6 +194,56 @@ def ext_for(content_type: str, name: str, kind: str) -> str:
 def _looks_binary(data: bytes) -> bool:
     """NUL 字节是二进制最可靠的信号（文本附件绝不该带 NUL）。"""
     return b"\x00" in data[:4096]
+
+
+def _clip(text: str, limit: int) -> str:
+    """超长文本留头尾并如实标注 —— 让模型知道中间缺了东西，不要假装读完。"""
+    if len(text) <= limit:
+        return text
+    head = text[: int(limit * 0.7)]
+    tail = text[-int(limit * 0.3):]
+    return (f"{head}\n\n…（中间省略 {len(text) - limit} 字符，原文共 {len(text)} 字符）…\n\n{tail}")
+
+
+def extract_pdf_text(data: bytes, name: str = "") -> str:
+    """把 PDF 的文字层抽成纯文本。抽不出来就抛 AttachmentError（扫描件很常见）。
+
+    依赖 pypdf：纯 Python、无系统库，Windows 上不用折腾 poppler。缺依赖时给出
+    能照做的提示，而不是让上传接口 500。
+    """
+    try:
+        from pypdf import PdfReader
+    except ImportError:
+        raise AttachmentError(
+            "服务端缺少 pypdf，暂时无法解析 PDF。请在项目虚拟环境执行 "
+            "`pip install pypdf`（或 `pip install -r requirements.txt`）后重启服务。")
+    try:
+        reader = PdfReader(io.BytesIO(data))
+    except Exception as e:
+        raise AttachmentError(f"「{safe_name(name)}」不是可解析的 PDF：{e}")
+    if getattr(reader, "is_encrypted", False):
+        try:
+            reader.decrypt("")   # 只试空口令：加了打开密码的文档不该由我们猜
+        except Exception:
+            pass
+        if getattr(reader, "is_encrypted", False):
+            raise AttachmentError(
+                f"「{safe_name(name)}」有打开密码，无法读取。请提供无密码版本，"
+                "或把需求正文粘贴到输入框。")
+    pages: List[str] = []
+    for page in getattr(reader, "pages", []) or []:
+        try:
+            t = page.extract_text() or ""
+        except Exception:
+            t = ""
+        if t.strip():
+            pages.append(t.strip())
+    text = "\n\n".join(pages).strip()
+    if not text:
+        raise AttachmentError(
+            f"「{safe_name(name)}」里没有可提取的文字：很可能是扫描件 / 图片版 PDF。"
+            "请换文字版 PDF，或把需求正文直接粘贴到输入框（也可以把关键页截图后上传图片）。")
+    return text
 
 
 class ChatAttachmentStore:
@@ -184,9 +266,9 @@ class ChatAttachmentStore:
         if kind is None:
             raise AttachmentError(
                 f"不支持的文件类型：{safe_name(name)}。"
-                "目前只能上传图片（png/jpg/gif/webp/bmp/svg）与文本类文件"
-                "（日志、代码、配置、csv、json…）")
-        limit = MAX_IMAGE_BYTES if kind == "image" else MAX_TEXT_BYTES
+                "目前只能上传图片（png/jpg/gif/webp/bmp/svg）、PDF，以及文本类文件"
+                "（md/txt、日志、代码、配置、csv、json…）")
+        limit = {"image": MAX_IMAGE_BYTES, "doc": MAX_DOC_BYTES}.get(kind, MAX_TEXT_BYTES)
         if len(data) > limit:
             raise AttachmentError(
                 f"「{safe_name(name)}」有 {len(data) / 1048576:.1f}MB，"
@@ -195,11 +277,18 @@ class ChatAttachmentStore:
             raise AttachmentError(
                 f"「{safe_name(name)}」看起来是二进制文件（含 NUL 字节），"
                 "不能作为文本附件读入。请粘贴相关文本，或改成图片上传。")
+        # PDF 在**落盘之前**抽文字：抽不出来（扫描件 / 加密）就没必要存一份
+        # 谁也读不了的二进制，直接在这一步如实拒绝。
+        extracted = extract_pdf_text(data, name) if kind == "doc" else ""
 
         aid = f"att-{datetime.now():%Y%m%d-%H%M%S}-{uuid.uuid4().hex[:8]}"
         ext = ext_for(content_type, name, kind)
         target = self.base / f"{aid}.{ext}"
         target.write_bytes(data)
+        text_file = ""
+        if extracted:
+            text_file = f"{aid}.extracted.txt"
+            (self.base / text_file).write_text(extracted, encoding="utf-8")
 
         info = {
             "id": aid,
@@ -207,6 +296,8 @@ class ChatAttachmentStore:
             "kind": kind,
             "ext": ext,
             "size": len(data),
+            "chars": len(extracted) if kind == "doc" else 0,
+            "text_file": text_file,
             "content_type": str(content_type or "").split(";")[0].strip().lower()
                             or mimetypes.guess_type(safe_name(name))[0] or "",
             "created": _now(),
@@ -263,10 +354,22 @@ class ChatAttachmentStore:
             "id": info.get("id", ""),
             "name": info.get("name", ""),
             "kind": info.get("kind", ""),
+            "ext": info.get("ext", ""),
             "size": int(info.get("size") or 0),
+            "chars": int(info.get("chars") or 0),
             "content_type": info.get("content_type", ""),
             "url": f"/attachments/{info.get('file', '')}",
         }
+
+    def preview(self, info: Dict, limit: int = 800) -> str:
+        """抽取后的正文开头（给界面「我传的文档被读成了什么」一个可核对的窗口）。"""
+        text = self.text_payload(info) or ""
+        if not text:
+            return ""
+        # text_payload 带了「### 附件…」头，预览从正文第一行开始更直观
+        body = text.split("\n", 1)[1] if "\n" in text else text
+        body = body.strip()
+        return body[:limit] + ("…" if len(body) > limit else "")
 
     # --------------------------------------------------- 送给模型的两种形态
     def image_payload(self, info: Dict) -> Optional[Dict]:
@@ -291,8 +394,28 @@ class ChatAttachmentStore:
                 "bytes": len(raw)}
 
     def text_payload(self, info: Dict) -> Optional[str]:
-        """文本 → 带来源标注的一段文字（超长留头尾，并如实说明截断了）。"""
-        if info.get("kind") != "text":
+        """文本 → 带来源标注的一段文字（超长留头尾，并如实说明截断了）。
+
+        PDF（kind=doc）走上传时抽好的缓存，不在这里重复解析：一份 200 页的
+        PRD 重新抽一次要好几秒，而一次需求要跑 4+ 次模型调用。
+        """
+        kind = str(info.get("kind") or "")
+        name = info.get("name", "附件")
+        if kind == "doc":
+            text_file = str(info.get("text_file") or "")
+            if not text_file:
+                return None
+            path = self.base / Path(text_file).name
+            if not path.is_file():
+                return None
+            try:
+                raw = path.read_text(encoding="utf-8")
+            except Exception:
+                return None
+            body = _clip(raw, MAX_DOC_CHARS)
+            return (f"### 附件「{name}」（用户上传的 PDF，抽取正文 {len(raw)} 字符）\n"
+                    f"{body}")
+        if kind != "text":
             return None
         path = Path(str(info.get("path") or ""))
         if not path.is_file():
@@ -308,13 +431,8 @@ class ChatAttachmentStore:
                 return None
         if raw is None:
             return None
-        name = info.get("name", "附件")
-        if len(raw) > MAX_TEXT_CHARS:
-            head = raw[: int(MAX_TEXT_CHARS * 0.7)]
-            tail = raw[-int(MAX_TEXT_CHARS * 0.3):]
-            raw = (f"{head}\n\n…（中间省略 {len(raw) - MAX_TEXT_CHARS} 字符，"
-                   f"原文共 {len(raw)} 字符）…\n\n{tail}")
-        return f"### 附件「{name}」（用户上传，共 {info.get('size') or 0} 字节）\n{raw}"
+        body = _clip(raw, MAX_TEXT_CHARS)
+        return f"### 附件「{name}」（用户上传，共 {info.get('size') or 0} 字节）\n{body}"
 
 
 def images_for(store: ChatAttachmentStore, infos: List[Dict]) -> List[Dict]:
@@ -341,6 +459,8 @@ def attach_note(infos: List[Dict]) -> str:
     for i in infos:
         if i.get("kind") == "image":
             lines.append(f"- 图片「{i.get('name')}」已作为图像内容一并发送给你")
+        elif i.get("kind") == "doc":
+            lines.append(f"- PDF「{i.get('name')}」的文字已抽取，正文见下方「用户附件」一节")
         else:
             lines.append(f"- 文本「{i.get('name')}」的完整内容见下方「用户附件」一节")
     return ("## 本轮用户附件（共 %d 个）\n" % len(infos)) + "\n".join(lines) + "\n"
