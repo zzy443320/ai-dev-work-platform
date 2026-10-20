@@ -24,7 +24,7 @@ import { useArtifacts } from '../composables/useArtifacts.js'
 import ParamLayout from '../components/ParamLayout.vue'
 
 const {
-  reqDoc, reqSource, reqScope, reqStack, reqCodeContext, reqPlanNotes, reqDeliver,
+  reqDoc, reqFigma, reqScope, reqCodeContext, reqPlanNotes, reqDeliver,
   planResult, restorePlan, running, runTask,
   reqAtts, reqAttUploading, uploadReqAttachments, removeReqAttachment,
   REQ_ATT_ACCEPT, REQ_ATT_MAX,
@@ -36,7 +36,7 @@ const { openArtifact } = useArtifacts()
 
 // schema 里的 key 是 reqNotes，本页的 ref 叫 reqPlanNotes（避开 reqdev 的同名项）
 const params = useParamModel({
-  reqDoc, reqSource, reqScope, reqStack, reqCodeContext, reqNotes: reqPlanNotes,
+  reqDoc, reqFigma, reqScope, reqCodeContext, reqNotes: reqPlanNotes,
   reqDeliver,
 })
 
@@ -119,7 +119,7 @@ const showStages = computed(() => running.value || hasPlan.value)
 
 /** 把需求原文与约定带到 Figma 转代码页（不传分诊结论：那是给人看的） */
 function goDesign() {
-  send({ requirement: reqDoc.value, notes: reqPlanNotes.value, source: reqSource.value })
+  send({ requirement: reqDoc.value, notes: reqPlanNotes.value, source: reqFigma.value.trim() })
   if (window.switchTab) window.switchTab('reqdev')
   toast('已带上需求，去「Figma 转代码」填设计稿即可', 'ok')
 }
@@ -148,7 +148,8 @@ onMounted(restorePlan)
           需求开发 · 从需求到可采纳改动
         </h2>
         <span class="rq-v-meta mono" v-if="hasPlan">
-          {{ planResult.repo_file_count ? `仓库 ${planResult.repo_file_count} 个文件` : '' }}
+          {{ [planResult.repo_file_count ? `仓库 ${planResult.repo_file_count} 个文件` : '',
+              planResult.framework ? `技术栈 ${planResult.framework}` : '技术栈按仓库自动识别'].filter(Boolean).join(' · ') }}
         </span>
       </div>
 
@@ -305,7 +306,7 @@ onMounted(restorePlan)
         <span class="rq-next-note" v-else-if="hasPlan && deliver !== 'triage'">本次没有可采纳改动：看上面的自检与「需要确认」</span>
       </div>
 
-      <div class="info-note">「自动完成」会走完整四步：<br>① 需求分诊 → 判变更类型、要不要设计稿；<br>② 定位代码 → 在仓库里找真实文件与改动锚点；<br>③ 生成改动 → 逐文件产出 find/replace，服务端预演匹配通过才收下；<br>④ 自检 → 复核需求覆盖度，列出没做到的地方。<br>需要设计稿时给设计说明并支持一键带到「Figma 转代码」；产出物人工采纳才写工作区。</div>
+      <div class="info-note">「自动完成」会走完整四步：<br>① 需求分诊 → 判变更类型、要不要设计稿；技术栈由 AI 读仓库依赖清单自动识别，不用手选；<br>② 定位代码 → 在仓库里找真实文件与改动锚点；<br>③ 生成改动 → 逐文件产出 find/replace，服务端预演匹配通过才收下；<br>④ 自检 → 复核需求覆盖度，列出没做到的地方。<br>填了 Figma 链接会自动拉取设计稿作为视觉依据（拉取失败不阻断，记进「需要确认」）；需要设计稿时也支持一键带到「Figma 转代码」；产出物人工采纳才写工作区。</div>
     </section>
   </ParamLayout>
 </template>

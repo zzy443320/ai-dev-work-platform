@@ -99,6 +99,11 @@ class ArtifactStore(JsonRecordStore):
                 # 需求开发读过的附件清单（名称 / 类型 / 抽取字符数）：回看产出物时
                 # 要说得清「AI 当时读的是哪一版需求文档」。
                 "attachments": payload.get("attachments", []),
+                # 需求开发的技术栈自动识别结果与 Figma 链接：回看时说得清
+                # 「AI 按什么栈改的」「设计稿是哪一份」。
+                "framework": payload.get("framework", ""),
+                "stack_note": payload.get("stack_note", ""),
+                "figma_url": payload.get("figma_url", ""),
                 "error": payload.get("error", ""),
                 "raw": payload.get("raw", ""),
                 # 长任务作业的协作上下文（角色卡、工作项、复核结论）；其他类型为空

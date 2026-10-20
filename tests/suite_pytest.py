@@ -65,6 +65,7 @@ CONVERGENCE = [
     "check_ai_call_cap.py",       # 单次模型调用总时长上限（推理模型不许拖十几分钟）
     "check_req_pipeline.py",      # 需求开发四阶段流水线：重试/gaps/已存在新文件/只出方案
     "check_req_attachments.py",   # 需求文档附件：PDF 文字层抽取 / 假 PDF 与扫描件拒绝 / 合并口径
+    "check_req_stack_detect.py",  # 需求开发去死板三件套：技术栈自动识别 / scope 生效 / 多动作循环
     "ticket_battery.py",          # 合成工单跑道：每条假工单一类失败，且都不得零交付
 ]
 

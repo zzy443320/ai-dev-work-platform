@@ -272,7 +272,9 @@ async def tasks_run(req: Request):
         "source": str(body.get("source") or ""),
         "scope": str(body.get("scope") or ""),
         "requirement": str(body.get("requirement") or ""),
-        "framework": str(body.get("framework") or "React + TypeScript"),
+        # 技术栈不再默认 React：留空 = 由 run_req 读仓库自动识别（scripts/stack_detect.py）。
+        # reqdev / apidebug / codetest 的前端仍显式传自己的选择，不受影响。
+        "framework": str(body.get("framework") or ""),
         "design": str(body.get("design") or ""),
         "repo_context": str(body.get("repo_context") or ""),
         "api_doc": str(body.get("api_doc") or ""),
@@ -303,6 +305,29 @@ async def tasks_run(req: Request):
                 ctx["requirement_doc"] = _req_doc_with_attachments(
                     ctx["requirement_doc"], atts, store)
                 ctx["attachments"] = [store.public(a) for a in atts]
+
+        # Figma 设计稿链接（可选）：填了就**运行时自动拉稿**，用户不用先去
+        # 「Figma 转代码」页手动取稿再跑一遍 —— 这是 Trae 式「给链接就干活」的一半。
+        # 拉取失败不阻断运行：错误记进 ctx，由 run_req 写进自检的「需要确认」。
+        figma_url = str(body.get("figma_url") or "").strip()
+        if figma_url:
+            ctx["figma_url"] = figma_url
+            token = str((s.get("figma") or {}).get("token") or "").strip()
+
+            def _pull_figma():
+                parse_figma_url(figma_url)
+                if token:
+                    return FigmaClient(token).fetch(figma_url, "")
+                return _figma_fetch_via_browser(figma_url, "")
+
+            try:
+                data = await run_in_threadpool(_pull_figma)
+                ctx["design"] = str(data.get("tree") or "")
+                ctx["figma_source"] = str(data.get("source") or "")
+            except FigmaError as e:
+                ctx["figma_error"] = str(e)
+            except Exception as e:
+                ctx["figma_error"] = f"浏览器通道失败: {e}"
 
     # 代码测试：从仓库读目标文件内容
     if kind == "codetest":
@@ -404,6 +429,8 @@ async def tasks_run(req: Request):
                 "verify": payload.get("verify", []),
                 "unresolved": payload.get("unresolved", []),
                 "deliver": payload.get("deliver", ""),
+                "framework": payload.get("framework", ""),
+                "stack_note": payload.get("stack_note", ""),
                 "summary": payload.get("summary", ""),
                 "attachments": payload.get("attachments") or [],
             }}

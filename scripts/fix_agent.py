@@ -26,7 +26,7 @@ import re
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Set, Tuple
 
 from . import usage
 from .chat import RepoReader, _clip, _strip_dsml, _tool_label
@@ -262,7 +262,7 @@ def parse_action(text: str) -> Optional[Dict]:
             "arguments": args if isinstance(args, dict) else {}}
 
 
-def parse_embedded_actions(text: str) -> List[Dict]:
+def parse_embedded_actions(text: str, known: Optional[Set[str]] = None) -> List[Dict]:
     """从「正文 + 夹带 action JSON」的回复里捞出**全部**工具调用（按出现顺序）。
 
     ⭐ 契约要求整条回复只有一个 JSON，但模型真实行为是「正文在前、动作在后」，而且
@@ -281,10 +281,13 @@ def parse_embedded_actions(text: str) -> List[Dict]:
 
     另一起事故（空块占位）见调用点注释：只认工具调用，不认识 verdict / give_up ——
     这两个必须整条回复表意清楚才算数，不能从正文里「猜」出来。
+
+    `known`（可选）：可调用的工具名集合；缺省是缺陷修复 Agent 的内建白名单。
+    任务模块（需求开发等）传自己的可用工具名（含 MCP 工具），同一份解析逻辑复用。
     """
     t = _strip_dsml(text or "")
-    known = {"repo_list", "repo_read", "repo_grep", "repro_add", "api_probe",
-             "check_run", "browser_look"}
+    known = known or {"repo_list", "repo_read", "repo_grep", "repro_add", "api_probe",
+                      "check_run", "browser_look"}
     out: List[Dict] = []
     seen = set()
     for m in re.finditer(r"\{", t):

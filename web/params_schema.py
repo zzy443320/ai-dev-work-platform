@@ -42,9 +42,11 @@ GROUPS = (CORE, COMMON, ADVANCED)
 
 GROUP_LABELS = {CORE: "核心", COMMON: "常用", ADVANCED: "高级"}
 
-#: 技术栈下拉项。需求开发 / Figma 转代码 / 接口联调 / 长任务作业共用同一份，
-#: 与旧版 index.html:377 以及 frontend/src/composables/useTeam.js 的
-#: TEAM_FRAMEWORKS 对齐（迁移完成后以本表为唯一来源）。
+#: 技术栈下拉项。Figma 转代码 / 接口联调 / 长任务作业共用同一份，与旧版
+#: index.html:377 以及 frontend/src/composables/useTeam.js 的 TEAM_FRAMEWORKS
+#: 对齐（迁移完成后以本表为唯一来源）。
+#: ⚠ 需求开发（req）2026-10-20 起不再手选技术栈：由后端读仓库自动识别
+#: （scripts/stack_detect.py），用户手选的错栈会误导整个流水线。
 FRAMEWORKS = [
     "React + TypeScript", "Vue 3 + TypeScript", "React + JavaScript",
     "Vue 2 + JavaScript", "小程序原生", "uni-app",
@@ -130,12 +132,15 @@ MODULES: dict[str, dict] = {
                placeholder="鉴权方式、错误码约定、埋点要求等"),
         ],
     },
-    # 需求开发（2026-10-19 拆出来）：需求原文 → 变更类型判定 + 影响面 + 方案。
-    # 设计稿只是「需要新页面」那一路的输入，所以取稿/还原代码留在下面的 reqdev。
+    # 需求开发（2026-10-19 拆出来；2026-10-20 收敛成 Trae 式输入）：
+    # 核心输入只剩三样 —— 需求内容 / Figma 链接（可选）/ 自由文本要求。
+    # 技术栈由 AI 读仓库自动识别（scripts/stack_detect.py），不再让用户手选；
+    # 需求来源并入自由文本。设计稿取稿在运行时自动做，不再依赖隔壁 reqdev。
     "req": {
         "title": "需求参数",
         "action": "需求参数",
-        "hint": "需求原文 / 需求文档附件决定判定质量；影响范围留空则由 AI 按需求自行圈定。",
+        "hint": "需求文档决定判定质量；技术栈由 AI 读仓库自动识别，无需选择。"
+                "影响范围留空则由 AI 按需求自行圈定。",
         "fields": [
             _f("reqDoc", "rq-doc", "需求文档 / 需求原文", "textarea",
                default="", rows=10, optional=True,
@@ -143,28 +148,28 @@ MODULES: dict[str, dict] = {
                            "md / txt / pdf：要做什么、给谁用、在什么场景下用",
                hint="也支持上传附件（md / txt / pdf，PDF 自动抽取正文）；"
                     "两者都会作为需求依据，只改接口字段/数据映射的需求同样适用"),
+            _f("reqFigma", "rq-figma", "Figma 设计稿链接", "text",
+               default="", optional=True,
+               placeholder="https://www.figma.com/design/xxxx/文件名?node-id=12-34",
+               hint="可选。填了会在运行时自动拉取设计稿结构作为视觉依据；"
+                    "拉取失败不阻断运行，会记录在自检的「需要确认」里"),
+            _f("reqNotes", "rq-notes", "具体要求 / 注意事项", "textarea",
+               default="", rows=4, optional=True,
+               placeholder="交互细节、不许动的接口、兼容性要求、需求来源、"
+                           "想参考的既有页面……想到什么写什么，留空也行"),
             _f("reqDeliver", "rq-deliver", "交付方式", "select",
-               default="auto",
+               group=ADVANCED, default="auto",
                options=[{"value": "auto", "label": "自动完成（能改就直接改）"},
                         {"value": "triage", "label": "只出方案（不动代码）"},
                         {"value": "code", "label": "强制出代码（缺设计稿也先实现）"}],
                hint="自动完成会走「分诊 → 定位代码 → 生成改动 → 自检」四步，产出可采纳补丁"),
-            _f("reqSource", "rq-source", "需求来源", "text",
-               group=COMMON, default="", optional=True,
-               placeholder="ONES 需求单 / 文档链接 / 产品负责人",
-               hint="只用于追溯，不参与判定"),
             _f("reqScope", "rq-scope", "影响范围", "text",
-               group=COMMON, default="", optional=True,
+               group=ADVANCED, default="", optional=True,
                placeholder="src/views/order/** , src/api/**",
                hint="glob，逗号分隔；留空由 AI 判断"),
-            _f("reqStack", "rq-stack", "技术栈", "select",
-               group=COMMON, default=FRAMEWORKS[0], options=FRAMEWORKS),
             _f("reqCodeContext", "rq-context", "现有代码参考", "textarea",
-               group=COMMON, default="", rows=5, optional=True,
+               group=ADVANCED, default="", rows=5, optional=True,
                hint="粘贴相关页面/请求封装，判定与方案会贴着它写"),
-            _f("reqNotes", "rq-notes", "其他约定", "text",
-               group=ADVANCED, default="", optional=True,
-               placeholder="不许动的接口、埋点、兼容性要求等"),
         ],
     },
     "reqdev": {

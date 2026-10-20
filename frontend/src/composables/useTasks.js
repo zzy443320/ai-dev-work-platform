@@ -104,10 +104,11 @@ export function useTasks() {
   // ---- req 需求开发表单 ----
   // 字段 key 与 web/params_schema.py 的 "req" 模块一一对应；reqNotes 在这个模块里
   // 叫 reqPlanNotes，避免和上面的 reqdev.reqNotes（生成参数-其他约定）撞名。
+  // 2026-10-20 收敛：技术栈由后端读仓库自动识别（不再手选）、需求来源并入自由
+  // 文本 —— 核心输入只剩 需求内容 / Figma 链接 / 注意事项。
   const reqDoc = ref('')
-  const reqSource = ref('')
+  const reqFigma = ref('')
   const reqScope = ref('')
-  const reqStack = ref(schemaDefault('req', 'reqStack', 'React + TypeScript'))
   const reqCodeContext = ref('')
   const reqPlanNotes = ref('')
   /** 交付方式：auto=能改就改（默认，把需求做完）；triage=只出方案；code=缺设计稿也出代码 */
@@ -217,9 +218,9 @@ export function useTasks() {
         // 附件正文由服务端拼进需求（PDF 在上传时就抽好了），这里只传引用；
         // 认不出的 id 服务端会静默丢弃，不会因为一个过期附件拦住整单。
         attachment_ids: reqAtts.value.map((a) => a.id),
-        source: reqSource.value.trim(),
+        // Figma 链接（可选）：后端运行时自动拉稿，失败会记进自检「需要确认」
+        figma_url: reqFigma.value.trim(),
         scope: reqScope.value.trim(),
-        framework: reqStack.value,
         repo_context: reqCodeContext.value,
         notes: reqPlanNotes.value.trim(),
         deliver: reqDeliver.value,
@@ -317,6 +318,8 @@ export function useTasks() {
         verify: d.verify || [],
         unresolved: d.unresolved || [],
         deliver: d.deliver || '',
+        framework: d.framework || '',
+        stack_note: d.stack_note || '',
         summary: d.summary || '',
       }
     } catch (e) {
@@ -331,7 +334,7 @@ export function useTasks() {
     // reqdev
     figmaUrl, figmaToken, reqFramework, reqDesc, reqContext, reqNotes,
     // req 需求开发
-    reqDoc, reqSource, reqScope, reqStack, reqCodeContext, reqPlanNotes, reqDeliver,
+    reqDoc, reqFigma, reqScope, reqCodeContext, reqPlanNotes, reqDeliver,
     planResult, restorePlan,
     reqAtts, reqAttUploading, uploadReqAttachments, removeReqAttachment,
     REQ_ATT_ACCEPT, REQ_ATT_MAX,

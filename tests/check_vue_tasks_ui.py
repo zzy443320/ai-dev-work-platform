@@ -108,8 +108,9 @@ def start_server(tmp: Path):
 
 # 一个页面里四个任务页签的关键控件（id 与旧版一致；req 是 2026-10-19 新增）
 PANES = {
-    # 需求开发（新建）：需求原文 → 四阶段流水线（分诊/定位/改动/自检）
-    "req": ["pane-req", "rq-doc", "rq-deliver", "rq-source", "rq-scope", "rq-stack",
+    # 需求开发：2026-10-20 收敛成 Trae 式输入 —— 技术栈改自动识别（rq-stack 删）、
+    # 需求来源并入自由文本（rq-source 删）、新增 Figma 链接（rq-figma）
+    "req": ["pane-req", "rq-doc", "rq-deliver", "rq-figma", "rq-scope",
             "rq-context", "rq-notes", "btn-req", "rq-doc-echo", "rq-stages",
             "rq-verdict", "rq-type", "rq-design", "rq-files", "rq-check",
             "btn-rq-att", "rq-att-input"],

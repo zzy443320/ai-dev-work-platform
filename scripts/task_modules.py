@@ -22,6 +22,7 @@ from typing import Dict, List, Optional
 
 from .mcp_client import MAX_TOOL_TEXT
 from .analyzer import _GREP_EXCLUDES  # 全仓 grep 的排除口径只维护一份  # noqa: F401 —— 工具结果截断上限（曾漏 import 致 NameError）
+from .stack_detect import detect_stack
 
 MAX_FILE_CHARS = 20000
 MAX_FILES = 8
@@ -65,12 +66,18 @@ def run_task(kind: str, ai, ctx: Dict, skills_text: str = "",
 
 TOOL_LOOP_RULES = (
     "\n\n## 工具调用规则\n"
-    "你可以调用上方列出的工具来获取真实信息（最多 <<max_rounds>> 轮）。\n"
+    "你可以调用上方列出的工具来获取真实信息（最多 <<max_rounds>> 轮；"
+    "每一轮回复里可以夹带 1-3 个工具调用 JSON）。\n"
     "需要取数据时只输出这个 JSON：{\"action\": \"call\", \"tool\": \"工具名\", "
     "\"arguments\": {参数}}\n"
+    "要一次读多个文件/搜多个关键词时，把多个调用 JSON 写在同一条回复里，别浪费轮次。\n"
     "工具结果会以 JSON 回给你；信息足够后，输出最终答案——必须去掉 action 字段，"
     "直接输出任务要求的完整 JSON（summary/plan/files/...）。不要编造工具返回的内容。"
 )
+
+# 一轮最多执行多少个动作（与 fix_agent.MAX_ACTIONS_PER_REPLY 同口径）；
+# 模型把多个调用夹在正文里时按顺序执行前 N 个，剩下的留到下一轮。
+MAX_ACTIONS_PER_REPLY = 3
 
 
 def _complete_with_tools(ai, system: str, prompt: str,
@@ -82,6 +89,12 @@ def _complete_with_tools(ai, system: str, prompt: str,
 
     require_files=False 用于「中间阶段」（分诊 / 定位 / 复核）：这些阶段的产出
     本来就没有 files 字段，不能按最终交付的同一条规则去催模型补文件。
+
+    2026-10-20 升级为多动作循环：模型的回复常常是「正文 + 夹带若干 action JSON」
+    （缺陷修复那边 215890 已经踩过这坑，见 fix_agent.parse_embedded_actions）。
+    这里用 on_delta 流式回调攒下模型原文，夹带的**全部**工具调用都能按顺序捞出来，
+    一轮最多执行 MAX_ACTIONS_PER_REPLY 个 —— 旧版只认「整条回复就是一个 JSON」，
+    第二个动作起全部静默丢失，白白烧轮次。
     """
     # 推理模型会拿 hidden reasoning tokens 抢 max_tokens 配额，给默认 4000 时
     # content 字段可能整个缺失（finish_reason=length）；统一留足余量。
@@ -94,33 +107,53 @@ def _complete_with_tools(ai, system: str, prompt: str,
           "parameters": t.get("inputSchema") or {"type": "object"}} for t in tool_specs],
         ensure_ascii=False, indent=1)
     rules = TOOL_LOOP_RULES.replace("<<max_rounds>>", str(max_rounds))
+    known_tools = {t["name"] for t in tool_specs}
     history: List[str] = []
     for _ in range(max_rounds):
         convo = prompt + "\n\n" + tool_block + rules
         if history:
             convo += "\n\n## 历史工具调用记录\n" + "\n".join(history)
-        res = ai.complete(convo, system, max_tokens=budget)
+        # on_delta 攒原文：_extract_json 只回第一个 JSON 对象，夹带动作必须从原文捞
+        raw_parts: List[str] = []
+
+        def _capture(kind: str, text: str) -> None:
+            if kind == "content":
+                raw_parts.append(text)
+
+        res = ai.complete(convo, system, max_tokens=budget, on_delta=_capture)
         if res.get("error") and not res.get("files"):
             return res
         if res.get("action") == "call":
-            tool_name = str(res.get("tool") or "")
-            args = res.get("arguments") if isinstance(res.get("arguments"), dict) else {}
-            spec = next((t for t in tool_specs if t["name"] == tool_name), None)
-            if spec is None:
+            from .fix_agent import parse_embedded_actions
+            calls = parse_embedded_actions("".join(raw_parts), known=known_tools)
+            if not calls:
+                # 流式没拿到原文（mock / 非流式降级）：退回旧的单动作口径
+                tool_name = str(res.get("tool") or "")
+                args = res.get("arguments") if isinstance(res.get("arguments"), dict) else {}
+                if tool_name:
+                    calls = [{"tool": tool_name, "arguments": args}]
+            executed = 0
+            for call in calls[:MAX_ACTIONS_PER_REPLY]:
+                tool_name = str(call.get("tool") or "")
+                args = call.get("arguments") if isinstance(call.get("arguments"), dict) else {}
+                spec = next((t for t in tool_specs if t["name"] == tool_name), None)
+                if spec is None:
+                    history.append(json.dumps({
+                        "call": tool_name,
+                        "result": f"[错误] 工具 {tool_name!r} 不在可用列表里，只能用列出的工具",
+                    }, ensure_ascii=False))
+                    continue
+                try:
+                    result_text = tool_executor(tool_name, args)
+                except Exception as e:
+                    result_text = f"[工具执行异常] {e}"
                 history.append(json.dumps({
-                    "call": tool_name,
-                    "result": f"[错误] 工具 {tool_name!r} 不在可用列表里，只能用列出的工具",
+                    "call": tool_name, "arguments": args,
+                    "result": str(result_text)[:MAX_TOOL_TEXT],
                 }, ensure_ascii=False))
+                executed += 1
+            if calls:
                 continue
-            try:
-                result_text = tool_executor(tool_name, args)
-            except Exception as e:
-                result_text = f"[工具执行异常] {e}"
-            history.append(json.dumps({
-                "call": tool_name, "arguments": args,
-                "result": str(result_text)[:MAX_TOOL_TEXT],
-            }, ensure_ascii=False))
-            continue
         # 没有 action 字段 = 最终答案
         res.pop("action", None)
         if require_files and not res.get("files"):
@@ -330,12 +363,27 @@ def _repo_index(files: List[str], max_dirs: int = 90) -> str:
     return head + "\n" + "\n".join(f"{k}  {n}" for k, n in rows)
 
 
-def _candidate_files(root: str, terms, limit: int = 80) -> List[str]:
+def _scope_globs(scope: str) -> List[str]:
+    """「影响范围」文本 → glob 列表（逗号/换行分隔，反斜杠归一成斜杠）。"""
+    out = []
+    for seg in str(scope or "").replace("，", ",").replace("\n", ",").split(","):
+        g = seg.strip().replace("\\", "/").strip("/")
+        if g:
+            out.append(g)
+    return list(dict.fromkeys(out))
+
+
+def _candidate_files(root: str, terms, limit: int = 80,
+                     scope: str = "") -> List[str]:
     """用需求里的关键词**一次** grep 出候选文件清单。
 
     这一步在服务端做，比让模型逐词调 repo_grep 便宜一个数量级（一次 git 进程 vs
     每词一次全树扫描），而且能把模型的注意力直接放到 10~80 个文件上。
     多个 -e 一次扫完的写法与 analyzer._grep_hits 同源。
+
+    scope（可选）：用户圈定的影响范围 glob。命中清单会被过滤到范围内 —— 旧版
+    scope 只进提示词，服务端照样把全仓候选端给模型，「圈了范围」形同虚设。
+    过滤后为空时**保留未过滤结果**：一个写错的范围不该让整单跑空。
     """
     root = str(root or "").strip()
     kws = [str(t).strip() for t in (terms or [])
@@ -355,7 +403,15 @@ def _candidate_files(root: str, terms, limit: int = 80) -> List[str]:
         return []
     out = [l.strip().replace("\\", "/") for l in
            r.stdout.decode("utf-8", "replace").splitlines() if l.strip()]
-    return list(dict.fromkeys(out))[:limit]
+    out = list(dict.fromkeys(out))
+    globs = _scope_globs(scope)
+    if globs and out:
+        import fnmatch
+        kept = [f for f in out
+                if any(fnmatch.fnmatch(f, g) for g in globs)]
+        if kept:
+            out = kept
+    return out[:limit]
 
 
 def _req_reader(repo_root: str):
@@ -467,6 +523,30 @@ def _validate_impacts(v, repo_files: List[str]):
     return out, corrected
 
 
+def _stack_block(ctx: Dict) -> str:
+    """提示词里的「技术栈」段：自动识别结果 + 依据，识别不出就明说并让模型
+    以仓库真实代码为准 —— 绝不兜底成某个默认栈（猜错比不猜更害人）。"""
+    fw = str(ctx.get("framework") or "").strip()
+    note = str(ctx.get("stack_note") or "").strip()
+    if not fw and not note:
+        return ("未识别（仓库里没有可读的依赖清单）。"
+                "请以仓库里实际读到的代码为准判断技术栈与组件库，不要按默认栈臆断。")
+    line = fw or "（见依据）"
+    return line + (f"\n（识别依据：{note}）" if note else "")
+
+
+def _design_block(ctx: Dict, limit: int = 8000) -> str:
+    """提示词里的「Figma 设计稿」段：有就给结构，没有返回空串。"""
+    design = str(ctx.get("design") or "").strip()
+    if not design:
+        return ""
+    src = str(ctx.get("figma_source") or "").strip()
+    head = "## Figma 设计稿结构（缩进表示层级）"
+    if src == "browser":
+        head += "（浏览器通道，页面可见文本，无图层尺寸信息）"
+    return f"{head}\n{design[:limit]}"
+
+
 def _req_triage(ai, ctx: Dict, doc: str, skills_text: str, repo_files: List[str],
                 tools, executor) -> Dict:
     parts = [f"## 需求原文\n{doc[:12000]}"]
@@ -474,7 +554,10 @@ def _req_triage(ai, ctx: Dict, doc: str, skills_text: str, repo_files: List[str]
         parts.append(f"## 需求来源\n{ctx['source'].strip()[:500]}")
     if (ctx.get("scope") or "").strip():
         parts.append(f"## 影响范围（用户圈定）\n{ctx['scope'].strip()[:500]}")
-    parts.append(f"## 技术栈\n{ctx.get('framework', 'React + TypeScript')}")
+    parts.append(f"## 技术栈（AI 读仓库自动识别）\n{_stack_block(ctx)}")
+    design = _design_block(ctx)
+    if design:
+        parts.append(design + "\n（有设计稿时：视觉相关的改动以设计稿为准；分诊仍要如实判定 change_type。）")
     if (ctx.get("repo_context") or "").strip():
         parts.append(f"## 现有代码参考（保持风格一致）\n{ctx['repo_context'][:8000]}")
     if (ctx.get("notes") or "").strip():
@@ -507,7 +590,10 @@ def _req_locate(ai, ctx: Dict, doc: str, tri: Dict, verdict: Dict,
         "plan": str(tri.get("plan") or "")[:2000],
         "impacts": verdict.get("impacts", []),
     }, ensure_ascii=False, indent=1))
-    parts.append(f"## 技术栈\n{ctx.get('framework', 'React + TypeScript')}")
+    parts.append(f"## 技术栈（AI 读仓库自动识别）\n{_stack_block(ctx)}")
+    design = _design_block(ctx, limit=6000)
+    if design:
+        parts.append(design + "\n（涉及视觉/新建页面时，按设计稿结构找对应的组件与样式落点。）")
     if (ctx.get("scope") or "").strip():
         parts.append(f"## 用户圈定的范围\n{ctx['scope'].strip()[:500]}")
     if (ctx.get("notes") or "").strip():
@@ -737,10 +823,13 @@ def _req_edit_one(ai, path: str, content: str, anchors: List[Dict], why: str,
 
 
 def _req_new_one(ai, path: str, why: str, doc: str, framework: str,
-                 notes: str, skills_text: str):
+                 notes: str, skills_text: str, design: str = ""):
     prompt = (f"## 需求\n{doc[:6000]}\n\n## 要新建的文件\n{path}\n"
               f"## 为什么需要它\n{why or '（定位阶段未说明）'}\n"
               f"## 技术栈\n{framework}\n")
+    design = (design or "").strip()
+    if design:
+        prompt += f"\n## Figma 设计稿结构（缩进表示层级，视觉实现以它为准）\n{design[:6000]}\n"
     if notes.strip():
         prompt += f"\n## 约定\n{notes[:1500]}"
     res = ai.complete(prompt, _with_skills(_REQ_NEWFILE_SYSTEM, skills_text),
@@ -849,7 +938,6 @@ def run_req(ai, ctx: Dict, skills_text: str = "",
     deliver = str(ctx.get("deliver") or "auto").strip().lower()
     if deliver not in REQ_DELIVER:
         deliver = "auto"
-    framework = str(ctx.get("framework") or "React + TypeScript")
     notes = str(ctx.get("notes") or "")
     t0 = time.monotonic()
     stage_map: Dict[str, Dict] = {}
@@ -870,6 +958,17 @@ def run_req(ai, ctx: Dict, skills_text: str = "",
     reader = _req_reader(repo_root)
     tools, executor = _req_toolkit(reader, tool_specs, tool_executor)
 
+    # 技术栈自动识别：用户配置了仓库，就不该再让用户手选技术栈。用户显式传了
+    # framework（API 调用方 / 历史参数）时尊重用户，否则读依赖清单推断。
+    framework = str(ctx.get("framework") or "").strip()
+    stack_note = str(ctx.get("stack_note") or "").strip()
+    if not framework:
+        det = detect_stack(repo_root)
+        framework = det.get("framework", "")
+        stack_note = det.get("summary", "") or "；".join(det.get("sources") or [])
+        ctx["framework"], ctx["stack_note"] = framework, stack_note
+    stack_text = _stack_block(ctx)
+
     # ------------------------------------------------------------ 1. 分诊
     emit("triage", "running", "判定变更类型、是否需要设计稿")
     tri = _req_triage(ai, ctx, doc, skills_text, repo_files, tools, executor)
@@ -880,12 +979,14 @@ def run_req(ai, ctx: Dict, skills_text: str = "",
         out.update(verdict)
         out.update({"stages": _req_stage_rows(stage_map), "deliver": deliver,
                     "gaps": [f"分诊调用失败：{tri.get('error')}"], "verify": [],
+                    "framework": framework, "stack_note": stack_note,
                     "selfcheck": {"verdict": "blocked", "problems": [str(tri.get("error"))],
                                   "followups": [], "checklist": []},
                     "unresolved": [], "targets": [], "new_files": []})
         return out
     emit("triage", "done",
-         f"{verdict['change_type_label']} · {'需要设计稿' if verdict['needs_design'] else '不需要设计稿'}")
+         f"{verdict['change_type_label']} · {'需要设计稿' if verdict['needs_design'] else '不需要设计稿'}"
+         + (f" · 技术栈 {framework}" if framework else " · 技术栈未识别，按仓库实际代码为准"))
 
     targets: List[Dict] = []
     new_files: List[Dict] = []
@@ -902,7 +1003,8 @@ def run_req(ai, ctx: Dict, skills_text: str = "",
     else:
         # -------------------------------------------------------- 2. 定位
         emit("locate", "running", "在仓库里定位真实文件与锚点")
-        candidates = _candidate_files(repo_root, verdict.get("search_terms") or [])
+        candidates = _candidate_files(repo_root, verdict.get("search_terms") or [],
+                                      scope=str(ctx.get("scope") or ""))
         loc = _req_locate(ai, ctx, doc, tri, verdict, repo_files, candidates,
                           tools, executor, skills_text)
         targets, new_files = loc["targets"], loc["new_files"]
@@ -930,7 +1032,7 @@ def run_req(ai, ctx: Dict, skills_text: str = "",
                     emit("implement", "running", f"{done_n}/{total} {path}")
                     continue
                 entry, err = _req_edit_one(ai, path, content, t.get("anchors") or [],
-                                           t.get("why") or "", doc, framework, notes,
+                                           t.get("why") or "", doc, stack_text, notes,
                                            skills_text)
                 if entry:
                     entries.append(entry)
@@ -940,7 +1042,8 @@ def run_req(ai, ctx: Dict, skills_text: str = "",
                 emit("implement", "running", f"{done_n}/{total} {path}")
             for n in new_files:
                 entry, err = _req_new_one(ai, n["path"], n.get("why") or "", doc,
-                                          framework, notes, skills_text)
+                                          stack_text, notes, skills_text,
+                                          design=str(ctx.get("design") or ""))
                 if entry:
                     entries.append(entry)
                 else:
@@ -964,6 +1067,11 @@ def run_req(ai, ctx: Dict, skills_text: str = "",
             emit("selfcheck", "done", f"{label}" + (f" · {check['problems'][0]}" if check["problems"] else ""))
 
     # -------------------------------------------------------------- 组装
+    # Figma 拉取失败是「输入缺了一块」，不是运行失败：如实记进 gaps 让用户看到，
+    # 而不是让整单红掉或悄悄吞掉。
+    figma_err = str(ctx.get("figma_error") or "").strip()
+    if figma_err:
+        gaps.append(f"Figma 设计稿拉取失败（本次按需求文字实施）：{figma_err[:200]}")
     files = entries
     plan_text = str(tri.get("plan") or "").strip()
     impl_lines = [f"- {e['path']}：{e['description'] or ('新增' if e['action'] == 'create' else '修改')}"
@@ -991,6 +1099,10 @@ def run_req(ai, ctx: Dict, skills_text: str = "",
         "selfcheck": check,
         "unresolved": unresolved,
         "deliver": deliver,
+        # 技术栈自动识别的结果（回显在产出物里，让「按什么栈改的」可追溯）
+        "framework": framework,
+        "stack_note": stack_note,
+        "figma_url": str(ctx.get("figma_url") or ""),
         # 让人一眼看出「这次到底改没改」：前端据此切换「可采纳 / 仅方案」文案
         "changed": bool(files),
     })
