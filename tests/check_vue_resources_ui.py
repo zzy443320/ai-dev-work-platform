@@ -6,8 +6,9 @@
 
   ① **点得开**：条目真是 `<a target="_blank" rel="noopener noreferrer">`，
      点下去真的新开一个页签（用 expect_popup 抓，不靠肉眼）；
-  ② **存得住**：改完失焦就回存，刷新页面还在（断言走 `/api/resources` 读回的
-     内容，而不是只看页面上的字 —— 只看页面就分不清"存了"和"还挂着"）；
+  ② **存得住**：增 / 改都走弹窗，点「保存」即回存，刷新页面还在（断言走
+     `/api/resources` 读回的内容，而不是只看页面上的字 —— 只看页面就分不清
+     "存了"和"还挂着"）；
   ③ **收得住**：后端只放行 http/https，`javascript:` 这类地址必须被丢掉
      （href 里能执行脚本，这是这一页唯一的安全边界）。
 
@@ -89,27 +90,32 @@ def main() -> int:
                   str(page.locator("#res-empty .res-chip").count()))
 
             page.locator("#res-empty .res-chip").first.click()
+            page.wait_for_selector("#res-group-dialog .el-input__inner", timeout=5000)
+            check("点建议分组弹出「新增分组」弹窗，名字已预填",
+                  page.input_value("#res-group-dialog .el-input__inner") != "",
+                  page.input_value("#res-group-dialog .el-input__inner"))
+            page.click("#res-group-save")
             page.wait_for_selector(".res-group", timeout=5000)
-            check("点建议分组后出现一张分组卡", page.locator(".res-group").count() == 1)
-            check("新分组自动进入编辑态（可以直接加内容）",
-                  page.locator(".res-edit, .res-add").count() >= 1)
+            # 弹窗关闭带过渡动画（destroy-on-close 在动画后才卸载），等隐藏态别数 DOM
+            page.wait_for_selector("#res-group-dialog", state="hidden", timeout=5000)
+            check("创建后出现一张分组卡", page.locator(".res-group").count() == 1)
+            check("弹窗关闭", not page.is_visible("#res-group-dialog"))
 
-            # ── ② 新增一条链接：名称 / 地址 / 备注 ──
+            # ── ② 新增一条链接：名称 / 地址 / 备注（走弹窗） ──
             page.click(".res-add")
-            page.wait_for_selector(".res-edit .el-input__inner", timeout=5000)
-            inputs = page.locator(".res-edit .el-input__inner")
-            check("编辑态给三格输入（名称 / 地址 / 备注）", inputs.count() == 3, str(inputs.count()))
+            page.wait_for_selector("#res-item-dialog .el-input__inner", timeout=5000)
+            inputs = page.locator("#res-item-dialog .el-input__inner")
+            check("添加链接弹窗给三格输入（名称 / 地址 / 备注）", inputs.count() == 3, str(inputs.count()))
             inputs.nth(0).fill("订单需求 PRD")
-            inputs.nth(0).press("Tab")
             # 故意不带协议头：后端要补成 http://（内网地址最常见的写法）
             inputs.nth(1).fill("order.test.local:8080/prd")
-            inputs.nth(1).press("Tab")
             inputs.nth(2).fill("产品在 ONES 里维护的那份")
-            inputs.nth(2).press("Tab")
+            page.click("#res-item-save")
+            page.wait_for_selector(".res-link", timeout=5000)
 
             board = wait_board(srv.base, lambda b: any(g["items"] for g in b["groups"]))
             items = [it for g in board["groups"] for it in g["items"]]
-            check("失焦即回存（板上真有了这一条）", len(items) == 1, str(items))
+            check("保存即回存（板上真有了这一条）", len(items) == 1, str(items))
             check("没写协议头的地址被补成 http://",
                   bool(items) and items[0]["url"] == "http://order.test.local:8080/prd",
                   items[0]["url"] if items else "")
@@ -119,10 +125,10 @@ def main() -> int:
                   str(items[0]) if items else "")
 
             # ── ③ 浏览态：点条目真的新开页签 ──
-            page.click("#btn-res-edit")
-            page.wait_for_selector(".res-link", timeout=5000)
-            check("点「完成」回到浏览态（编辑框收起）",
-                  page.locator(".res-edit").count() == 0 and page.locator(".res-link").count() == 1)
+            page.wait_for_selector("#res-item-dialog", state="hidden", timeout=5000)
+            check("保存后回到浏览态（弹窗收起、条目出现）",
+                  not page.is_visible("#res-item-dialog")
+                  and page.locator(".res-link").count() == 1)
             href, target, rel = page.eval_on_selector(
                 ".res-link", "el => [el.getAttribute('href'), el.getAttribute('target'), el.getAttribute('rel')]")
             check("条目 href 是补全后的地址", href == "http://order.test.local:8080/prd", str(href))
@@ -168,16 +174,32 @@ def main() -> int:
             page.fill("#res-filter", "")
             page.wait_for_timeout(200)
 
-            # ── ⑤ 编辑态：改名 + 删分组（走 confirm） ──
-            page.click("#btn-res-edit")
-            page.wait_for_selector(".res-group-input .el-input__inner", timeout=5000)
-            page.fill(".res-group-input .el-input__inner", "测试环境")
-            page.locator(".res-group-input .el-input__inner").press("Tab")
+            # ── ⑤ 编辑：改条目 + 重命名分组 + 删分组（后两者走 confirm） ──
+            page.hover(".res-card")
+            page.click(".res-item-edit")
+            page.wait_for_selector("#res-item-dialog .el-input__inner", timeout=5000)
+            check("编辑条目弹窗带出了原有内容",
+                  page.input_value("#res-item-dialog .el-input__inner") == "健康检查",
+                  page.input_value("#res-item-dialog .el-input__inner"))
+            page.fill("#res-item-dialog .el-input__inner", "健康检查（改）")
+            page.click("#res-item-save")
+            board = wait_board(srv.base, lambda b: any(it["label"] == "健康检查（改）"
+                                                      for g in b["groups"] for it in g["items"]))
+            check("改完条目落盘", any(it["label"] == "健康检查（改）"
+                                  for g in board["groups"] for it in g["items"]),
+                  str([(it["label"]) for g in board["groups"] for it in g["items"]]))
+
+            page.hover(".res-group-head")
+            page.click(".res-group-head .res-rename")
+            page.wait_for_selector("#res-group-dialog .el-input__inner", timeout=5000)
+            page.fill("#res-group-dialog .el-input__inner", "测试环境")
+            page.click("#res-group-save")
             board = wait_board(srv.base, lambda b: any(g["label"] == "测试环境" for g in b["groups"]))
             check("分组名改完落盘", any(g["label"] == "测试环境" for g in board["groups"]),
                   str([g["label"] for g in board["groups"]]))
 
             page.once("dialog", lambda d: d.accept())
+            page.hover(".res-group-head")
             page.click(".res-group-head .res-del")
             board = wait_board(srv.base, lambda b: not b["groups"])
             check("删除分组（有条目时先确认）后板上清空", board["groups"] == [], str(board["groups"]))

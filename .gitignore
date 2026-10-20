@@ -71,3 +71,4 @@ Thumbs.db
 /tests/cfg_cockpit_shots.py
 /tests/team_*.py
 /tests/serve_demo_config.py
+/tests/shoot_resources_*.py

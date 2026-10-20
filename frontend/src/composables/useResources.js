@@ -126,12 +126,20 @@ export function useResources() {
     board.value.groups = board.value.groups.filter((g) => g.id !== gid)
   }
 
-  function addItem(gid) {
+  /** 新增一条；`data` 给初值（弹窗里填完再落一行，不留空行给用户收尾） */
+  function addItem(gid, data = {}) {
     touched = true
     const g = board.value.groups.find((x) => x.id === gid)
-    if (!g) return
+    if (!g) return null
     if (!Array.isArray(g.items)) g.items = []
-    g.items.push({ id: uid('i'), label: '', url: '', note: '' })
+    const it = {
+      id: uid('i'),
+      label: String(data.label || ''),
+      url: String(data.url || ''),
+      note: String(data.note || ''),
+    }
+    g.items.push(it)
+    return it
   }
 
   function removeItem(gid, iid) {
