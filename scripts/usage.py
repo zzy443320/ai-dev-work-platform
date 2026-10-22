@@ -32,6 +32,8 @@ KIND_LABELS = {
     "reqdev": "Figma 转代码",
     "apidebug": "接口联调",
     "codetest": "代码测试",
+    # 自测：用例 / 需求文档 / Figma 三条链路，产出逐条判定表（2026-10-21）
+    "selftest": "自测",
     "probe": "试运行 / 探针",
     "ai_test": "连通性测试",
     "other": "其他",

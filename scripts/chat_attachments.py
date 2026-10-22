@@ -451,6 +451,35 @@ def text_block(store: ChatAttachmentStore, infos: List[Dict]) -> str:
     return "\n\n".join(parts)
 
 
+# 把「人写的那几句」与「附件正文」合并成一份文档时的总字符上限。单份 PDF 已按
+# 3 万字符裁剪，多份叠起来仍可能把上下文吃光；超出时保留尾部（验收标准常在文末）。
+DOC_MERGE_MAX_CHARS = 60000
+
+
+def merge_doc_text(store: ChatAttachmentStore, doc: str, infos: List[Dict],
+                   max_chars: int = DOC_MERGE_MAX_CHARS) -> str:
+    """把「手写/粘贴的正文」与「附件抽取的正文」拼成一份完整文档。
+
+    顺序是刻意的：用户亲手写的几句通常是最关键的约束（改哪个模块、别动什么），
+    放在最前面模型才不会淹没在 PRD 的模板话里；附件正文在后，各带来源标题。
+
+    实现放在这里（而不是某个路由里）的理由：需求开发与自测都要「文档 + 附件」，
+    两处各写一遍的话，截断口径、空串处理、来源标注迟早会漂成两种。
+    """
+    parts: List[str] = []
+    head = (doc or "").strip()
+    if head:
+        parts.append(head)
+    block = text_block(store, infos)
+    if block:
+        parts.append(block)
+    full = "\n\n".join(parts)
+    if max_chars and len(full) > max_chars:
+        full = ("…（需求正文超过 %d 字符，已截断；原始文档仍保留在附件里）…\n\n"
+                % max_chars) + full[-max_chars:]
+    return full
+
+
 def attach_note(infos: List[Dict]) -> str:
     """给模型的「本轮附件清单」说明——它必须知道哪些是图、哪些是文本。"""
     if not infos:

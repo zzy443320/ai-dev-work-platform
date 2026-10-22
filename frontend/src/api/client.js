@@ -122,6 +122,9 @@ export const api = {
   figmaFetch: (payload) => http.post('/api/figma/fetch', payload),
   taskRun: (payload) => http.post('/api/tasks/run', payload),
 
+  // 自测（2026-10-21）：ONES 测试情况 tab 的用例预览 + 一次自测运行
+  selftestCases: (issue) => http.get(`/api/selftest/cases?issue=${enc(issue)}`),
+  selftestRun: (payload) => http.post('/api/selftest/run', payload),
   // 问答
   chatSessions: () => http.get('/api/chat/sessions'),
   chatCreateSession: (payload) => http.post('/api/chat/sessions', payload),
@@ -176,6 +179,19 @@ export async function uploadReqAttachment(file, filename) {
   const fd = new FormData()
   fd.append('file', file, filename)
   const r = await fetch('/api/req/attachments', { method: 'POST', body: fd })
+  let j = null
+  try {
+    j = await r.json()
+  } catch (e) { /* 空体 */ }
+  if (!r.ok) throw new ApiError(extractError(j, r.status), r.status, j)
+  return j
+}
+
+/** 自测的需求文档上传（md / txt / pdf）：同一套落盘与 PDF 抽取，独立端点。 */
+export async function uploadSelfTestAttachment(file, filename) {
+  const fd = new FormData()
+  fd.append('file', file, filename)
+  const r = await fetch('/api/selftest/attachments', { method: 'POST', body: fd })
   let j = null
   try {
     j = await r.json()

@@ -75,6 +75,8 @@ SELF_CONTAINED = [
     "check_vue_extensions_ui.py",
     # 资源汇总（不接 AI 的便签板）：点开新页签 / 失焦回存 / 协议白名单
     "check_vue_resources_ui.py",
+    # 自测（用例 / 需求 / Figma 三条链路）：页签 + 判定表三态 + Mock 下不许出现「通过」
+    "check_vue_selftest_ui.py",
     "check_vue_settings_ui.py",
     "check_chat.py",
     "check_usage.py",

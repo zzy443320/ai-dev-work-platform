@@ -18,7 +18,8 @@ from web.state import (SCREENSHOT_DIR, _acquire_run, _as_bool, _astore, _astore_
 from scripts import usage  # noqa: E402
 from scripts.ai_model import AIModel  # noqa: E402
 from scripts.artifact import ArtifactStore  # noqa: E402
-from scripts.chat_attachments import AttachmentError, text_block  # noqa: E402
+from scripts.chat_attachments import (AttachmentError, DOC_MERGE_MAX_CHARS,
+                                      merge_doc_text)  # noqa: E402
 from scripts.figma_fetcher import FigmaClient, FigmaError, parse_figma_url  # noqa: E402
 from scripts.task_modules import TASK_LABELS, TaskError, mock_task_result, run_task  # noqa: E402
 
@@ -192,27 +193,17 @@ _TASK_KINDS = ("req", "reqdev", "apidebug", "codetest")
 REQ_ATT_MAX = 6
 # 拼进提示词的需求正文总上限：单份 PDF 已按 3 万字符裁剪，多份叠起来仍可能
 # 把上下文吃光。超出时保留尾部（验收标准常在文末），并在开头如实说明。
-REQ_DOC_MAX_CHARS = 60000
+REQ_DOC_MAX_CHARS = DOC_MERGE_MAX_CHARS
 
 
 def _req_doc_with_attachments(doc: str, atts: List[Dict], store) -> str:
     """把「手写/粘贴的需求原文」与「附件抽取的正文」拼成一份完整需求。
 
-    顺序是刻意的：用户亲手写的几句通常是最关键的约束（改哪个模块、别动什么），
-    放在最前面模型才不会淹没在 PRD 的模板话里；附件正文在后，各带来源标题。
+    实现已抽到 `scripts/chat_attachments.merge_doc_text`：自测模块也要吃
+    「文档 + 上传附件」，两处各写一份的话截断口径迟早会漂成两种。这里只
+    保留函数名与上限常量，免得既有调用方与用例跟着改。
     """
-    parts: List[str] = []
-    head = (doc or "").strip()
-    if head:
-        parts.append(head)
-    block = text_block(store, atts)
-    if block:
-        parts.append(block)
-    full = "\n\n".join(parts)
-    if len(full) > REQ_DOC_MAX_CHARS:
-        full = ("…（需求正文超过 %d 字符，已截断；原始文档仍保留在附件里）…\n\n"
-                % REQ_DOC_MAX_CHARS) + full[-REQ_DOC_MAX_CHARS:]
-    return full
+    return merge_doc_text(store, doc, atts, REQ_DOC_MAX_CHARS)
 
 
 @router.post("/api/req/attachments")

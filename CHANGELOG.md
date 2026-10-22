@@ -652,3 +652,46 @@
 - 做法：① 新增 `scripts/stack_detect.py`（纯读、毫秒级、无子进程；framework 为空串 = 没认出来，调用方显式处理）；② `run_req` 仓库前置 + 检测结果进 ctx（用户显式传 framework 仍尊重，API 兼容）；③ `web/routers/tasks.py` 收 `figma_url`，req 分支在线程池里自动拉稿（复用 FigmaClient / 浏览器兜底，FigmaError 降级成 ctx["figma_error"]）；④ `fix_agent.parse_embedded_actions` 加可选 `known` 白名单参数（任务模块传自己的工具名，含 MCP），`_complete_with_tools` 用 `on_delta` 攒原文做夹带动作解析，拿不到原文（mock/非流式）退回单动作口径；⑤ 产出物落库新增 framework / stack_note / figma_url 字段。
 - 文件：scripts/stack_detect.py（新增）、scripts/task_modules.py（stack/design 提示词段、_complete_with_tools 多动作、_candidate_files scope、run_req 编排）、scripts/fix_agent.py（parse_embedded_actions 加 known 参数）、scripts/artifact.py、web/params_schema.py（req 字段收敛）、web/routers/tasks.py（figma_url + framework 去默认值 + result 透出）、frontend/src/views/ReqPane.vue、composables/useTasks.js、README.md、tests/check_req_stack_detect.py（新增：栈识别/scope 过滤/多动作循环）、tests/check_vue_tasks_ui.py（rq-* 契约同步）、tests/suite_pytest.py
 - 影响：需求开发页签表单变干净（核心 3 项 + 高级折叠）；「交付方式」从核心组移到高级组。需重启后端；前端已重新构建。回归全绿：`check_req_stack_detect`（新）、`check_req_pipeline`、`check_params_schema`、`check_fix_agent`、`pytest -k convergence`（13 项）、`check_vue_tasks_ui`（64 项）。API 兼容：`framework` 参数仍收（显式指定优先于自动识别），`source` 字段仍收但不再由前端发送。
+
+## 2026-10-21 10:40 · 新增 · 「自测」模块：用例 / 需求文档 / Figma 三条链路，产出一份逐条判定表
+
+- 内容：新增第 12 个页签「自测」（工具箱组，代码测试之后）。开发完一个需求后的自测环节原来要分三处手工做：跑测试人员给的用例、对着需求文档点页面、拿设计稿逐像素比。现在一次运行给出三组结论——① **测试用例**：优先从 ONES 工单「测试情况」tab 拉关联用例（拉不到就用手贴文本兜底），把「点『提交』后列表应刷新」这类人工步骤尽力翻译成浏览器动作，再结合截图与页面文本判每条用例；② **需求一致性**：需求文档先拆成可在页面上逐条核对的验收点，再逐条对照真实页面；③ **设计稿一致性**：拉 Figma 节点树，取其中的文本节点作为锚点（按文本内容找 DOM），把设计稿的字号 / 字重 / 颜色 / 宽度与页面 `getComputedStyle` + `getBoundingClientRect` 做**数字比对**，视觉判读只用来写人话说明。结论三态：通过 / 不通过 / 无法判断；环境不可达、页面空白、模型没跑起来、证据不足一律「无法判断」并写清原因——**绝不把「没看到问题」算成通过**。模块只读：不开分支、不改代码、不写目标仓库，唯一落盘是产出物 JSON 与证据截图。
+- 做法：① 新增 `scripts/selftest.py` 编排器：三条链路共用一次 Playwright 采证（独立持久 profile，避开「内嵌浏览器」页签的单会话文件锁），每条链路各自拿证据做判定，最后 `_finalize` 统一统计三态并生成小结 / checklist；② 位置（x/y）**不参与** Figma 比对——页面有滚动与容器偏移，画布的绝对坐标对不上，硬比只会造一堆假阳性，这条限制写进报告 notes 而不是藏着；③ 模型一次判完一个页面上的整批用例 / 验收点（逐条烧图既慢又贵），并显式告诉它「这次可能没执行点击/输入步骤」，凡依赖交互后状态的结论必须 unknown；④ ONES 测试用例接口按「候选模板 + best-effort」实现（`fetch_test_cases` + `ones.testcase_apis` 可整体替换）：各部署的测试管理接口形状未证实，拉不到只记 note、不阻断自测，界面另有「拉取用例」按钮先预览拉到了什么；⑤ 产出物新增 `verdicts / verdict_counts / lanes / environment / notes` 字段——不落盘的话刷新页面就只剩一句结论，「哪条没过」全丢；⑥ 参数全标可选（三条链路有一条有输入即可跑），真正的「全空」校验放在路由层；环境地址与路由落 localStorage（是环境事实，不是一次性输入）。
+- 文件：scripts/selftest.py（新增）、scripts/ones_fetcher.py（fetch_test_cases + 通用用例解析）、web/routers/selftest.py（新增：POST /api/selftest/run、GET /api/selftest/cases）、web/server.py、web/params_schema.py（selftest 7 参数）、web/state.py（技能 scope）、scripts/artifact.py、scripts/usage.py、frontend/src/views/SelfTestPane.vue（新增）、composables/useSelfTest.js（新增）、styles/selftest.css（新增）、api/client.js、components/tabs.js（selftest 页签 + 盾牌勾图标）、App.vue（页签 + NAV_GROUPS）、main.js、useExtensions.js、README.md、tests/check_selftest.py（新增 29 断言）、tests/check_vue_selftest_ui.py（新增 18 断言）、tests/check_params_schema.py、tests/check_vue_migration.py、tests/check_vue_shell_ui.py、tests/check_vue_topbar_tabs.py
+- 影响：页签从 11 个变 12 个（顶栏「装得下」的视口基线从 1600 上移到 1800：12×92px 的等宽下限在 1600 已放不下，1440 起照旧出滚动箭头）。需重启后端（新端点）；前端已重新构建。回归全绿：`check_selftest`（新）、`check_vue_selftest_ui`（新）、`check_params_schema`、`check_vue_migration`、`check_vue_shell_ui`、`check_vue_topbar_tabs`、`check_vue_tasks_ui`（64）、`check_vue_extensions_ui`（45）、`check_usage`（59）、`check_render_escape`、`check_layout_ui`（34，对临时实例跑）。已知限制：UI 用例的步骤翻译只支持「访问路径 / 点击可见文字 / 在可见输入框填字」三类，翻译不了的步骤如实记进报告并让相关结论落到 unknown；Figma 只对齐短文本节点，容器 / 图片节点与整页像素对比未做。
+
+## 2026-10-21 15:40 · 增强 · 「自测」需求文档支持上传 md / txt / pdf
+
+- 内容：自测页签的「需求文档」原来只能粘贴，真实 PRD 常常是一份 PDF。现在参数区动作行有「上传需求文档」按钮（一次最多 6 份，与需求开发同口径），PDF 在**上传那一刻**抽取文字层（扫描件没有文字层当场报错，不会跑到一半才发现正文是空的），清单里能看到每份文件的类型 / 大小 / 抽出字符数，「看解析」可展开核对抽出的正文。上传的附件与手贴正文在运行时由服务端合并成一份（手写的约束在前、附件正文在后），报告的采证说明会记下「这次判的是哪几份文档」；产出物 `attachments` 字段随报告落盘，改天回看得清判据来自哪一版 PRD。
+- 做法：① 合并逻辑抽成 `scripts/chat_attachments.merge_doc_text`，需求开发（`_req_doc_with_attachments`）改为委托同一实现——两处各写一份的话截断口径迟早漂成两种；② 新端点 `POST /api/selftest/attachments` 与 `/api/req/attachments` 落同一个附件库但**规则各自持有**（改自测的限制不该顺手改掉需求开发的行为），类型在落盘**之前**用 `classify` 预判，图片等落下来再拒会留孤儿文件；③ `selftest._split_req_points` 的长文档窗口改成**留头也留尾**（头 8000 + 尾 6000）——验收标准通常在文末，只截前 14000 字符会把最可判定的那段丢掉，附件合并后文档可达 6 万字符，这一点从隐患变成必然踩坑；④ 前端表单状态（含附件清单）从 composable 内部提升到模块级单例：页签是 `v-else-if` 挂的，切走就卸载，ref 建在函数里等于换个页签回来上传的 PDF 全没了（顺手修掉了手贴文档同样会丢的旧问题）。
+- 文件：scripts/chat_attachments.py（merge_doc_text + DOC_MERGE_MAX_CHARS）、scripts/selftest.py（附件 note / attachments 落盘 / 长文档窗口）、web/routers/selftest.py（上传端点 + attachment_ids）、web/routers/tasks.py（委托共享实现）、web/params_schema.py（hint）、frontend/src/api/client.js、composables/useSelfTest.js、views/SelfTestPane.vue（#st-btn-doc / #st-att-input / #st-atts / #st-att-preview）、styles/selftest.css、tests/check_selftest.py（+9 断言：合并顺序 / 截断 / 长文档窗口）、tests/check_vue_selftest_ui.py（+6 断言：txt+pdf 真实上传 → 清单 → 解析预览 → 报告记录）
+- 影响：需重启后端（新端点）；前端已重新构建。回归全绿：check_selftest（38）、check_vue_selftest_ui（28，含 PDF 真实上传链路）、check_req_attachments、check_params_schema、check_vue_tasks_ui（64）、check_layout_ui（34）、check_vue_shell_ui。
+
+## 2026-10-21 16:50 · 修复 · 自测「页面空白」从黑箱结论改成可核对的诊断
+
+- 现象：用户本地页面（如 localhost:9000/admin/#/ai-workflow-designer/xxx）明明是好的，自测却整表「页面是空白页，无法核对」，既看不出工具看到了什么，也不知道怎么修。
+- 根因：① 空白判定只试一次——SPA 首屏异步挂载时 networkidle 不保证渲染完成，会制造假空白，现在给 3 次机会（每次再等 2.5s）取可见文本最多的一次；② 结论只有一句「页面空白」，不携带任何事实。真实原因大多是：「检查路由」只填了 / 而真实页面在 /admin/#/… 这类子路径，或需要登录而自测浏览器（独立持久 profile）没有登录态。
+- 改动：① `_probe` 空白重试 + `blank_reason`（重定向落点 / 标题 / 可见文本量 / 报错数 / 两条常见原因与修法）；② 判定短路与报告 notes 分工——每条结论只带事实（「页面空白：可见文本只有 0 字符，页面重定向到了 …」），「常见原因」建议只在 notes 说一次（12 条验收点各复读一遍是噪音）；③ notes 新增「空白诊断 · 路由 /：停在 …，标题…，证据截图 /screenshots/xxx」；④ 环境摘要区亮红灯「路由 / 空白（停在 …，看工具看到的截图）」——截图本来就有，之前没给入口；⑤ 路由参数 hint 改为「要填真实页面的完整路径（含子路径与 # 后的哈希路由）」。
+- 文件：scripts/selftest.py（_probe 重试与 blank_reason、_judge_cases/_judge_req 空白文案、run() 空白诊断 notes）、web/params_schema.py（stRoutes hint）、frontend/src/views/SelfTestPane.vue（环境摘要空白警告 + 截图链接）、tests/check_selftest.py（+5：哈希路由整体保留、空白结论带事实不复读建议）、tests/check_vue_selftest_ui.py（+6：本地起空 HTML 端口跑真空白场景，断言环境警告 / 截图入口 / notes 诊断；并修了二次运行读到陈旧判定行的问题——必须等新结果的特征出现而不是等行存在）。
+- 影响：需重启后端；前端已重新构建。回归：check_selftest（43）、check_vue_selftest_ui（34）、check_params_schema 全绿。
+
+## 2026-10-21 17:10 · 修复 · 自测采证等「页面稳定」再拍，重型 SPA 不再误判空白
+
+- 现象：用户补齐了路由与登录配置后自测仍然全「无法判断」。用自测 profile 复现发现登录态其实是对的（顶栏已登录、路由停在正确地址），但工作流设计器这类重型 SPA 首屏挂载要 10~15s——上一版固定 3×2.5s 的重试等不到，拍到的还是空壳（可见文本 42 字符）。
+- 改动：`_probe` 采证改为**稳定等待**——每 2s 轮询可见文本，「连续 2 轮不再增长」才算稳定；内容页稳定即收，空白页至少等满 12s（晚期挂载高发期）才允许下结论，上限 20 轮（~40s）。证据里记 `settled_ms`，以后再遇到「页面空白」先看这个数：只有几秒说明又等早了。真实页面（localhost:9000 工作流设计器）验证：17.7s 采到完整画布（左侧节点面板 / 开始结束节点 / 顶栏），149 字符。
+- 文件：scripts/selftest.py（_SETTLE_* 常量 + 稳定轮询 + settled_ms）。回归：check_selftest（43）、check_vue_selftest_ui（34）全绿。需重启后端。
+
+## 2026-10-21 17:45 · 修复 · 验收点拆分失败静默退化 + 拿文档标题当验收点
+
+- 现象：自测报告里出现「页面文本和截图中未出现附件名 PRD-xxx.pdf」「未出现『工作流支持消息通知节点』」这类荒唐判定——把 PRD 的章节标题/文档编号/附件名当成了验收点，再拿功能名整句去页面文本里字面搜索。用户正确指出：「工作流支持消息通知节点」是功能不是页面文案，功能名的验证方式应该是「左侧节点面板存在『消息通知』节点」。
+- 根因（两层）：① 拆分模型调用失败时 `except: pass` **静默退化**成按行切分，PDF 每一行（含「### 附件 |…|」这类工具自己拼的来源标注）都变成验收点，用户完全不知情；② 拆分与判定提示词都没有禁止这种行为——拆分允许输出文档结构，判定把验收点当搜索字符串。
+- 改动：① 拆分失败不再静默：记入报告 notes「验收点拆分失败，已退化为按行切分（结论可信度下降）」；② 拆分提示词重写（专用 _SPLIT_SYSTEM）：只许输出「打开页面就能观察或操作验证」的检查项，功能名必须翻译成界面落点，**禁止**输出章节标题/文档编号/附件名/背景说明；页面验证不了的条目输出 `verify:"manual"`；③ 工具自己拼的元信息行（附件来源标注/截断说明）在拆分前剥掉（_strip_tool_notes），行切分兜底同样过滤（_is_doc_junk：# 开头标题行、「XXX：」空标题行、元信息行）；④ 判定提示词明确「验收点是行为描述不是搜索字符串，功能名找界面落点」，unknown 的理由必须写为什么静态验证不了，禁止字面搜索式结论；⑤ verify=manual 的验收点不送模型，直接 unknown 并写明需要做什么操作。
+- 验证（真实模型 + 真实页面 localhost:9000）：同一份 PRD 拆出 20 条行为级验收点（「左侧节点面板存在『消息通知』节点」「节点编码默认为 message」…，2 条 manual）；判定「面板存在消息通知节点」= pass（引用页面文本），「节点编码默认 message」= unknown（理由：需拖入节点交互，静态页面未执行）——正是期望行为。回归：check_selftest（49，新增元信息剥离/文档残留过滤/manual 透传）、check_vue_selftest_ui（34）全绿。需重启后端。
+
+## 2026-10-21 18:15 · 修复+增强 · 判读偶发失败三层加固；自测布局对齐 Figma 转代码
+
+- ①「未做模型判读：模型没有返回可解析的结论」：判定要求一次输出十几条带引用的 JSON，reasoning 与 content 共享 max_tokens 的模型容易把 JSON 掐断，整批报废。三层加固：**分批判定**（每批 ≤8 条，_JUDGE_BATCH）+ **失败自动重试一次**（max_tokens 提到 3200）+ **截断 JSON 容错**（_json_repair_truncated：引号感知扫描，截到最后一个完整闭合元素补齐外层，能捞回已完成条目而不是整批丢弃）。单测覆盖含引号/大括号的 reason。
+- ② 布局对齐 Figma 转代码：`#pane-selftest` 此前没登记进 params.css 的双栏 grid（`#pane-x.active:has(> .pcol)` 系列选择器），参数区掉回单列占满整宽。已登记四处（窄屏降级 / 双栏列宽 / 主区拉伸 / #st-panel flex）。同时新增**实时过程区**：运行中轮询 /api/run/status（2s，纯内存读）显示阶段时间线「采证 → 拆解 → 判定」+ 当前进度细节（后端 progress 补充了「已整理 N 条用例」「已拆出 N 条验收点（M 条需人工操作）」「采证完成（N 个页面）」「设计稿取到 N 个锚点」）+ 已用时；跑完后左侧显示**采证截图缩略条**（点开看原图，标字符数/空白红字）。
+- ③ 顺手修掉一个潜伏 bug：selftest 路由把裸 `_load_settings()` 传给编排器，playwright 段没有 screenshot_dir，run() 兜底到 `cwd/screenshots` —— 真实实例恰好与 /screenshots 挂载一致所以没暴露，临时实例（env 指走数据目录）截图链接全 404。已在 DEFAULT_SETTINGS.playwright 补 `screenshot_dir`（env 感知）。判定表/环境摘要里的「截图」链接因此全部真正可用。
+- 文件：scripts/selftest.py（_json_repair_truncated / _JUDGE_BATCH 分批 / 重试 / 进度细节）、web/state.py（playwright.screenshot_dir 默认值）、frontend/src/styles/params.css（selftest 双栏登记）、views/SelfTestPane.vue（过程区 + 截图缩略条）、composables/useSelfTest.js（阶段轮询）、tests/check_selftest.py（+3 截断容错）、tests/check_vue_selftest_ui.py（+2 缩略条）。
+- 影响：需重启后端；前端已重新构建。回归：check_selftest（52）、check_vue_selftest_ui（36）全绿。

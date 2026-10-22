@@ -23,6 +23,9 @@ import './styles/params.css'
 // 资源汇总（2026-10-19 新增模块）：分组卡片 + 可点条目 + 就地编辑。
 // 同样排在皮肤层之前，颜色只走令牌，皮肤层能覆盖到圆角与阴影。
 import './styles/resources.css'
+// 自测（2026-10-21 新增模块）：逐条判定表 + 三态徽标 + 环境摘要。
+// 与 resources.css 同一位置：皮肤层之前，只走颜色令牌。
+import './styles/selftest.css'
 // 黏土糖果皮肤层（2026-10-12）。必须排在最后：它只改外观（圆角/软阴影/配色），
 // 不动结构、id、class 与布局尺寸，靠「最后加载」赢过前面所有同权重规则。
 // 契约见文件头（--topbar-h、#figma-tree:empty::before、display:grid 等一律不碰）。

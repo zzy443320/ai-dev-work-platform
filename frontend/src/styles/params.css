@@ -171,7 +171,8 @@ input.pf-ctl { width: 210px; }
   #pane-team.active:has(> .pcol),
   #pane-req.active:has(> .pcol),
   #pane-reqdev.active:has(> .pcol),
-  #pane-apidebug.active:has(> .pcol) { grid-template-columns: minmax(0, 1fr); }
+  #pane-apidebug.active:has(> .pcol),
+  #pane-selftest.active:has(> .pcol) { grid-template-columns: minmax(0, 1fr); }
   .pcol { position: static; max-height: none; grid-column: 1 / -1; grid-row: auto; }
 }
 
@@ -194,7 +195,8 @@ input.pf-ctl { width: 210px; }
 #pane-team.active:has(> .pcol),
 #pane-req.active:has(> .pcol),
 #pane-reqdev.active:has(> .pcol),
-#pane-apidebug.active:has(> .pcol) {
+#pane-apidebug.active:has(> .pcol),
+#pane-selftest.active:has(> .pcol) {
   /* 这里原来还带一句 align-items:start —— 那是为了躲「轨撑高行 + 默认 stretch
      把主区面板拉出大空洞」。但轨与定格卡都带 .pcol{align-self:start}，本来就不会
      被行拉高；start 反而让**同一行里两个面板**底边对不齐，reqdev 空 425px、
@@ -209,8 +211,9 @@ input.pf-ctl { width: 210px; }
    上面那条 align-self:stretch 在 pane 级 stretch 回来之后是冗余的，留着当显式声明。 */
 #pane-req.active:has(> .pcol) > section,
 #pane-reqdev.active:has(> .pcol) > section,
-#pane-apidebug.active:has(> .pcol) > section { align-self: stretch; }
-#req-panel, #api-panel, #rq-panel { display: flex; flex-direction: column; min-height: 0; }
+#pane-apidebug.active:has(> .pcol) > section,
+#pane-selftest.active:has(> .pcol) > section { align-self: stretch; }
+#req-panel, #api-panel, #rq-panel, #st-panel { display: flex; flex-direction: column; min-height: 0; }
 #req-panel .req-src, #api-panel .api-stage,
 #rq-panel .rq-stage { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 #figma-tree, #api-stage, #rq-doc-echo { flex: 1; min-height: 0; overflow: auto; scrollbar-width: thin; }

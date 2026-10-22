@@ -110,6 +110,54 @@ MODULES: dict[str, dict] = {
                placeholder="例如：分页逻辑、空数据渲染、提交失败后的状态回滚"),
         ],
     },
+    # 自测（2026-10-21）：开发完需求后的自测环节。三条链路各吃一份输入，
+    # 共用一次浏览器采证，产出「逐条判定表」而不是代码补丁。
+    # 参数刻意都标成可选：三条链路只要有一条有输入就能跑，全空时接口层才报错
+    # （校验放在路由里，参数层只描述形态）。
+    "selftest": {
+        "title": "自测参数",
+        "action": "自测参数",
+        "hint": "三条链路至少给一条输入：工单里的测试用例、需求文档、Figma 链接。"
+                "只读采证，不改仓库。",
+        "fields": [
+            _f("stIssue", "st-issue", "ONES 工单", "text",
+               default="", optional=True,
+               placeholder="100003 或工单 UUID",
+               hint="从「测试情况」tab 拉关联用例；拉不到可改用手动粘贴"),
+            _f("stUrl", "st-url", "本地环境地址", "text",
+               default="", optional=True,
+               placeholder="http://localhost:3000",
+               hint="留空用配置里的页面地址；登录态沿用持久 profile"),
+            _f("stRoutes", "st-routes", "检查路由", "text",
+               default="/", placeholder="/order/list 或 /admin/#/xxx/yyy",
+               hint="要填**真实页面**的完整路径（含子路径与 # 后的哈希路由）；"
+                    "只填 / 时常会采到登录页或空白壳"),
+            _f("stLanes", "st-lanes", "检查项", "switch-group",
+               group=COMMON,
+               default={"case": True, "req": True, "figma": True},
+               options=[{"key": "case", "id": "st-lane-case", "label": "测试用例"},
+                        {"key": "req", "id": "st-lane-req", "label": "需求一致性"},
+                        {"key": "figma", "id": "st-lane-figma", "label": "设计稿一致性"}]),
+            _f("stCases", "st-cases", "测试用例（手动粘贴）", "textarea",
+               group=COMMON, default="", rows=6, optional=True,
+               placeholder="一条一行，或按「用例名 / 步骤 / 预期」分段粘贴。"
+                           "填了就不再从 ONES 拉，避免两批用例混在一起",
+               hint="优先级高于 ONES：ONES 的测试接口各部署形状不同，拉不到时用它兜底"),
+            _f("stReqDoc", "st-doc", "需求文档", "textarea",
+               group=COMMON, default="", rows=8, optional=True,
+               placeholder="粘贴需求单正文（或验收标准），也可以点「上传需求文档」直接传 md / txt / pdf。"
+                           "会先拆成可在页面上核对的验收点",
+               hint="上传的 PDF / txt 与这里手写的内容会合并（手写的在前）；"
+                    "只写「功能正常」这类无法判定的句子会让整条链路退化成无法判断"),
+            _f("stFigma", "st-figma", "Figma 设计稿链接", "text",
+               group=COMMON, default="", optional=True,
+               placeholder="https://www.figma.com/design/xxxx/文件名?node-id=12-34",
+               hint="取稿需要 Figma Token（配置页）。比对字号/字重/颜色/宽度，不比位置"),
+            _f("stLimit", "st-limit", "最多检查项", "number",
+               group=ADVANCED, default=12, min=1, max=20, step=1, unit="项",
+               hint="每条链路各自的条数上限；越大越慢，也越容易撞模型上下文"),
+        ],
+    },
     "apidebug": {
         "title": "联调参数",
         "action": "参数",

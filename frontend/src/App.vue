@@ -30,6 +30,7 @@ import ReqPane from './views/ReqPane.vue'
 import ReqdevPane from './views/ReqdevPane.vue'
 import ApiDebugPane from './views/ApiDebugPane.vue'
 import CodeTestPane from './views/CodeTestPane.vue'
+import SelfTestPane from './views/SelfTestPane.vue'
 // 资源汇总（2026-10-19）：唯一不接 AI 的模块 —— 需求文档链接 + 各环境地址的便签板
 import ResourcesPane from './views/ResourcesPane.vue'
 import ExtensionsPane from './views/ExtensionsPane.vue'
@@ -152,7 +153,7 @@ const NAV_GROUPS = [
   { label: '协作', items: ['chat'] },
   // 需求开发是交付链的起点（判要不要设计稿/改哪个文件），排在缺陷与长任务前
   { label: '交付', items: ['req', 'defect', 'team'] },
-  { label: '工具箱', items: ['reqdev', 'apidebug', 'codetest', 'resources', 'extensions'] },
+  { label: '工具箱', items: ['reqdev', 'apidebug', 'codetest', 'selftest', 'resources', 'extensions'] },
   { label: '系统', items: ['config'] },
 ]
 const tabBy = Object.fromEntries(TABS.map((t) => [t.name, t]))
@@ -543,6 +544,7 @@ const healthText = computed(() => {
             <ReqdevPane v-else-if="t.name === 'reqdev'" />
             <ApiDebugPane v-else-if="t.name === 'apidebug'" />
             <CodeTestPane v-else-if="t.name === 'codetest'" />
+            <SelfTestPane v-else-if="t.name === 'selftest'" />
             <!-- 资源汇总：不产出、不挂参数抽屉、也不进产出物面板（ARTIFACT_TAB_LABEL 里没有它） -->
             <ResourcesPane v-else-if="t.name === 'resources'" />
             <ExtensionsPane v-else-if="t.name === 'extensions'" />

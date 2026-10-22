@@ -32,7 +32,7 @@ from fastapi import FastAPI
 
 from web import urls
 from web.routers import (chat, config, live, observe, params, pipeline, resources,
-                         review, tasks, team)
+                         review, selftest, tasks, team)
 
 app = FastAPI(title="ONES 前端研发助手 UI (Frontend Dev Copilot)")
 
@@ -53,6 +53,8 @@ app.include_router(live.router)
 app.include_router(params.router)
 # 资源汇总板（需求文档链接 / 各环境地址）：纯读写一份本地 JSON，与流水线、AI 全无耦合
 app.include_router(resources.router)
+# 自测（用例 / 需求文档 / Figma 三条链路）：只读采证 + 逐条判定，不写目标仓库
+app.include_router(selftest.router)
 
 
 if __name__ == "__main__":

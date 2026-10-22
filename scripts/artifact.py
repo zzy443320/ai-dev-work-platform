@@ -32,6 +32,8 @@ TYPE_LABELS = {
     "reqdev": "Figma 转代码",
     "apidebug": "接口联调",
     "codetest": "代码测试",
+    # 自测（2026-10-21）：三条链路（用例 / 需求 / Figma）的逐条判定表，只读不写仓库
+    "selftest": "自测",
     # 缺陷修复循环在沙箱里跑红→绿的复现用例，见 scripts/repro.py 与 pipeline._repro_artifact
     "repro": "缺陷复现用例",
     # 长任务作业（多子 Agent 协作），见 scripts/team_run.py
@@ -108,6 +110,14 @@ class ArtifactStore(JsonRecordStore):
                 "raw": payload.get("raw", ""),
                 # 长任务作业的协作上下文（角色卡、工作项、复核结论）；其他类型为空
                 "team": payload.get("team") or {},
+                # 自测（2026-10-21）：逐条判定表与采证环境。产出物弹窗只读
+                # summary/plan/cases，页签里的判定表要完整 verdicts —— 不落盘的话
+                # 刷新页面就只剩一句结论，等于把「哪条没过」丢了。
+                "verdicts": payload.get("verdicts", []),
+                "verdict_counts": payload.get("counts", {}),
+                "lanes": payload.get("lanes", []),
+                "environment": payload.get("environment", {}),
+                "notes": payload.get("notes", []),
                 "context": _ctx_summary(ctx or {}),
                 "apply": {},
                 "decision": {},

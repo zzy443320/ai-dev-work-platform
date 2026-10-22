@@ -18,6 +18,10 @@ export const TABS = [
   { name: 'reqdev', label: 'Figma 转代码', icon: 'image' },
   { name: 'apidebug', label: '接口联调', icon: 'code' },
   { name: 'codetest', label: '代码测试', icon: 'check' },
+  // 自测（2026-10-21）：开发完需求后的自测环节。与「代码测试」的区别是输出形态 ——
+  // 代码测试产出测试文件（判据是之后闸门跑出的红绿），自测产出**逐条判定表**
+  // （用例 / 需求验收点 / 设计稿比对各自 通过·不通过·无法判断）。排在它后面。
+  { name: 'selftest', label: '自测', icon: 'selftest' },
   // 资源汇总（2026-10-19）：唯一一个不接 AI 的模块 —— 需求文档链接、各环境地址
   // 存在本地 resources.json 里，点条目在新页签打开。放在工具箱组里，紧挨其他
   // 「查资料 / 对接口」的工具。
@@ -36,6 +40,7 @@ export const ARTIFACT_TAB_LABEL = {
   reqdev: 'Figma 转代码',
   apidebug: '接口联调',
   codetest: '代码测试',
+  selftest: '自测',
   chat: '问答',
   team: '长任务作业',
 }
@@ -78,6 +83,8 @@ export const ICON_PATHS = {
   image: '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/>',
   code: '<polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>',
   check: '<path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>',
+  // 自测：盾牌里一个勾 —— 表达的是「核对过、有结论」，不是「再生成一份测试」
+  selftest: '<path d="M12 3l7 3v6c0 4.2-2.9 7.6-7 9-4.1-1.4-7-4.8-7-9V6Z"/><path d="M9 12l2 2 4-4"/>',
   // 资源汇总：两个环扣在一起的链环（比「书签 / 文件夹」更准确地表达「外部入口」）
   link: '<path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/>',
   grid: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M17.5 14v7M14 17.5h7"/>',

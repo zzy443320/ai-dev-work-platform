@@ -10,8 +10,8 @@ import { useToast } from './useToast.js'
 import { escapeHtml } from '../utils/format.js'
 
 /** 作用范围徽标文案。旧版 EXT_SCOPE_TEXT（app.js:2329） */
-export const EXT_SCOPE_TEXT = { all: '全部任务', req: '需求开发', reqdev: 'Figma 转代码', apidebug: '接口联调', codetest: '代码测试' }
-export const EXT_SCOPE_KEYS = ['all', 'req', 'reqdev', 'apidebug', 'codetest']
+export const EXT_SCOPE_TEXT = { all: '全部任务', req: '需求开发', reqdev: 'Figma 转代码', apidebug: '接口联调', codetest: '代码测试', selftest: '自测' }
+export const EXT_SCOPE_KEYS = ['all', 'req', 'reqdev', 'apidebug', 'codetest', 'selftest']
 
 export function useExtensions() {
   const { toast } = useToast()

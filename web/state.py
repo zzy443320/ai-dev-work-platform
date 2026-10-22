@@ -167,6 +167,11 @@ DEFAULT_SETTINGS = {
     "playwright": {
         "base_url": os.environ.get("APP_BASE_URL", "http://localhost:3000"),
         "headless": True,
+        # 自测采证截图目录（env 感知）：默认配置里必须带上 —— selftest.run 的
+        # settings 是裸 _load_settings()（不经过 _pipeline_config），没有这条
+        # 它会兜底到 cwd/screenshots，临时实例（env 指走数据目录）就与
+        # urls.install 挂载的 /screenshots 漂移成 404。
+        "screenshot_dir": str(SCREENSHOT_DIR),
     },
 }
 
@@ -466,7 +471,7 @@ def _clean_skill(raw: dict) -> dict:
     scope = raw.get("scope") or ["all"]
     if not isinstance(scope, list):
         scope = [scope]
-    valid = {k for k in ("all", "req", "reqdev", "apidebug", "codetest", "team")
+    valid = {k for k in ("all", "req", "reqdev", "apidebug", "codetest", "selftest", "team")
              if k in scope}
     return {
         "id": str(raw.get("id") or re.sub(r"[^a-zA-Z0-9_-]", "", f"sk-{os.urandom(4).hex()}") or "sk"),

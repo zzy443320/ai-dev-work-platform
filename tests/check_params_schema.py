@@ -37,8 +37,8 @@ def check(name, cond, extra=""):
 problems = ps.validate()
 check("schema.validate() 无问题", not problems, "; ".join(problems[:4]))
 
-MODULE_NAMES = ("req", "defect", "codetest", "apidebug", "reqdev", "team")
-check("六个任务模块齐", all(m in ps.MODULES for m in MODULE_NAMES), str(list(ps.MODULES)))
+MODULE_NAMES = ("req", "defect", "codetest", "selftest", "apidebug", "reqdev", "team")
+check("七个任务模块齐", all(m in ps.MODULES for m in MODULE_NAMES), str(list(ps.MODULES)))
 
 all_ids, missing_default = [], []
 for m in MODULE_NAMES:
@@ -56,7 +56,7 @@ check("id 沿用改版前契约", {"opt-limit", "team-title", "req-figma-mode",
                             "api-doc", "test-file", "rq-doc"} <= set(all_ids))
 
 # ---------------------------------------------------------------- 2. 分档规则
-expect = {"defect": "strip", "codetest": "strip",
+expect = {"defect": "strip", "codetest": "strip", "selftest": "rail",
           "apidebug": "rail", "req": "rail", "reqdev": "rail", "team": "rail"}
 got = {m: ps.layout_of(m) for m in MODULE_NAMES}
 check("分档结果符合预期", got == expect, str(got))
@@ -99,7 +99,7 @@ with temp_server.serve() as srv:
     data = srv.api("/api/params/schema")
     check("端点里 problems 为空（schema 没骗人）", data.get("problems") == [],
           str(data.get("problems"))[:120])
-    check("端点透出五个模块", sorted(data.get("modules") or {}) == sorted(MODULE_NAMES),
+    check("端点透出全部任务模块", sorted(data.get("modules") or {}) == sorted(MODULE_NAMES),
           str(sorted(data.get("modules") or {})))
     defect = (data.get("modules") or {}).get("defect") or {}
     check("端点带 layout 与 groups", defect.get("layout") == "strip"

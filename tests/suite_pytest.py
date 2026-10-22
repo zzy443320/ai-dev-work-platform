@@ -48,6 +48,8 @@ PIPELINE = [
     "check_changelog.py",
     "check_pure_js.py",           # 前端纯函数直调（步骤条推导 + Markdown 渲染），需要 node
     "check_usage.py",
+    # 自测模块的判定口径：三态聚合 / 用例与路由清洗 / Figma 数字比对 / 产出物落盘
+    "check_selftest.py",
 ]
 
 # 失败收敛层：把「线上撞见过的每一类失败」钉成可重复跑的用例。

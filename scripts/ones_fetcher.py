@@ -45,6 +45,7 @@ class OnesClient:
         timeout: int = 30,
         attachment_apis: Optional[List[str]] = None,
         attachment_downloads: Optional[List[str]] = None,
+        testcase_apis: Optional[List[str]] = None,
     ):
         self.base_url = base_url.rstrip("/")
         self.token = token or ""
@@ -63,6 +64,10 @@ class OnesClient:
         self.attachment_apis = list(attachment_apis or []) or None
         self.attachment_downloads = list(attachment_downloads or []) or None
         self.last_attachment_note: str = ""
+        # 工单「测试情况」tab 关联的测试用例接口（自测模块用）。与附件同一套
+        # best-effort 口径：各部署形状未证实，候选逐个试，失败只记 note。
+        self.testcase_apis = list(testcase_apis or []) or None
+        self.last_testcase_note: str = ""
         self.session = requests.Session()
         self._apply_headers()
 
@@ -406,6 +411,94 @@ class OnesClient:
                                      if out else
                                      f"附件列表取到 {len(items)} 项，但没有可下载的图片")
         return out
+
+    # ------------------------------------------------------------- 测试用例
+    DEFAULT_TESTCASE_APIS = (
+        "{base}/project/api/project/team/{team}/task/{uuid}/testcases",
+        "{base}/project/api/project/team/{team}/task/{uuid}/test_case",
+        "{base}/project/api/project/team/{team}/task/{uuid}/test-cases",
+        "{base}/project/api/project/team/{team}/testcase/task/{uuid}",
+        "{base}/project/api/project/task/{uuid}/testcases",
+    )
+
+    def fetch_test_cases(self, issue_uuid: str) -> List[Dict]:
+        """尽力拉一条工单「测试情况」tab 里关联的测试用例。
+
+        与 ``fetch_attachments`` 同一套红线：候选通道逐个试，任何失败都吞掉并写进
+        ``last_testcase_note``，绝不抛异常打断自测主流程 —— 拉不到只意味着
+        「这次没有对应用例」，用户可以手贴用例继续。接口形状与 ONES 部署有关：
+        配置 ``ones.testcase_apis``（分号分隔的 URL 模板，占位 {base} {team} {uuid}）
+        可整体替换候选。
+        """
+        self.last_testcase_note = ""
+        try:
+            self._ensure_auth()
+        except Exception as e:                               # noqa: BLE001
+            self.last_testcase_note = f"登录态不可用，跳过测试用例：{e}"
+            return []
+        if not self.base_url:
+            return []
+        base = self.base_url.rstrip("/")
+        team = self.team_uuid or ""
+
+        def fill(tpl: str) -> str:
+            return (str(tpl).replace("{base}", base).replace("{team}", team)
+                    .replace("{uuid}", str(issue_uuid)))
+
+        for tpl in (self.testcase_apis or self.DEFAULT_TESTCASE_APIS):
+            url = fill(tpl)
+            try:
+                r = self.session.get(url, timeout=self.timeout)
+            except Exception as e:                           # noqa: BLE001
+                self.last_testcase_note = f"测试用例请求失败：{type(e).__name__}"
+                continue
+            if not r.ok:
+                self.last_testcase_note = f"测试用例接口 HTTP {r.status_code}（{url}）"
+                continue
+            items = self._parse_testcase_list(r)
+            if items:
+                self.last_testcase_note = f"从测试情况 tab 取到 {len(items)} 条用例"
+                return items
+            self.last_testcase_note = f"接口有响应但没解析出用例（{url}）"
+        if not self.last_testcase_note:
+            self.last_testcase_note = "各候选接口都没有返回可解析的测试用例"
+        return []
+
+    @staticmethod
+    def _parse_testcase_list(resp) -> List[Dict]:
+        """把测试用例响应洗成 [{name/steps/expected}]。各部署形状不一，逐层试探。
+
+        递归找「最长的、元素是 dict 且带名称字段的列表」——这比硬编码
+        ``data.testcases`` 这种路径稳：实测同一个产品的不同接口层级都不一样。
+        """
+        try:
+            data = resp.json()
+        except Exception:                                    # noqa: BLE001
+            return []
+
+        def looks_like_case(d) -> bool:
+            return isinstance(d, dict) and any(
+                str(d.get(k) or "").strip()
+                for k in ("name", "title", "case_name", "summary"))
+
+        best: List[Dict] = []
+
+        def walk(node, depth: int = 0) -> None:
+            nonlocal best
+            if depth > 6:
+                return
+            if isinstance(node, list):
+                cases = [x for x in node if looks_like_case(x)]
+                if len(cases) > len(best):
+                    best = cases
+                for x in node[:40]:
+                    walk(x, depth + 1)
+            elif isinstance(node, dict):
+                for v in node.values():
+                    walk(v, depth + 1)
+
+        walk(data)
+        return best[:40]
 
     @staticmethod
     def _parse_attachment_list(resp) -> List[Dict]:

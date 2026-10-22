@@ -34,8 +34,9 @@ def check(name, cond, detail=""):
 # 2026-09-30：配置独立成模块，末尾新增 config 页签（原有 8 个顺序不变）
 # 2026-10-19：需求开发与 Figma 转代码拆开，req 插在 reqdev 之前（reqdev 只是改名）
 # 2026-10-19：资源汇总（resources）插在工具箱组里，codetest 之后、extensions 之前
+# 2026-10-21：自测（selftest）插在 codetest 之后（代码测试产出测试文件，自测产出判定表）
 EXPECTED_TABS = ['stats', 'chat', 'defect', 'team', 'req', 'reqdev', 'apidebug',
-                 'codetest', 'resources', 'extensions', 'config']
+                 'codetest', 'selftest', 'resources', 'extensions', 'config']
 
 
 def main() -> int:

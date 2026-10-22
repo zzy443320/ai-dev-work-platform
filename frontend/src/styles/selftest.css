@@ -1,0 +1,165 @@
+/* ===========================================================================
+   selftest.css —— 自测页签（#pane-selftest）
+   逐条判定表 + 三态徽标 + 环境摘要 + 用例预览。
+
+   只动本模块自己的类（.st-*）与 #pane-selftest 的列宽，不碰 #tabs / .tabpane /
+   .panel / .stage-flow 这些既有契约。颜色一律走 style.css 的令牌
+   （--surf/--line/--txt/--ok/--wn/--er），明暗主题与皮肤层都能覆盖到。
+   =========================================================================== */
+
+/* 参数轨是第二列（schema 判给 rail），主列交给判定表 */
+#pane-selftest.active { grid-template-columns: minmax(0, 1fr); }
+
+.st-sum {
+  font-size: 12px; color: var(--txt2);
+  padding: 3px 8px; border-radius: var(--r-s);
+  background: var(--ac-bg); border: 1px solid var(--ac-ln);
+}
+
+.st-error {
+  margin: 0 0 12px; padding: 9px 12px; border-radius: var(--r-s);
+  font-size: 12.5px; line-height: 1.6;
+  color: var(--er); background: var(--danger-soft);
+  border: 1px solid color-mix(in srgb, var(--er) 30%, transparent);
+  word-break: break-all;
+}
+
+/* ── 三态计数条 ── */
+.st-counts { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.st-chip {
+  font-size: 12px; line-height: 1; padding: 5px 9px; border-radius: 999px;
+  color: var(--txt2); background: var(--surf2); border: 1px solid var(--line);
+}
+.st-chip.pass { color: var(--ok); background: var(--success-soft); border-color: color-mix(in srgb, var(--ok) 30%, transparent); }
+.st-chip.fail { color: var(--er); background: var(--danger-soft); border-color: color-mix(in srgb, var(--er) 34%, transparent); }
+.st-chip.unknown { color: var(--wn); background: var(--warn-soft); border-color: color-mix(in srgb, var(--wn) 28%, transparent); }
+.st-chip.lane { font-family: var(--mono); font-size: 11.5px; }
+.st-chip.lane.bad { color: var(--er); border-color: color-mix(in srgb, var(--er) 28%, transparent); }
+
+/* ── 环境摘要 ── */
+.st-env {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px;
+  margin-bottom: 12px; padding: 8px 12px; border-radius: var(--r-s);
+  font-size: 12px; color: var(--txt3);
+  background: var(--surf2); border: 1px solid var(--line3);
+}
+.st-env b { font-weight: 500; color: var(--txt); font-family: var(--mono); font-size: 11.5px; }
+.st-env .ok { color: var(--ok); }
+.st-env .bad { color: var(--er); }
+
+/* ── 判定表 ── */
+.st-table {
+  width: 100%; border-collapse: collapse; table-layout: fixed;
+  font-size: 12.5px; margin-bottom: 12px;
+}
+.st-table th {
+  text-align: left; font-weight: 500; font-size: 11.5px; letter-spacing: .04em;
+  color: var(--txt3); padding: 6px 10px; border-bottom: 1px solid var(--line2);
+  white-space: nowrap;
+}
+.st-table th:nth-child(1) { width: 96px; }
+.st-table th:nth-child(3) { width: 84px; }
+.st-table th:nth-child(5) { width: 58px; }
+.st-table td {
+  padding: 9px 10px; vertical-align: top; line-height: 1.6;
+  border-bottom: 1px solid var(--line3); color: var(--txt2);
+}
+.st-table tr.row-fail td { background: color-mix(in srgb, var(--er) 6%, transparent); }
+.st-table .st-lane { color: var(--txt3); font-size: 11.5px; white-space: nowrap; }
+.st-table .st-title { color: var(--txt); word-break: break-word; }
+.st-table .st-expect {
+  margin-top: 3px; font-size: 11.5px; color: var(--txt3); line-height: 1.55;
+}
+.st-table .st-reason { color: var(--txt2); word-break: break-word; }
+.st-table a { color: var(--ac); text-decoration: none; }
+.st-table a:hover { text-decoration: underline; }
+.st-dim { color: var(--txt4); }
+
+.st-badge {
+  display: inline-block; padding: 2px 8px; border-radius: 999px;
+  font-size: 11.5px; line-height: 1.6; white-space: nowrap;
+}
+.st-badge.pass { color: var(--ok); background: var(--success-soft); }
+.st-badge.fail { color: var(--er); background: var(--danger-soft); }
+.st-badge.unknown { color: var(--wn); background: var(--warn-soft); }
+
+/* ── 采证说明与用例预览 ── */
+.st-notes {
+  margin: 0 0 12px; padding: 0 0 0 16px;
+  font-size: 11.5px; line-height: 1.75; color: var(--txt3);
+}
+.st-notes li { margin: 0; }
+
+.st-pulled {
+  margin-bottom: 12px; padding: 10px 12px; border-radius: var(--r-s);
+  background: var(--surf2); border: 1px solid var(--line3);
+  font-size: 12px; color: var(--txt2);
+}
+.st-pulled-head { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; color: var(--txt); }
+.st-pulled ol { margin: 0; padding-left: 18px; line-height: 1.7; }
+.st-pulled li { margin: 0 0 2px; word-break: break-word; }
+
+/* ── 需求文档附件（上传 md / txt / pdf）──────────────────────────────
+   2026-10-21：自测的「需求文档」原来只能粘贴，而真实 PRD 常常是一份 PDF。
+   这块挂在参数轨的 notes 位（轨只有 294px 宽），所以纵向排列、文件名省略号
+   截断；「看解析」展开的是服务端抽出的正文，用来核对 PDF 到底读到了什么。 */
+.st-atts { display: flex; flex-direction: column; gap: 4px; margin-top: 10px; }
+.st-att { display: flex; align-items: center; gap: 6px; min-width: 0;
+  padding: 4px 7px; border-radius: 7px; border: 1px solid var(--line3);
+  background: var(--surf2); font-size: 11.5px; }
+.st-att-kind { flex: none; font-size: 9px; font-weight: 700; letter-spacing: .04em;
+  padding: 1px 4px; border-radius: 4px; color: var(--txt3); background: var(--line3); }
+.st-att-kind.is-pdf { color: var(--er); background: var(--danger-soft); }
+.st-att-kind.is-md,
+.st-att-kind.is-markdown { color: var(--ac); background: var(--primary-soft); }
+.st-att-name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; color: var(--txt); }
+.st-att-meta { flex: none; font-size: 10.5px; color: var(--txt4); }
+.st-att-view { flex: none; margin-left: auto; font: inherit; font-size: 10.5px; padding: 0;
+  border: 0; background: transparent; color: var(--txt3); cursor: pointer; }
+.st-att-view:hover { color: var(--ac); text-decoration: underline; }
+.st-att-del { flex: none; width: 16px; height: 16px; line-height: 1; border-radius: 4px;
+  border: 0; background: transparent; color: var(--txt3); cursor: pointer; font-size: 13px; }
+.st-att-del:hover:not(:disabled) { color: var(--er); background: var(--danger-soft); }
+.st-att-del:disabled { opacity: .4; cursor: not-allowed; }
+.st-att-preview { margin: 2px 0 0; max-height: 200px; overflow: auto; white-space: pre-wrap;
+  word-break: break-word; font-size: 11px; line-height: 1.6; color: var(--txt3);
+  padding: 7px 9px; border-radius: 7px; background: var(--surf2);
+  border-left: 2px solid var(--line3); }
+.st-att-hint { margin-top: 10px; font-size: 10.5px; line-height: 1.65; color: var(--txt4); }
+/* 原生 file input 只做「被点击」，不参与布局（与 .rq-att-input 同口径） */
+.st-att-input { position: absolute; left: -9999px; width: 1px; height: 1px; opacity: 0; }
+
+/* ── 实时过程区（2026-10-21）：与 Figma 转代码同构——右轨参数、左侧过程可见 ──
+   运行中：阶段时间线（progress 镜像进运行租约，2s 轮询纯内存读）；
+   结果回来：采证截图缩略条（点开看原图）。 */
+.st-process { margin: 10px 0 4px; padding: 10px 12px; border-radius: 9px;
+  border: 1px solid var(--line3); background: var(--surf2); }
+.st-steps { display: flex; align-items: center; gap: 18px; }
+.st-step { display: inline-flex; align-items: center; gap: 6px; font-size: 12px;
+  color: var(--txt3); }
+.st-step i { display: inline-flex; align-items: center; justify-content: center;
+  width: 17px; height: 17px; border-radius: 50%; font-style: normal; font-size: 10px;
+  font-weight: 700; border: 1.5px solid var(--line3); color: var(--txt4); }
+.st-step.done { color: var(--txt2); }
+.st-step.done i { border-color: var(--ac); color: var(--ac); }
+.st-step.active { color: var(--txt); font-weight: 600; }
+.st-step.active i { border-color: var(--ac); background: var(--primary-soft);
+  color: var(--ac); }
+.st-step.live i { border-style: dashed; }
+.st-process-detail { display: flex; gap: 12px; align-items: baseline; margin-top: 8px;
+  font-size: 11.5px; color: var(--txt3); }
+.st-process-detail .mono { color: var(--txt4); }
+/* 截图缩略条 */
+.st-shots { display: flex; gap: 10px; overflow-x: auto; padding: 4px 0 8px; }
+.st-shot { flex: 0 0 auto; width: 220px; border: 1px solid var(--line3);
+  border-radius: 8px; overflow: hidden; background: var(--surf2);
+  text-decoration: none; }
+.st-shot img { display: block; width: 100%; height: 130px; object-fit: cover;
+  object-position: top; }
+.st-shot-meta { display: flex; justify-content: space-between; gap: 8px;
+  padding: 4px 8px; font-size: 10.5px; color: var(--txt4); }
+.st-shot-meta code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  max-width: 130px; }
+.st-shot-meta .ok { color: var(--ac); }
+.st-shot-meta .bad { color: var(--er); font-weight: 600; }
